@@ -11,6 +11,9 @@ auto-summary-*.md
 halts/
 logs/
 
+# Claude Code project-level runtime state (auto-created; never commit)
+.claude/orchestra/
+
 # Editor / OS
 .DS_Store
 *~

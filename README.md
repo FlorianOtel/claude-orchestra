@@ -47,21 +47,35 @@ Use for: simple, well-scoped tasks (≤ 10 steps) where the plan is clear enough
 ```bash
 git clone https://github.com/FlorianOtel/claude-orchestra
 cd claude-orchestra
-./deploy.sh
+./deploy.sh --global
 ```
 
-`deploy.sh` is idempotent — safe to re-run after any update. It:
+`deploy.sh` requires an explicit target argument and is idempotent — safe to re-run after any update.
 
-1. Copies `agents/`, `commands/`, `scripts/`, and `config/` to `~/.claude/`
+```bash
+./deploy.sh --global              # install / update system-wide (~/.claude/)
+./deploy.sh --local               # deploy to current project only ($PWD/.claude/)
+./deploy.sh --global --dry-run    # preview without writing
+./deploy.sh --local  --diff       # show unified diff for local deploy
+```
+
+`--global` and `--local` are mutually exclusive. `--dry-run` and `--diff` are additive.
+
+**`--global`** installs everything and:
+
+1. Copies `.claude/agents/`, `.claude/commands/`, `scripts/`, and `config/` to `~/.claude/`
 2. Merges orchestra hooks (`PreToolUse → Agent`, `SubagentStop`, `PreCompact`) into `~/.claude/settings.json` without touching existing entries
 3. Patches `~/.claude/scripts/status-line.sh` to add orchestra state indicators (if you have one; skipped otherwise)
 4. Adds `.claude/orchestra/` to your global gitignore so auto-created runtime state is never accidentally committed
 
-Preview without writing:
+**`--local`** deploys agents, commands, scripts, and config to `$PWD/.claude/` of the current project. Skips settings.json hooks, status-line patch, and gitignore setup (those are global-only). Use this to test a change in a specific project without touching `~/.claude/`:
+
 ```bash
-./deploy.sh --dry-run   # show what would change
-./deploy.sh --diff      # show unified diff of every file that would change
+cd /path/to/my-project
+/path/to/claude-orchestra/deploy.sh --local
 ```
+
+When Claude Code is launched inside a project that has been locally deployed, its `.claude/agents/` and `.claude/commands/` take precedence over the system-wide `~/.claude/` versions — giving you isolated testing without affecting any other project.
 
 ## Usage
 
@@ -116,28 +130,34 @@ If `~/.claude/` is shared across machines (e.g. via an NFS-mounted home director
 
 ## Files
 
+The repo layout mirrors the `~/.claude/` deployment target. `.claude/agents/` and
+`.claude/commands/` are picked up automatically by Claude Code when launched inside
+this repo — making the repo itself the dev/test environment without needing to deploy.
+
 ```
 claude-orchestra/
-├── agents/
-│   ├── planner.md         Sonnet 4.6 — writes numbered plan to PLAN.md
-│   ├── actor.md           Haiku 4.5  — executes one scoped step
-│   └── reviewer.md        Sonnet 4.6 — reviews diff, emits PASS/FIX/BLOCK
-├── commands/
-│   ├── brain.md           /brain slash command — full pipeline
-│   ├── duo.md             /duo slash command   — lightweight pipeline
-│   └── orchestra-mode.md  /orchestra-mode      — set autonomy preset (v1 stub for auto)
+├── .claude/
+│   ├── agents/
+│   │   ├── planner.md         Sonnet 4.6 — writes numbered plan to PLAN.md
+│   │   ├── actor.md           Haiku 4.5  — executes one scoped step
+│   │   └── reviewer.md        Sonnet 4.6 — reviews diff, emits PASS/FIX/BLOCK
+│   ├── commands/
+│   │   ├── brain.md           /brain slash command — full pipeline
+│   │   ├── duo.md             /duo slash command   — lightweight pipeline
+│   │   └── orchestra-mode.md  /orchestra-mode      — set autonomy preset (v1 stub for auto)
+│   └── orchestra/             Runtime state (auto-created; gitignored)
 ├── scripts/
-│   └── orchestra-hook.sh  PreToolUse / SubagentStop / PreCompact hook dispatcher
+│   └── orchestra-hook.sh      PreToolUse / SubagentStop / PreCompact hook dispatcher
 ├── status-line/
-│   └── orchestra-block.sh Orchestra additions for status-line.sh
+│   └── orchestra-block.sh     Orchestra additions for status-line.sh
 ├── config/
-│   ├── config.yaml        Global orchestra configuration
-│   └── settings-hooks.json Hook entries to merge into settings.json
+│   ├── config.yaml            Global orchestra configuration
+│   └── settings-hooks.json    Hook entries to merge into settings.json
 ├── docs/
-│   ├── design.md          Full design reference (architecture, decisions, TO DOs)
-│   └── design-history.md  Design session notes and change log
-├── deploy.sh              Install / update to ~/.claude/
-└── collect.sh             Sync changes from ~/.claude/ back to repo
+│   ├── design.md              Full design reference (architecture, decisions, TO DOs)
+│   └── design-history.md      Design session notes and change log
+├── deploy.sh                  Install / update (--global or --local)
+└── collect.sh                 Sync changes from ~/.claude/ back to repo
 ```
 
 ## Architecture
