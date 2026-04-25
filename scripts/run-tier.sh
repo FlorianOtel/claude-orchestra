@@ -110,14 +110,21 @@ CLAUDE_CMD_STR="claude$(quote_args "${CLAUDE_ARGS[@]}")"
 PROMPT_FILE_Q="$(printf '%q' "$PROMPT_FILE")"
 RESULT_FILE_Q="$(printf '%q' "$RESULT_FILE")"
 LOGFILE_Q="$(printf '%q' "$LOGFILE")"
+STDERR_FILE="${LOGFILE}.stderr"
+STDERR_FILE_Q="$(printf '%q' "$STDERR_FILE")"
 FORMATTER="${HOME}/.claude/scripts/format-stream.sh"
 FORMATTER_Q="$(printf '%q' "$FORMATTER")"
 
-# Compose the pipeline. Note: stderr is merged into stdout so errors appear in the feed.
-# After the pipeline exits, clear live-stage.env so post-tier hooks no-op (otherwise
-# subsequent Bash calls in the parent session would keep appending to this stage's log).
+# Compose the pipeline.
+#  - Subprocess stderr → separate <logfile>.stderr file (debuggable; non-JSON noise can't
+#    pollute format-stream.sh's stdin).
+#  - Startup marker written to logfile before claude runs (proves the wrapper at least
+#    started; absence means the bash -c failed before the pipeline ran).
+#  - Exit-code captured to logfile after the pipeline finishes (so empty/short logfiles
+#    are obviously diagnosable: "claude exited N").
+#  - live-stage.env cleared at the end so post-tier hooks no-op.
 LIVE_ENV_Q="$(printf '%q' "${ORCHESTRA_DIR}/live-stage.env")"
-PIPELINE="${CLAUDE_CMD_STR} < ${PROMPT_FILE_Q} 2>&1 | RESULT_FILE=${RESULT_FILE_Q} ${FORMATTER_Q} | tee -a ${LOGFILE_Q}; rm -f ${LIVE_ENV_Q}"
+PIPELINE="echo '── pipeline start: '\$(date -u +%FT%TZ) >> ${LOGFILE_Q}; { echo '── env:'; printf '   ANTHROPIC_API_KEY: '; [ -n \"\${ANTHROPIC_API_KEY:-}\" ] && echo \"set (\${#ANTHROPIC_API_KEY} chars)\" || echo 'NOT SET — claude --bare will fail to authenticate'; echo \"   CLAUDE_PROJECT_DIR: \${CLAUDE_PROJECT_DIR:-(unset)}\"; echo \"   PATH (first 200): \${PATH:0:200}\"; echo \"   claude binary: \$(command -v claude 2>/dev/null || echo NOT_FOUND)\"; echo \"   claude version: \$(claude --version 2>&1 | head -1)\"; echo \"   pwd: \$(pwd)\"; echo '── claude run:'; } >> ${LOGFILE_Q}; ${CLAUDE_CMD_STR} < ${PROMPT_FILE_Q} 2> ${STDERR_FILE_Q} | RESULT_FILE=${RESULT_FILE_Q} ${FORMATTER_Q} | tee -a ${LOGFILE_Q}; ps=( \"\${PIPESTATUS[@]}\" ); echo \"── pipeline end: claude=\${ps[0]} formatter=\${ps[1]} tee=\${ps[2]}\" >> ${LOGFILE_Q}; if [ \"\${ps[0]}\" != \"0\" ]; then echo \"── (stderr file: ${STDERR_FILE_Q})\" >> ${LOGFILE_Q}; fi; rm -f ${LIVE_ENV_Q}"
 
 # Branch on tmux availability.
 if [ -n "${TMUX:-}" ] && [ -z "${CLAUDE_ORCHESTRA_DISABLE_TMUX:-}" ]; then
@@ -134,10 +141,27 @@ if [ -n "${TMUX:-}" ] && [ -z "${CLAUDE_ORCHESTRA_DISABLE_TMUX:-}" ]; then
 
   # Wrap so the window persists briefly after completion to show the final summary.
   WRAPPED="${PIPELINE}; echo; echo '── window will close in 120s — Ctrl-b & to close now ──'; sleep 120"
-  tmux new-window -d -n "$WINDOW_NAME" "bash -c $(printf '%q' "$WRAPPED")" 2>/dev/null || true
+  # tmux new-window does NOT inherit env from the calling shell — the new window inherits
+  # from the tmux server's frozen env. Pass critical vars explicitly via -e KEY=VAL.
+  # Required for the subprocess: ANTHROPIC_API_KEY (auth under --bare), CLAUDE_PROJECT_DIR
+  # (path resolution), HOME (~ expansion), PATH (locate `claude` binary).
+  TMUX_ENV_ARGS=()
+  [ -n "${ANTHROPIC_API_KEY:-}" ] && TMUX_ENV_ARGS+=( -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" )
+  TMUX_ENV_ARGS+=( -e "CLAUDE_PROJECT_DIR=$PROJECT_DIR" )
+  [ -n "${HOME:-}" ] && TMUX_ENV_ARGS+=( -e "HOME=$HOME" )
+  [ -n "${PATH:-}" ] && TMUX_ENV_ARGS+=( -e "PATH=$PATH" )
+  tmux new-window -d -n "$WINDOW_NAME" "${TMUX_ENV_ARGS[@]}" "bash -c $(printf '%q' "$WRAPPED")" 2>/dev/null || true
 else
-  # No tmux: run pipeline detached, output goes to logfile via tee; user tails live.log.
-  nohup bash -c "$PIPELINE" </dev/null >/dev/null 2>&1 &
+  # No tmux (VSCode terminal, plain shell): run pipeline detached, output goes to logfile
+  # via tee; user tails live.log. Pass env vars explicitly using `env -i` + key vars so
+  # the subprocess sees a clean, deterministic env (matches the tmux path's contract).
+  ENV_ARGS=()
+  [ -n "${ANTHROPIC_API_KEY:-}" ] && ENV_ARGS+=( "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" )
+  ENV_ARGS+=( "CLAUDE_PROJECT_DIR=$PROJECT_DIR" )
+  [ -n "${HOME:-}" ] && ENV_ARGS+=( "HOME=$HOME" )
+  [ -n "${PATH:-}" ] && ENV_ARGS+=( "PATH=$PATH" )
+  [ -n "${TERM:-}" ] && ENV_ARGS+=( "TERM=$TERM" )
+  nohup env "${ENV_ARGS[@]}" bash -c "$PIPELINE" </dev/null >/dev/null 2>&1 &
 fi
 
 # Print the result file path so the caller can poll it.
