@@ -11,8 +11,9 @@ auto-summary-*.md
 halts/
 logs/
 
-# Claude Code project-level runtime state (auto-created; never commit)
+# Claude Code project-level runtime state and local-deploy artifacts (never commit)
 .claude/orchestra/
+.claude/scripts/
 
 # Editor / OS
 .DS_Store
