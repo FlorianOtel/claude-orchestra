@@ -2,9 +2,10 @@
 # ~/.claude/scripts/orchestra-hook.sh
 #
 # Claude Orchestra hook dispatcher. Called by Claude Code on:
-#   PreToolUse (matcher: Agent)  -> mode "start"
-#   SubagentStop                 -> mode "end"
-#   PreCompact                   -> mode "compact"
+#   PreToolUse (matcher: Agent)           -> mode "start"
+#   PreToolUse (matchers: Edit/Write/Bash) -> mode "tool"
+#   SubagentStop                           -> mode "end"
+#   PreCompact                             -> mode "compact"
 #
 # Design reference: docs/design.md (in this repo)
 # Change log:       docs/design-history.md (in this repo)
@@ -25,6 +26,7 @@ ORCHESTRA_DIR="${PROJECT_DIR}/.claude/orchestra"
 INVOCATIONS_LOG="${ORCHESTRA_DIR}/invocations.log"
 LOGS_DIR="${ORCHESTRA_DIR}/logs"
 STATE_ENV="${ORCHESTRA_DIR}/state.env"
+LIVE_ENV="${ORCHESTRA_DIR}/live-stage.env"
 
 mkdir -p "${LOGS_DIR}" 2>/dev/null || true
 touch "${INVOCATIONS_LOG}" 2>/dev/null || true
@@ -108,6 +110,10 @@ case "$MODE" in
       "$STAGE" "$SUBAGENT" "$LOGFILE" "$(stamp_fields)" \
       >> "$INVOCATIONS_LOG" 2>/dev/null || true
 
+    # Live-feed: stable pointer to the active logfile (works in tmux and VSCode)
+    printf 'ACTIVE_LOGFILE=%s\n' "$LOGFILE" > "$LIVE_ENV" 2>/dev/null || true
+    ln -sfn "$LOGFILE" "${ORCHESTRA_DIR}/live.log" 2>/dev/null || true
+
     if in_tmux; then
       WINDOW_NAME="$(next_window_name "$STAGE")"
       tmux new-window -d -n "$WINDOW_NAME" "tail -f '$LOGFILE'" 2>/dev/null || true
@@ -144,6 +150,9 @@ case "$MODE" in
         echo "## ✓ done — ${STAMP_TS}"
       } >> "$LOGFILE" 2>/dev/null || true
     fi
+
+    # Clear the live-feed pointer so tool hooks no-op after the subagent finishes
+    rm -f "$LIVE_ENV" 2>/dev/null || true
 
     printf '{"event":"end","stage":"%s","subagent":"%s","window":"%s",%s}\n' \
       "$STAGE" "$SUBAGENT" "$WINDOW_NAME" "$(stamp_fields)" \
@@ -193,6 +202,29 @@ case "$MODE" in
     printf '{"event":"compact","brain_state":"%s",%s}\n' \
       "$BRAIN_STATE" "$(stamp_fields)" \
       >> "$INVOCATIONS_LOG" 2>/dev/null || true
+    ;;
+
+  tool)
+    # Fire on PreToolUse(Edit|Write|Bash) — append a live tool-call line to the active logfile.
+    # No-ops silently if no subagent is currently running (live-stage.env absent).
+    [ -f "$LIVE_ENV" ] || exit 0
+    ACTIVE_LOGFILE=""
+    # shellcheck disable=SC1090
+    . "$LIVE_ENV" 2>/dev/null || true
+    [ -n "$ACTIVE_LOGFILE" ] && [ -f "$ACTIVE_LOGFILE" ] || exit 0
+
+    TOOL_NAME="$(printf '%s' "$INPUT_JSON" \
+      | jq -r '.tool_name // "TOOL"' 2>/dev/null || echo "TOOL")"
+    TOOL_PARAM="$(printf '%s' "$INPUT_JSON" \
+      | jq -r '.tool_input.file_path // .tool_input.command // .tool_input.path // ""' 2>/dev/null \
+      | head -c 120 \
+      || echo "")"
+
+    printf '[%s] %s %s\n' \
+      "$(date -u +%H:%M:%S)" \
+      "${TOOL_NAME^^}" \
+      "$TOOL_PARAM" \
+      >> "$ACTIVE_LOGFILE" 2>/dev/null || true
     ;;
 
   *)

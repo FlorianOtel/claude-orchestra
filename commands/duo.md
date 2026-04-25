@@ -62,7 +62,7 @@ On rejection: stay in plan mode, refine, repeat Phase 1.
 ## Phase 3 — Execute (Haiku, auto)
 
 On approval, first tell the user:
-> "Dispatching Actor (Haiku 4.5). For uninterrupted execution, ensure you are in `bypassPermissions` mode — cycle with Shift+Tab if you see permission prompts."
+> "Dispatching Actor (Haiku 4.5). **Permission mode:** press `Shift+Tab` now to toggle — leave it as-is for auto-approve, or switch to `default` if you want to confirm each edit before it lands. The `implement` window (tmux) or `live.log` (VSCode) will show tool calls in real time."
 
 Then delegate **all steps in a single Agent call** to the `actor` subagent. Pass the full plan text so Actor can execute all steps sequentially. Actor's scope discipline and hard-deny rules (no `rm -rf`, no `git push`, no commits) apply as documented in `actor.md`.
 

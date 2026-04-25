@@ -97,29 +97,36 @@ if [ ! -f "$SETTINGS" ]; then
     $DRY_RUN || echo '{}' > "$SETTINGS"
 fi
 
-if jq -e '.hooks.SubagentStop' "$SETTINGS" >/dev/null 2>&1; then
+# Check idempotency: all orchestra PreToolUse matchers from the fragment present?
+FRAGMENT="$REPO/config/settings-hooks.json"
+EXPECTED_MATCHERS="$(jq -r '[.hooks.PreToolUse[].matcher] | sort | join(",")' "$FRAGMENT")"
+CURRENT_MATCHERS="$(jq -r '([.hooks.PreToolUse // [] | .[]] | map(select(.hooks[].command | contains("orchestra-hook.sh"))) | map(.matcher) | sort | join(","))' "$SETTINGS" 2>/dev/null || echo "")"
+
+if [ "$CURRENT_MATCHERS" = "$EXPECTED_MATCHERS" ] && jq -e '.hooks.SubagentStop' "$SETTINGS" >/dev/null 2>&1; then
     ok "unchanged: settings.json (hooks already present)"
 else
     if $DRY_RUN; then
         info "would merge orchestra hooks into settings.json"
     else
-        FRAGMENT="$REPO/config/settings-hooks.json"
         TMPFILE="$SETTINGS.orchestra-deploy.tmp"
 
+        # Keep non-orchestra PreToolUse entries; replace all orchestra-hook.sh entries
         jq -s '
             .[0] as $existing |
             .[1].hooks as $new_hooks |
             ($existing.hooks.PreToolUse // []) as $existing_ptu |
             ($new_hooks.PreToolUse // []) as $new_ptu |
-            ($existing_ptu | map(select(.matcher != "Agent"))) as $cleaned_ptu |
+            ($existing_ptu | map(select(
+                (.hooks // []) | map(.command // "") | map(contains("orchestra-hook.sh")) | any | not
+            ))) as $non_orchestra_ptu |
             $existing
-            | .hooks.PreToolUse  = ($cleaned_ptu + $new_ptu)
+            | .hooks.PreToolUse  = ($non_orchestra_ptu + $new_ptu)
             | .hooks.SubagentStop = ($new_hooks.SubagentStop // [])
             | .hooks.PreCompact  = ($new_hooks.PreCompact // [])
         ' "$SETTINGS" "$FRAGMENT" > "$TMPFILE"
 
         mv -f "$TMPFILE" "$SETTINGS"
-        ok "merged: settings.json (orchestra hooks added)"
+        ok "merged: settings.json (orchestra hooks updated)"
     fi
 fi
 

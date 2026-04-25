@@ -140,8 +140,12 @@ They still want the pipeline; that's why they invoked `/brain`. Follow the phase
 
 ## Visibility
 
-If the user is in tmux, subagent invocations will spawn `plan` / `implement` / `review` tmux windows automatically via the hook — no action needed from you.
+If the user is in tmux, subagent invocations will spawn `plan` / `implement` / `review` tmux windows automatically via the hook — each window shows tool calls in real time as the subagent runs. No action needed from you.
 
-If the user is in VSCode or a non-tmux terminal, tell them they can tail `${CLAUDE_PROJECT_DIR}/.claude/orchestra/invocations.log` in a separate terminal split for live visibility. Not required.
+If the user is in VSCode or a non-tmux terminal, tell them to open a terminal split and run:
+```
+tail -f "${CLAUDE_PROJECT_DIR}/.claude/orchestra/live.log"
+```
+This symlink always points to the most recently started subagent's logfile and shows live tool-call lines as they execute. It persists across pipeline stages without needing to be restarted.
 
 $ARGUMENTS

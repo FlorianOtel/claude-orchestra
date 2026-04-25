@@ -126,11 +126,14 @@ REVIEW asks "is the code good" (Reviewer). CROSS-CHECK asks "does the code fulfi
 
 | Event | Hook type | Action |
 |---|---|---|
-| Subagent about to start | `PreToolUse` (matcher: `Agent`) | Spawn tmux window (if `$TMUX`); append prompt line to `invocations.log` |
-| Subagent ended | **`SubagentStop`** | Mark window `✓`; schedule 120 s `kill-window`; append result line to `invocations.log` |
+| Subagent about to start | `PreToolUse` (matcher: `Agent`) | Spawn tmux window (if `$TMUX`); write `live-stage.env` + update `live.log` symlink; append to `invocations.log` |
+| Edit/Write/Bash inside any session | `PreToolUse` (matchers: `Edit`, `Write`, `Bash`) | If `live-stage.env` exists: append `[HH:MM:SS] TOOL param` line to active logfile; else no-op |
+| Subagent ended | **`SubagentStop`** | Mark window `✓`; schedule 120 s `kill-window`; delete `live-stage.env`; append to `invocations.log` |
 | Before context compaction | `PreCompact` | Save Brain state to `${CLAUDE_PROJECT_DIR}/.claude/orchestra/brain-state.md` |
 
 `SubagentStop` is deliberately used instead of `PostToolUse(Agent)` — it's Claude Code's purpose-built hook for the subagent-ended event and is more future-proof.
+
+The `Edit/Write/Bash` hook fires globally for all Claude Code sessions on this user. The `live-stage.env` gate makes it a no-op outside orchestra subagent runs — cost: one file-existence check per Edit/Write/Bash call.
 
 ### 4.6 Invocation
 
@@ -160,31 +163,31 @@ The hook script detects `$TMUX` and branches:
 
 | Environment | `$TMUX` set | Behaviour on subagent spawn | Behaviour on subagent end |
 |---|---|---|---|
-| Plain terminal inside tmux session | ✅ | Spawn window named `<stage>` / `<stage>_N`, tail its logfile | Mark window `✓`, schedule 120 s `kill-window`, append to logs |
-| VSCode Claude Code extension panel | ❌ | No window spawned; append prompt line to `invocations.log` | Append result line to `invocations.log` |
+| Plain terminal inside tmux session | ✅ | Spawn window running `tail -f <logfile>`; write `live-stage.env`; update `live.log` symlink | Mark window `✓`, schedule 120 s `kill-window`, delete `live-stage.env`, append to logs |
+| VSCode Claude Code extension panel | ❌ | No window spawned; write `live-stage.env`; update `live.log` symlink | Delete `live-stage.env`; append to logs |
 | VSCode integrated terminal (no inner tmux) | ❌ | Same as VSCode extension panel | Same |
 | Plain terminal without tmux | ❌ | Same as VSCode extension panel | Same |
 
+In all environments, `Edit/Write/Bash` PreToolUse hooks append live tool-call lines to the active logfile while a subagent runs. In tmux these appear in the auto-spawned window; in VSCode the user tails `live.log` manually.
+
 ### 5.3 Gaps and workarounds
 
-**Gap 1 — No live per-stage window in VSCode.**
-In tmux you see a dedicated window per active subagent. In VSCode the equivalent information only accumulates in `invocations.log`.
+**Gap 1 — No live per-stage window in VSCode.** *(partially resolved 2026-04-25)*
+In tmux you see a dedicated window per active subagent with live tool-call lines. In VSCode no window spawns, but the logfile still receives live lines — open one terminal split and keep it:
 
-- *Workaround*: open a terminal split inside VSCode and run
-  ```bash
-  tail -f ${CLAUDE_PROJECT_DIR}/.claude/orchestra/invocations.log | jq .
-  ```
-  for a live feed while Brain works in the extension panel. Not automatic — a manual one-time setup per project-session.
+```bash
+tail -f ${CLAUDE_PROJECT_DIR}/.claude/orchestra/live.log
+```
 
-**Gap 2 — Per-stage logs are separate files, not tailed by default in VSCode.**
-Each subagent invocation writes its own `<stage>-<UTC-ts>-<HOSTNAME>-<PID>.log` file with prompt + result. In tmux these are tailed in the spawned window automatically; in VSCode you must manually open them after the fact, or tail the aggregated `invocations.log`.
+`live.log` is a symlink updated on each subagent dispatch; it follows the entire pipeline across stages without needing to be restarted. This replaces the earlier workaround of tailing `invocations.log | jq .` (which only showed start/end events, not per-tool-call lines).
 
-- *Workaround*: VSCode task `Terminal → Run Task → Tail orchestra` that runs `tail -f <latest stage log>`. Not built; manual if needed.
+**Gap 2 — Per-stage logs are separate files.** *(resolved 2026-04-25)*
+`live.log` symlink always points at the most-recently-started stage log. Single `tail -f live.log` in VSCode covers all stages sequentially.
 
-**Gap 3 — Nested subagent tool calls are invisible in both environments.**
-By design (bracketed visibility chosen in §6f of the TODO). If you want to see what the Actor is editing *while* it edits, you currently cannot — only the prompt going in and the result coming out.
+**Gap 3 — Nested subagent tool calls invisible.** *(resolved 2026-04-25)*
+`PreToolUse` hooks for `Edit`, `Write`, `Bash` now fire and append `[HH:MM:SS] TOOL param` lines to the active logfile in real time. In tmux these appear in the auto-spawned stage window; in VSCode they appear in a `tail -f live.log` split. The `live-stage.env` file gates the hook to no-op outside orchestra subagent runs.
 
-- *Workaround*: none in v1. Would require verifying whether hooks fire for nested tool calls and instrumenting them. Deferred unless a real need appears.
+*Verification caveat:* whether `PreToolUse` fires for tool calls made *inside* a subagent (vs. only in the parent session) is confirmed by smoke test for the parent-session path, but not yet verified in a live subagent run. If hooks don't fire inside subagents, Tier 2 fallback applies: instruct agents to self-report via `Bash` after each step. See Amendment 2026-04-25.
 
 **Gap 4 — `ExitPlanMode` UI is Claude-Code-native in both environments; nothing to do.**
 The plan approval prompt surfaces in the Claude Code UI (tmux panel or VSCode panel). No environment-specific handling needed.
@@ -282,7 +285,10 @@ ${CLAUDE_PROJECT_DIR}/
         ├── review-comments.md                    # atomic-rename
         ├── brain-state.md                        # written by PreCompact hook
         ├── invocations.log                       # append-only, stamped
-        └── <stage>-<UTC-ts>-<HOST>-<PID>.log     # per-invocation stage logs
+        ├── live-stage.env                        # overwrite; present only while a subagent runs
+        ├── live.log -> logs/<stage>-…            # symlink; updated on each subagent start
+        └── logs/
+            └── <stage>-<UTC-ts>-<HOST>-<PID>.log # per-invocation stage logs (with live tool lines)
 ```
 
 `.claude/orchestra/` is globally gitignored via `~/.gitignore_global` (configured
@@ -300,7 +306,7 @@ All v1 decisions as of 2026-04-24:
 | Window vs pane | — | **Window**, not pane |
 | Window naming | — | **Stage names** (`plan`, `implement`, `review`, …); underscore counter suffix (`_1`, `_2`, …); dashes for multi-word stages (`cross-check`) |
 | Window termination | — | **Auto-close 120 s** after `SubagentStop` |
-| Granularity | — | **Bracketed** (prompt-in / result-out); no nested-tool-call visibility |
+| Granularity | — | ~~Bracketed (prompt-in / result-out)~~ → **Live** (Edit/Write/Bash tool calls visible in real time via `PreToolUse` hooks) — amended 2026-04-25 |
 | G2 mechanism | — | **`ExitPlanMode` called by Brain** (not Planner); sentinel-file fallback for headless |
 | G5 mechanism | — | **auto-loop, cap 3 iterations** |
 | End-of-subagent hook | — | **`SubagentStop`** (canonical, not `PostToolUse(Agent)`) |
@@ -512,7 +518,7 @@ architecture-level changes; anything where you'd want a Reviewer. Use `/brain`.
 | `~/.claude/commands/brain.md` | new | `/brain` slash command — heavyweight opt-in pipeline. Requires plan mode; delegates to Planner → calls `ExitPlanMode` → dispatches Actor → Reviewer → loops cap 3 → halts with summary. Explicitly does NOT commit in v1. |
 | `~/.claude/commands/orchestra-mode.md` | new | `/orchestra-mode` slash command — v1 stub. `default` / `acceptEdits` write preset to `state.env`; `auto` prints "not yet implemented in v1" with pointer to §10.2 of this doc. |
 | `~/.claude/orchestra/config.yaml` | new | Global default config. v1 keys fully wired (`gates`, `review_loop_max`, `commit.policy`). v2 keys present as stubs (`crosscheck_loop_max`, `commit_auto`, `test_gate`, `token_budget_usd`) — honored only under `orchestra_mode: auto`. |
-| `~/.claude/settings.json` | modified | Appended hook entries: `PreToolUse(matcher: Agent)` → `orchestra-hook.sh start`; `SubagentStop` → `orchestra-hook.sh end`; `PreCompact` → `orchestra-hook.sh compact`. Existing `PreToolUse(Bash)` → `venv-enforce.sh` preserved untouched. All other settings (env vars, permissions, statusLine, additionalDirectories) unchanged. |
+| `~/.claude/settings.json` | modified | Hook entries: `PreToolUse(Agent)` → `start`; `PreToolUse(Edit)` → `tool`; `PreToolUse(Write)` → `tool`; `PreToolUse(Bash)` → `tool`; `SubagentStop` → `end`; `PreCompact` → `compact`. All via `orchestra-hook.sh`. Existing `PreToolUse(Bash)` → `venv-enforce.sh` preserved. `Edit`/`Write`/`Bash` → `tool` entries added 2026-04-25. |
 
 Directories newly created: `~/.claude/agents/`, `~/.claude/commands/`, `~/.claude/orchestra/`.
 
@@ -770,6 +776,38 @@ Before producing a plan, Planner challenges the task:
 - Surface alternatives at step level — when a step can be implemented in multiple meaningful ways, name options with pros/cons and mark pending decisions; applies especially to data model, API contracts, error handling, dependencies, test scope.
 - Be aggressive about risks — the Risks/unknowns section is mandatory and substantive; unverifiable assumptions and system boundary gaps must be flagged loudly.
 - Flag scope creep — anything implied by the task but not explicitly mentioned must be named as in-scope or explicitly deferred in "Out of scope".
+
+### Amendment — 2026-04-25: live action feeds in stage windows
+
+Three related changes shipped together. All are in `scripts/orchestra-hook.sh` and the hook configuration; no agent prompt files changed.
+
+**Problem:** tmux stage windows (`plan`, `implement`, `review`) showed only the prompt text and a static "Subagent running…" line for the entire duration of subagent execution. Edits, bash calls, and writes made by Actor/Planner/Reviewer were invisible until the subagent finished. Gap 3 in §5.3.
+
+**Changes:**
+
+1. **`live-stage.env`** — a new overwrite file (not append-only like `state.env`) tracking the currently-active logfile.
+   - On `start`: `printf 'ACTIVE_LOGFILE=%s\n' "$LOGFILE" > "${ORCHESTRA_DIR}/live-stage.env"` (overwrites; no concurrency concern — one subagent active at a time in v1).
+   - On `end`: `rm -f "${ORCHESTRA_DIR}/live-stage.env"` (clears the pointer so `tool` hooks no-op after the subagent finishes).
+
+2. **`live.log` symlink** — stable path for `tail -f` in VSCode (no need to find the timestamped logfile).
+   - On `start`: `ln -sfn "$LOGFILE" "${ORCHESTRA_DIR}/live.log"` (outside `in_tmux()` guard; useful in all environments).
+   - Updated on every new subagent dispatch; persists after `end` pointing at the last run's log.
+
+3. **`tool` mode in `orchestra-hook.sh`** — new `case` branch triggered by `PreToolUse(Edit|Write|Bash)`.
+   - If `live-stage.env` absent → exit 0 (no-op in non-orchestra sessions).
+   - Sources `live-stage.env`, extracts `ACTIVE_LOGFILE`.
+   - Appends `[HH:MM:SS] TOOLNAME param` to the logfile (truncated to 120 chars).
+   - All errors swallowed; always exits 0.
+
+4. **New PreToolUse matchers in `settings.json`** and `config/settings-hooks.json`: `Edit`, `Write`, `Bash` → `orchestra-hook.sh tool`. Existing `Bash` → `venv-enforce.sh` preserved; deploy merge logic updated to preserve non-orchestra PreToolUse entries by command string.
+
+5. **`deploy.sh` idempotency fix** — old check tested only for `SubagentStop` presence; now computes the set of orchestra PreToolUse matchers and re-merges only when the set diverges.
+
+**VSCode guidance updated:** `brain.md` and `duo.md` now point to `tail -f live.log` instead of `invocations.log | jq .`. Single `tail -f live.log` follows the full pipeline across all stages.
+
+**Permission toggle note added to `duo.md`:** Phase 3 dispatch message now reminds the user to press `Shift+Tab` before Actor is dispatched if they want `default` (per-edit confirmation) instead of `bypassPermissions` (uninterrupted). No code change — prose only.
+
+**Verification caveat:** smoke-tested all paths (no-op without `live-stage.env`; `start` creates pointer + symlink; `tool` appends live lines; `end` clears pointer; `tool` no-ops again after end; deploy idempotent on second run). Whether `PreToolUse` fires for tool calls *inside* a subagent (vs. only in the parent session) is the key open question — not yet confirmed by a live pipeline run. If hooks don't fire inside subagents, Tier 2 fallback (actor self-reporting via Bash after each step) would be needed.
 
 ### TO DO / reconsider later — Option B: dedicated FINALIZE stage
 
