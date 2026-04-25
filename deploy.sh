@@ -186,6 +186,7 @@ else
             ' "$TMPFILE.stripped" > "$TMPFILE"
             rm -f "$TMPFILE.stripped"
             mv -f "$TMPFILE" "$STATUS_LINE"
+            chmod +x "$STATUS_LINE"
             ok "updated: status-line.sh (orchestra block refreshed)"
         fi
     else
@@ -200,6 +201,7 @@ else
                 { print }
             ' "$STATUS_LINE" > "$TMPFILE"
             mv -f "$TMPFILE" "$STATUS_LINE"
+            chmod +x "$STATUS_LINE"
             ok "patched: status-line.sh (orchestra block appended)"
         fi
     fi
