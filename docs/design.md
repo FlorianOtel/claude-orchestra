@@ -1280,6 +1280,57 @@ step after the atomic-rename) and redeployed; future spawned sessions auto-trans
 - A `/brain-resume` round that triggers the FIX-loop (Reviewer returns FIX, not PASS,
   forcing re-dispatch) — first dogfooded run had Reviewer PASS on first pass
 
+#### Status line UX by surface (clarified 2026-04-26)
+
+After the dogfooded fix shipped, here is the canonical map of where the custom
+status line appears:
+
+| Surface | Underlying process | Has status line? | Display source |
+|---|---|---|---|
+| Launcher chat panel | Interactive Claude Code | ✓ | Branch B — registry-driven |
+| Phase 0 RESEARCH window (tmux) | Interactive `claude --bare …` | ✓ | Branch A — env-first (`CLAUDE_BRAIN_RUN_ID`) |
+| VSCode terminal split running Phase 0 launcher | Interactive `claude --bare …` | ✓ | Branch A |
+| Planner / Actor / Reviewer subprocess windows | Headless `claude -p` (no TUI) | ✗ — by design | n/a — stream-json via `format-stream.sh` |
+
+**Why no status line in tier subprocess windows.** `claude -p` is headless: no
+TUI, no input prompt, no chat surface. `statusLine.command` is not invoked. What
+runs in those tmux windows is the formatter pipeline:
+```
+claude -p --bare … --output-format stream-json |  format-stream.sh  |  tee → logfile
+```
+The "promptless tmux window with raw text streamed" observed during dogfooding
+is the expected behaviour of A1 (headless + formatter), not a defect.
+
+**Bringing TUI / status line to tier windows** is the deferred A2 path
+(interactive `claude` in tmux per tier, with prompt-injection + result-file
+handoff). Documented in this design doc under the original A1 vs A2 discussion.
+Not in scope for v1.
+
+#### Deploy gotcha — `chmod +x` for status-line.sh patch path (fixed 2026-04-26)
+
+The `deploy.sh` orchestra-block patch path uses `awk` + `mv -f` to re-deploy
+the orchestra block into `~/.claude/scripts/status-line.sh`. Both branches
+(idempotent re-deploy and initial-append) preserved file content correctly but
+did NOT explicitly `chmod +x` after the move. Earlier in-place strip/edit
+cycles during this session had dropped the exec bit from the deployed file.
+Claude Code's `statusLine.command` invocation (which calls the script directly
+without a `bash` prefix) then failed silently with **Permission denied**, and
+the entire custom status line vanished from the chat panel.
+
+The bug was masked for over a dozen exchanges because manual smoke-testing
+used `bash <path>`, which bypasses the exec-bit requirement. Direct invocation
+(`<path>` without `bash` prefix) reproduced the failure immediately.
+
+**Fix:** both `deploy.sh` orchestra-block-patch branches now `chmod +x
+"$STATUS_LINE"` after the `mv -f`. Idempotent. Commit `4704def`.
+
+**Lesson:** when patching files that are invoked directly by external tooling
+(hooks, status lines, etc.), always re-apply executable permissions after any
+write that goes through a tempfile + rename. The other deploy.sh script-copy
+path (the `for s in orchestra-hook.sh run-tier.sh …` loop) already does this
+via an explicit `chmod +x` after `cp`; the status-line patch path was the
+outlier.
+
 ---
 
 ## v2 TO-DO classification (architecture-aware)
