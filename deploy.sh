@@ -165,7 +165,7 @@ else
     if $BLOCK_PRESENT; then
         # Extract deployed block (from ORCHESTRA_BLOCK_START to just before "# Output the status line")
         DEPLOYED_BLOCK="$(awk '/^# ORCHESTRA_BLOCK_START/,/^# Output the status line/' "$STATUS_LINE" | sed '$d')"
-        SOURCE_BLOCK="$(sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$REPO/status-line/orchestra-block.sh")"
+        SOURCE_BLOCK="$(sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^# just before the final/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$REPO/status-line/orchestra-block.sh")"
         if [ "$DEPLOYED_BLOCK" = "$SOURCE_BLOCK" ]; then
             ok "unchanged: status-line.sh (orchestra block already present, matches source)"
         elif $DRY_RUN; then
@@ -179,7 +179,7 @@ else
                 !in_block { print }
             ' "$STATUS_LINE" > "$TMPFILE.stripped"
             # Now append fresh block via the same awk-insert logic
-            BLOCK_CONTENT=$(sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$REPO/status-line/orchestra-block.sh")
+            BLOCK_CONTENT=$(sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^# just before the final/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$REPO/status-line/orchestra-block.sh")
             awk -v block="$BLOCK_CONTENT" '
                 /^# Output the status line/ { print block; print ""; }
                 { print }
@@ -193,7 +193,7 @@ else
             info "would append orchestra block to status-line.sh"
         else
             BLOCK="$REPO/status-line/orchestra-block.sh"
-            BLOCK_CONTENT=$(sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$BLOCK")
+            BLOCK_CONTENT=$(sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^# just before the final/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$BLOCK")
             TMPFILE="$STATUS_LINE.orchestra-deploy.tmp"
             awk -v block="$BLOCK_CONTENT" '
                 /^# Output the status line/ { print block; print ""; }
