@@ -77,6 +77,51 @@ cd /path/to/my-project
 
 When Claude Code is launched inside a project that has been locally deployed, its `.claude/agents/` and `.claude/commands/` take precedence over the system-wide `~/.claude/` versions — giving you isolated testing without affecting any other project.
 
+## Development workflow (dogfooding)
+
+Working on the orchestra itself uses a three-level promote model:
+
+```
+repo (.claude/agents/, .claude/commands/)   ← edit here
+        │  ./deploy.sh --local (self-check + config)
+        │  ./deploy.sh --global             (promote to stable)
+        ▼
+~/.claude/ (system-wide, all projects)
+```
+
+**Level 1 — edit in the repo (no deploy needed for agents/commands).**
+Because agents and commands live in `.claude/` inside the repo, Claude Code
+picks them up automatically when launched from `~/Gin-AI/projects/claude-orchestra/`.
+Just edit `.claude/agents/*.md` or `.claude/commands/*.md` and the change is
+live immediately — no deploy step.
+
+**Level 2 — `./deploy.sh --local` from the repo root (self-check + local config).**
+Running `--local` from inside the repo is a useful self-check: agents and commands
+report "unchanged" (source = destination), while the hook script and orchestra
+config are written into `.claude/scripts/` and `.claude/orchestra/` giving the
+project its own config separate from the global one.
+
+Note: the hook script copied to `.claude/scripts/orchestra-hook.sh` is **not
+invoked** by the local deploy — the global `~/.claude/settings.json` references
+`~/.claude/scripts/orchestra-hook.sh` by absolute path. Changes to the hook
+script only take effect after `./deploy.sh --global`.
+
+**Level 3 — `./deploy.sh --global` (promote to stable).**
+Once changes are tested and committed, promote to `~/.claude/` so all projects
+and all machines pick them up.
+
+```bash
+# Typical dogfood cycle:
+# 1. Edit .claude/agents/planner.md or .claude/commands/brain.md in the repo
+# 2. Test with Claude Code launched from inside this repo (no deploy needed)
+# 3. Commit
+git add .claude/agents/ .claude/commands/ && git commit -m "..."
+# 4. Promote to global
+./deploy.sh --global
+# 5. Push
+git push
+```
+
 ## Usage
 
 ```
