@@ -623,7 +623,7 @@ Idiomatic choices (matching the existing Gruvbox script's style):
 
 Script validated with `bash -n`; five test scenarios (non-orchestra / orchestra idle / Haiku Actor running / Brain over-threshold / Sonnet Planner running) render correctly.
 
-### Amendment — 2026-04-24 (evening, branched session): lightweight `/duo` pipeline + badge disambiguation
+### Amendment — 2026-04-25 (branched session `Claude-orchestra-light`): lightweight `/duo` pipeline + badge disambiguation
 
 Two additions made in a branched conversation (`Claude-orchestra-light`) after the main v1 session closed. No new agents, no new hooks, no settings changes. One new slash-command file; two existing slash-command files lightly amended.
 
@@ -681,6 +681,38 @@ Files modified:
 No changes to `status-line.sh` — it already reads `ORCHESTRA_MODE` via `grep … | tail -n 1` (last-write-wins semantics on `state.env`), so the new values render automatically. Validated with four badge values (`default`, `orchestra`, `duo`, `acceptEdits`) — all render correctly.
 
 **Notable design point — `state.env` append semantics**: both pipelines append rather than rewrite `state.env`, consistent with the existing hook pattern. The file accumulates pairs of lines per pipeline run (`MODE=orchestra` on start, `MODE=default` on done). The status-line reads the last occurrence (`grep … | tail -n 1`), so earlier lines are shadowed. No cleanup is needed, but `state.env` will grow slowly over many sessions; a periodic trim is acceptable hygiene.
+
+**Validation — idempotency audit (2026-04-25, post-restructure)**
+
+All deployed files verified identical between the repo and `~/.claude/`:
+
+| File | Repo path | Live path | Status |
+|---|---|---|---|
+| planner.md | `.claude/agents/planner.md` | `~/.claude/agents/planner.md` | ✅ identical |
+| actor.md | `.claude/agents/actor.md` | `~/.claude/agents/actor.md` | ✅ identical |
+| reviewer.md | `.claude/agents/reviewer.md` | `~/.claude/agents/reviewer.md` | ✅ identical |
+| brain.md | `.claude/commands/brain.md` | `~/.claude/commands/brain.md` | ✅ identical |
+| duo.md | `.claude/commands/duo.md` | `~/.claude/commands/duo.md` | ✅ identical |
+| orchestra-mode.md | `.claude/commands/orchestra-mode.md` | `~/.claude/commands/orchestra-mode.md` | ✅ identical |
+| orchestra-hook.sh | `scripts/orchestra-hook.sh` | `~/.claude/scripts/orchestra-hook.sh` | ✅ identical |
+| config.yaml | `config/config.yaml` | `~/.claude/orchestra/config.yaml` | ✅ identical |
+| Orchestra hooks in settings | `config/settings-hooks.json` | `~/.claude/settings.json` `.hooks` | ✅ all 3 entries match |
+| design.md | `docs/design.md` | symlink → `~/Gin-AI/chats/Claude-orchestra.md` | ✅ identical |
+| design-history.md | `docs/design-history.md` | symlink → `~/Gin-AI/chats/Claude-code-tmux-pipeline--TODO.md` | ✅ identical |
+
+**Smoke test of `/duo` pipeline (2026-04-25)**
+
+| Step | Result |
+|---|---|
+| Plan-mode gate check (first invocation — no plan mode) | ✅ Detected; prompted user to `Shift+Tab` first |
+| Plan mode active (second invocation) | ✅ Detected correctly |
+| Explore subagent (repo state read) | ✅ Launched; returned accurate current state |
+| Stale plan detection | ✅ Identified that existing `PLAN.md` described already-committed work |
+| `AskUserQuestion` | ✅ Rendered and returned answer |
+| `state.env` write (`ORCHESTRA_MODE=duo`) | ⏸ Blocked by plan mode — correct; fires after ExitPlanMode approval in real use |
+| `ExitPlanMode` | ⏸ Not called — no real task to approve (correct for a smoke test) |
+
+The pipeline is wired correctly. The `state.env` badge write is intentionally placed after plan approval — it fires in Phase 1 execution, not during the planning conversation itself.
 
 ### Amendment — 2026-04-25 (follow-up session): repo restructure + per-project deploy
 
