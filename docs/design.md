@@ -300,13 +300,13 @@ All v1 decisions as of 2026-04-24:
 
 | # | Item | Decision |
 |---|---|---|
-| Architecture | Option A/B/C | **Option B** — native sub-agents in one Brain session |
+| Architecture | Option A/B/C | ~~Option B (native sub-agents)~~ → **Option A** — per-tier `claude -p` subprocess in dedicated tmux windows. Migrated 2026-04-26. See Amendment. |
 | Scope | Global vs project-scoped | **Global** at `~/.claude/` |
 | Visibility | Tmux vs logfile only | **Conditional** — `$TMUX`-detecting hook script |
 | Window vs pane | — | **Window**, not pane |
 | Window naming | — | **Stage names** (`plan`, `implement`, `review`, …); underscore counter suffix (`_1`, `_2`, …); dashes for multi-word stages (`cross-check`) |
 | Window termination | — | **Auto-close 120 s** after `SubagentStop` |
-| Granularity | — | ~~Bracketed (prompt-in / result-out)~~ → **Live** (Edit/Write/Bash tool calls visible in real time via `PreToolUse` hooks) — amended 2026-04-25 |
+| Granularity | — | ~~Bracketed~~ → ~~Live (PreToolUse hooks)~~ → **Full live feed** (thinking, prose, tool calls with args, tool results — via `claude -p --output-format stream-json` per tier). Amended 2026-04-26. |
 | G2 mechanism | — | **`ExitPlanMode` called by Brain** (not Planner); sentinel-file fallback for headless |
 | G5 mechanism | — | **auto-loop, cap 3 iterations** |
 | End-of-subagent hook | — | **`SubagentStop`** (canonical, not `PostToolUse(Agent)`) |
@@ -896,7 +896,233 @@ Three related changes shipped together. All are in `scripts/orchestra-hook.sh` a
 
 **Verification caveat:** smoke-tested all paths (no-op without `live-stage.env`; `start` creates pointer + symlink; `tool` appends live lines; `end` clears pointer; `tool` no-ops again after end; deploy idempotent on second run). Whether `PreToolUse` fires for tool calls *inside* a subagent (vs. only in the parent session) is the key open question — not yet confirmed by a live pipeline run. If hooks don't fire inside subagents, Tier 2 fallback (actor self-reporting via Bash after each step) would be needed.
 
-### TO DO / reconsider later — Option B: dedicated FINALIZE stage
+### Amendment — 2026-04-26: migrate to Option A — per-tier `claude -p` subprocesses
+
+The architecture was migrated from Option B (native Agent tool subagents) to Option A
+(headless `claude -p` subprocess per tier) for `/brain` and `/duo` pipelines. Hard cutover —
+the native Agent-tool dispatch path was removed from these commands.
+
+**Why now.** The PreToolUse-based live feed shipped 2026-04-25 only showed tool-call lines
+(Edit/Write/Bash) — no thinking, no prose, no tool results. The user's expectation that
+`/brain` and `/duo` should show a feed comparable to interactive default mode required
+crossing the hook boundary. Hooks fire only at tool-call boundaries; model output (thinking
+blocks, prose between tool calls) is never exposed to hooks. Option A solves this by running
+each tier as its own `claude -p` process whose `--output-format stream-json --include-partial-messages`
+output we render via `format-stream.sh` — capturing the full event stream including
+thinking-block boundaries (encrypted content via `signature_delta`, but visible status),
+tool calls with arguments, tool results with stdout/stderr, and final result.
+
+**Why Option A now versus when originally rejected.** The 2026-04-24 rejection (design-history.md §3)
+cited three cons: three concurrent API bills, handoff friction (mailbox + inotifywait + tmux
+send-keys), and "parallelism visual only". All three are no longer relevant: tiers run
+sequentially (not concurrent — same cost as Agent tool); file-polling handoff is far
+simpler than inotifywait; the pipeline is sequential by design. The implied loss of
+`ExitPlanMode` and permission-mode integration is also resolved — `ExitPlanMode` is called
+by Brain (the native session) regardless of how tiers are dispatched, and per-subprocess
+`--permission-mode` is *better* than session-level Shift+Tab.
+
+**Components added.**
+
+- `scripts/format-stream.sh` — line-by-line `stream-json` parser → human-readable terminal
+  output. Renders `system.init` header, `content_block_start/delta/stop` events for thinking
+  (with elapsed time) and text (streamed), tool_use blocks (consolidated from `assistant`
+  message), and tool results (from `user` message + Claude-Code-specific `tool_use_result`
+  field). Writes final result text to `$RESULT_FILE` env var on `result` event arrival.
+- `scripts/run-tier.sh` — spawns the `claude -p` subprocess. In tmux: `tmux new-window`
+  named for the stage; outside: detached `nohup` writing to `live.log`. Sets up the
+  `live-stage.env` pointer at start and clears it at end (subprocess always cleans up via
+  `; rm -f live-stage.env` appended to its pipeline).
+- `~/.claude/agents/.stripped/` — frontmatter-stripped versions of `actor.md`, `planner.md`,
+  `reviewer.md`. Generated at deploy time. Consumed by `run-tier.sh` via
+  `--append-system-prompt-file`. Pre-stripping at deploy is optimization (2) for
+  byte-stable system prompts (max prompt-cache reuse).
+
+**Components used (Claude Code CLI flags).**
+
+- `--bare` — skip hooks, CLAUDE.md auto-discovery, plugins, attribution, auto-memory,
+  background prefetches, keychain reads. Replaces the originally-planned
+  `CLAUDE_ORCHESTRA_DISABLE_ALL` env-var guard. Cleaner: hooks simply do not fire inside
+  the subprocess.
+- `--model <model>` — explicit per-tier model selection. `claude-sonnet-4-6` for
+  Planner / Reviewer; `claude-haiku-4-5-20251001` for Actor.
+- `--permission-mode <mode>` — explicit per-tier permission mode. `default` for read-only
+  tiers (Planner, Reviewer); `bypassPermissions` for Actor (uninterrupted execution).
+- `--allowedTools "<comma-list>"` — explicit per-tier tool whitelist (matches the
+  `tools:` frontmatter from the Option B agent files).
+- `--append-system-prompt-file` (×2 or ×3) — stripped agent file + global CLAUDE.md +
+  project CLAUDE.md (the latter two replace `--bare`'s skipped CLAUDE.md auto-discovery).
+- `--output-format stream-json --include-partial-messages --verbose` — required combination
+  for streaming events. `--verbose` is mandatory (validated empirically; `claude -p` rejects
+  `stream-json` without it).
+- `--no-session-persistence` — subprocess sessions don't write to `~/.claude/sessions/`.
+  Avoids polluting transcript history with tier-internal state.
+
+**Within-tier prompt-cache reuse — preserved.** The Anthropic edge cache is keyed on the
+prefix bytes (system prompt + tools + initial messages). The same byte-stable prefix is
+sent on every Planner / Actor / Reviewer invocation (frontmatter pre-stripped, no per-call
+templating in the system prompt), so within-tier calls within the 5-min default TTL hit
+cache. Cross-tier reuse is impossible by design (different system prompts) and was not
+possible under Option B either. Brain's own session cache is unaffected.
+
+**Optimizations shipped.**
+
+1. Byte-stable system prompts — `run-tier.sh` always passes the same flags in the same
+   order; agent files have no time-varying data.
+2. Pre-stripped agent files at deploy time — `deploy.sh` produces
+   `~/.claude/agents/.stripped/<name>.md` once per deploy. `run-tier.sh` consumes the
+   stripped version. Avoids ~50ms of stripping per invocation and guarantees byte-identical
+   prefixes.
+
+**Optimizations deferred to v2 — see TO DO sections below.**
+
+3. Persistent subprocess per tier (one long-lived `claude -p --input-format stream-json`
+   per tier, multiple turns streamed to it) — eliminates startup overhead per call,
+   maintains session context across calls. Defer until profiling shows startup cost matters
+   in real pipeline runs.
+4. 1-hour TTL prompt caching — Anthropic supports `cache_control: {ttl: "1h"}` with ~30%
+   premium on cache writes. `claude -p` does not currently expose TTL via CLI flag, so
+   would require Claude Code adding the flag or moving to direct SDK calls. Defer until
+   measurement (TTL-miss-rate per tier from `cache_read_input_tokens` /
+   `cache_creation_input_tokens` in API usage data) shows it would pay back.
+
+**Trade-offs accepted.**
+
+- *Context isolation.* The subprocess has no access to Brain's conversation history. Brain
+  must serialise everything into the prompt explicitly. brain.md and duo.md updated to
+  emphasise this.
+- *Subprocess startup overhead.* ~1–2 s per invocation, accepted for v1 simplicity.
+  Persistent-subprocess optimization (3) will eliminate this in v2 if needed.
+- *Cross-environment behaviour.* In tmux: each tier gets its own named window (`plan`,
+  `implement`, `review`), auto-closing 120s after completion. In VSCode (no tmux):
+  subprocess runs detached, output written to `live.log` symlink — user tails one terminal
+  split for the whole pipeline.
+
+**Hard cutover, no fallback flag.** No new `orchestra-mode` preset; the native Agent-tool
+path is gone from `/brain` and `/duo`. Rollback is via `git revert` if Option A surfaces a
+real-world blocker. Ad-hoc Brain-driven research subagents (Explore, general-purpose) keep
+using the native Agent tool — they are not pipeline tiers.
+
+### Known limitations of Option A (post-migration)
+
+| Limitation | Workaround / future fix |
+|---|---|
+| Thinking-block content is encrypted via `signature_delta` (model-side; not Claude-Code-specific) | Show "💭 thinking… (Ns)" status only; reasoning text inaccessible. Same as Claude Code interactive mode. |
+| Subprocess startup ~1–2 s per call | v2 optimization (3) — persistent subprocess |
+| Brain's Bash tool call blocks for the tier's full duration (potentially 5–10 min for Actor) | Bash tool timeout must accommodate; brain.md polling loop capped at 300 × 2 s = 10 min |
+| Concurrent tier subprocesses in same project would write to overlapping `live-stage.env` | Acceptable — pipeline is sequential by design; not relevant in v1 |
+| Failed subprocess (crash, API error) doesn't write `RESULT_FILE` → Brain polls forever | Caller's `for i in $(seq 1 300)` cap prevents infinite blocking; surface "tier did not complete in 10 min" to user |
+
+### TO DO — v2 optimization (3): persistent subprocess per tier
+
+**Premise.** Each tier currently spawns a fresh `claude -p` subprocess per invocation
+(spawn-per-call). For pipelines with many fix-loop iterations or many plan steps, this
+incurs ~1–2 s of startup overhead per call (loading config, parsing CLAUDE.md, initialising
+tools).
+
+**Approach.** Keep one `claude -p --input-format stream-json --output-format stream-json`
+subprocess alive per tier across the entire pipeline run. Brain streams new task prompts
+to it via stdin (turn-by-turn input); subprocess responds via stdout. Lifecycle: open at
+start of Phase 3, close at end of Phase 3.
+
+**Assumptions to verify before implementing.**
+- `claude -p --input-format stream-json --output-format stream-json` accepts continuous
+  turn-based input (not just one-shot)
+- The stream-json `result` event marks turn boundaries cleanly so Brain can read full
+  responses and the subprocess waits for the next prompt
+- Subprocess crashes are rare enough that recovery cost is acceptable
+
+**Implications.**
+- Eliminates startup overhead per call
+- Maintains session context across calls — Actor remembers what it did in step 1 when
+  working on step 2 (currently context must be re-serialised by Brain)
+- Maximises within-pipeline cache reuse — one continuous session, no TTL concerns
+- Brain protocol shifts from spawn/poll/teardown-per-call to open/stream/stream/close-per-tier
+- Tmux UX: one long-lived window per tier instead of one per invocation
+- Failure mode: subprocess crash mid-pipeline loses tier session; recovery requires
+  restarting and re-sending prior context (or accepting the loss for that pipeline run)
+
+**When to revisit.** After v1 (spawn-per-call) ships and is stable, profile real pipeline
+runs:
+- If startup overhead exceeds ~5% of total wall-clock time per pipeline run, OR
+- If "Actor doesn't remember step 1 when running step 2" causes coordination bugs that
+  cost more in extra steps than persistent-subprocess complexity costs to maintain
+
+then implement persistent subprocess. Otherwise the simplicity of spawn-per-call wins.
+
+### TO DO — v2 optimization (4): 1-hour TTL prompt caching
+
+**What it is.** Anthropic's prompt cache supports two TTL tiers:
+- Default: 5 minutes (included in standard pricing)
+- Extended: 1 hour (requires `cache_control: {type: "ephemeral", ttl: "1h"}` in the API
+  request, with ~30% premium on the cache-write multiplier; cache reads cost the same)
+
+**Why deferred.** `claude -p` does not currently expose `cache_control` TTL via CLI flag.
+Implementation would require either Claude Code adding the flag, or moving to direct
+Anthropic SDK calls (non-trivial).
+
+**When it might pay off.**
+- Pipelines that span >5 minutes between same-tier calls (long Actor steps where
+  Reviewer's prior cache expires before the next call)
+- Long human-decision pauses at G2 (`ExitPlanMode`) — user takes 10+ min to read the plan
+- Heavy daily use where one user runs many `/brain` pipelines on similar tasks
+
+**How to quantify.**
+
+1. Instrument tier invocations to log API usage data:
+   - `cache_creation_input_tokens` (cache write occurred)
+   - `cache_read_input_tokens` (cache hit)
+   - timestamp + tier + invocation ID
+
+   These fields are already present in the `result.usage` block of the stream-json `result`
+   event (verified empirically — see Amendment). Capture by parsing in `format-stream.sh`
+   and appending to a usage log.
+
+2. Run a representative sample (5–10 typical `/brain` runs, 5–10 typical `/duo` runs)
+   covering normal task variety.
+
+3. For each tier, compute the *miss rate due to TTL expiry*:
+   - missed = invocations where the same tier's prefix was sent within prior 1 hour but
+     >5 min ago (cache would have hit at 1h TTL but expired at 5m TTL)
+   - rate = missed / total within-tier invocations
+
+4. Decision rule: if any tier shows TTL-miss-rate >20%, 1-hour TTL would help that tier.
+   Apply selectively (only the tier(s) that need it), not blanket.
+
+5. Cost comparison:
+   - Status quo: each TTL-miss costs full-input-rate × prefix tokens
+   - With 1h TTL: extra ~30% premium on cache write paid once, then hits at 10% of normal
+     rate
+   - Break-even: at TTL-miss-rate r, switching is worthwhile when
+     `r > 0.30 / (1.00 - 0.10) ≈ 33%` (rough — actual pricing has nuances)
+
+## v2 TO-DO classification (architecture-aware)
+
+The 2026-04-26 migration to Option A (`claude -p` subprocesses on `main`) makes some
+v2 TO-DOs architecture-specific. The Option B (native Agent-tool subagents) work is
+preserved on the **`sub-agents`** git branch for fallback or future development.
+
+| TO-DO | Common | Option A (`main`) | Option B (`sub-agents` branch) |
+|---|---|---|---|
+| Optional FINALIZE doc-review stage | ✓ | applies | applies |
+| `auto` mode (existing detailed spec below) | concepts only | implementation needs rewrite¹ | implementation matches the spec |
+| Optimization (3): persistent subprocess per tier | | ✓ | n/a (Agent tool reuses session natively) |
+| Optimization (4): 1-hour TTL prompt caching | | ✓ | n/a (Agent tool reuses Brain's session cache) |
+| Lock sentinel for cross-machine project sessions (§10.3) | ✓ | applies | applies |
+
+¹ The existing `auto` mode spec was written assuming Option B. Under Option A, several
+implementation details change:
+- `SubagentStop` hook signal → result-file polling (`scripts/run-tier.sh` already implements this)
+- Agent-tool error capture → subprocess exit codes + stream-json `result.is_error` field
+- Concurrent Actor fan-out → spawn multiple `claude -p` subprocesses (one per branch worktree)
+- Crash recovery → subprocess re-spawn vs. Agent-tool retry semantics
+- Token-budget tracking → `result.total_cost_usd` per subprocess (already captured in stream-json)
+
+High-level concepts (CROSS-CHECK, branch isolation, test gate, halt-and-resume, checkpoint
+commits) remain valid in either architecture; only the plumbing differs.
+
+---
+
+### TO DO — optional FINALIZE doc-review stage (common to both architectures)
 
 We chose the lightweight path (Planner pre-considers + Phase 4 post-checks) over a formal FINALIZE stage. If the lightweight approach proves insufficient, reconsider Option B:
 
@@ -916,6 +1142,24 @@ We chose the lightweight path (Planner pre-considers + Phase 4 post-checks) over
 - The TODO design-history doc gets a new resolution note superseding this TO DO entry.
 
 ### TO DO — v2 `auto` mode: detailed implementation spec
+
+> **Architecture note (added 2026-04-26):** the spec below was written assuming Option B
+> (native Claude Code subagents via Agent tool). Under the post-2026-04-26 Option A
+> architecture (`claude -p` subprocesses on `main`), the high-level design (CROSS-CHECK,
+> branch isolation, test gate, halt-and-resume, checkpoint commits, dangerous-Bash guard,
+> scope check, budget caps) **all still apply**. What changes is the plumbing:
+>
+> - `SubagentStop` hook signal ↔ result-file polling (see `scripts/run-tier.sh`)
+> - "Modified files" list below mostly still applies, but `orchestra-hook.sh` may need
+>   fewer modes since hooks no longer track tier lifecycle
+> - "Concurrent fan-out" of multiple Actors becomes parallel `claude -p` subprocesses,
+>   each with its own tmux window
+> - Token-budget tracking: `result.total_cost_usd` field in stream-json `result` event
+>   (already captured per-tier — easy to aggregate)
+>
+> **The `sub-agents` git branch** preserves the Option B implementation; if `auto` mode
+> is built on that branch, the spec below applies verbatim. On `main`, treat the spec as
+> a design reference and adapt the plumbing details.
 
 Section §10.2 above sketched the `auto` preset as a v2 stub. This entry captures the concrete detailed spec worked out in the 2026-04-24 design session, organised as a decision tracker for when v2 appetite arrives. Build this AFTER answering the ten open decisions below (in roughly the stated order — earlier questions are foundational; later ones are cosmetic or easily changed).
 

@@ -61,10 +61,31 @@ On rejection: stay in plan mode, refine, repeat Phase 1.
 
 ## Phase 3 — Execute (Haiku, auto)
 
-On approval, first tell the user:
-> "Dispatching Actor (Haiku 4.5). **Permission mode:** press `Shift+Tab` now to toggle — leave it as-is for auto-approve, or switch to `default` if you want to confirm each edit before it lands. The `implement` window (tmux) or `live.log` (VSCode) will show tool calls in real time."
+On approval, dispatch the Actor as a `claude -p` subprocess via `~/.claude/scripts/run-tier.sh`.
+This runs Actor on Haiku 4.5 with `bypassPermissions` set explicitly — no `Shift+Tab` needed,
+the model and permission mode are set per-subprocess. The `implement` tmux window (or
+`tail -f .claude/orchestra/live.log` for VSCode users) shows the full live feed: thinking,
+prose, tool calls with arguments, and tool results.
 
-Then delegate **all steps in a single Agent call** to the `actor` subagent. Pass the full plan text so Actor can execute all steps sequentially. Actor's scope discipline and hard-deny rules (no `rm -rf`, no `git push`, no commits) apply as documented in `actor.md`.
+```bash
+PROMPT_FILE=$(mktemp /tmp/actor-prompt.XXXXXX)
+cat > "$PROMPT_FILE" <<'EOF'
+[full plan text from above]
+
+Execute all steps sequentially. Stay in scope per the plan's "Out of scope" section.
+Hard-deny rules apply: no `rm -rf`, no `git push`, no commits.
+Update ${CLAUDE_PROJECT_DIR}/.claude/orchestra/TASKS.json via atomic-rename as steps complete.
+Return one of: "ready_for_review", "blocked: <reason>", or "partial: <details>".
+EOF
+
+RESULT_FILE=$(~/.claude/scripts/run-tier.sh implement claude-haiku-4-5-20251001 actor \
+  bypassPermissions "$PROMPT_FILE" \
+  --allowedTools "Read,Edit,Write,Bash,Grep,Glob,TodoWrite")
+
+for i in $(seq 1 300); do [ -s "$RESULT_FILE" ] && break; sleep 2; done
+ACTOR_STATUS=$(cat "$RESULT_FILE")
+rm -f "$RESULT_FILE" "$PROMPT_FILE"
+```
 
 If Actor reports `blocked` on any step, surface that to the user and stop — do not auto-retry.
 

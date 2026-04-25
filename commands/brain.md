@@ -52,13 +52,45 @@ echo "ORCHESTRA_MODE=orchestra" >> "${CLAUDE_PROJECT_DIR}/.claude/orchestra/stat
 ```
 This makes the status-line badge show `♪ orchestra` for the duration of the pipeline.
 
-Delegate to the `planner` subagent via the Agent tool with a clear, self-contained prompt:
+Dispatch the Planner as a `claude -p` subprocess via `~/.claude/scripts/run-tier.sh`. The
+subprocess runs in its own tmux window (or VSCode users tail `live.log`) showing the full
+live feed — thinking, prose, tool calls, and tool results — as the Planner works.
 
-- The user's original request (summarized if long).
-- Relevant context from this conversation (files already discussed, decisions already made).
-- An explicit instruction to write `PLAN.md` to the project's orchestra directory using the atomic-rename pattern.
+**Critical: prompts must be fully self-contained.** The subprocess has NO access to this
+conversation's history. Include explicitly:
+- The user's original request (full text, not summarised)
+- Files / decisions already discussed in this conversation
+- An explicit instruction to write `PLAN.md` to `${CLAUDE_PROJECT_DIR}/.claude/orchestra/PLAN.md` via atomic-rename
+- An explicit instruction to return the plan text as the final response
 
-Wait for Planner's response. It will contain the plan text AND confirm persistence to `PLAN.md`.
+Dispatch via `Bash`:
+```bash
+PROMPT_FILE=$(mktemp /tmp/planner-prompt.XXXXXX)
+cat > "$PROMPT_FILE" <<'EOF'
+[user's full request]
+
+[any conversation context Planner needs]
+
+Write PLAN.md to ${CLAUDE_PROJECT_DIR}/.claude/orchestra/PLAN.md using atomic-rename
+(write to PLAN.md.tmp first, then `mv -f` to PLAN.md). Return the plan text as your
+final response.
+EOF
+
+RESULT_FILE=$(~/.claude/scripts/run-tier.sh plan claude-sonnet-4-6 planner default \
+  "$PROMPT_FILE" --allowedTools "Read,Grep,Glob,WebFetch,Bash,Write,TodoWrite")
+
+# Block until subprocess writes its result (poll, max ~10 min).
+for i in $(seq 1 300); do
+  [ -s "$RESULT_FILE" ] && break
+  sleep 2
+done
+PLANNER_RESPONSE=$(cat "$RESULT_FILE")
+rm -f "$RESULT_FILE" "$PROMPT_FILE"
+```
+
+The Planner runs on `claude-sonnet-4-6` with permission mode `default` (Planner is read-only
++ writes only PLAN.md). After completion, read PLAN.md from disk and use `$PLANNER_RESPONSE`
+for the plan text in Phase 2.
 
 ### Phase 2 — G2 approval via ExitPlanMode
 
@@ -76,19 +108,65 @@ If the user approves, exit plan mode (the tool does this automatically on approv
 
 ### Phase 3 — IMPLEMENT + REVIEW loop (auto-loop cap 3)
 
+Both Actor and Reviewer run as `claude -p` subprocesses via `run-tier.sh` — same self-
+contained-prompt rule as Phase 1. Each gets its own tmux window (`implement`, `review`)
+or appears sequentially in `live.log` for VSCode users.
+
 For each numbered step in the approved plan:
 
-1. Delegate to the `actor` subagent with a prompt that contains:
-   - The one step Actor is to do.
-   - A reminder: "Stay in scope. Do NOT do other steps. Update TASKS.json via atomic-rename when done."
-2. Receive Actor's status report.
-3. If Actor reports `blocked`, surface to the user — do not auto-retry.
-4. If Actor reports `ready_for_review`, delegate to the `reviewer` subagent with a prompt that contains:
-   - Reference to PLAN.md and TASKS.json.
-   - The specific step just completed.
-5. Receive Reviewer's verdict:
+1. Dispatch the Actor via `run-tier.sh`:
+   ```bash
+   PROMPT_FILE=$(mktemp /tmp/actor-prompt.XXXXXX)
+   cat > "$PROMPT_FILE" <<EOF
+   You are executing step N from PLAN.md. The step is:
+
+   [text of the single step]
+
+   Read PLAN.md and TASKS.json from \${CLAUDE_PROJECT_DIR}/.claude/orchestra/ for context.
+   Stay in scope. Do NOT do other steps. Update TASKS.json via atomic-rename when done.
+   Return one of: "ready_for_review" / "blocked: <reason>" / "partial: <details>".
+   EOF
+
+   RESULT_FILE=$(~/.claude/scripts/run-tier.sh implement claude-haiku-4-5-20251001 actor \
+     bypassPermissions "$PROMPT_FILE" \
+     --allowedTools "Read,Edit,Write,Bash,Grep,Glob,TodoWrite")
+
+   for i in $(seq 1 300); do [ -s "$RESULT_FILE" ] && break; sleep 2; done
+   ACTOR_STATUS=$(cat "$RESULT_FILE")
+   rm -f "$RESULT_FILE" "$PROMPT_FILE"
+   ```
+   Model: `claude-haiku-4-5-20251001`. Perm-mode: `bypassPermissions` (Actor runs uninterrupted).
+
+2. Inspect `$ACTOR_STATUS`.
+3. If status starts with `blocked`, surface to the user — do not auto-retry.
+4. If `ready_for_review`, dispatch the Reviewer:
+   ```bash
+   PROMPT_FILE=$(mktemp /tmp/reviewer-prompt.XXXXXX)
+   cat > "$PROMPT_FILE" <<EOF
+   Review the work just done by Actor for step N.
+
+   PLAN.md and TASKS.json are at \${CLAUDE_PROJECT_DIR}/.claude/orchestra/. The step Actor
+   just completed:
+
+   [text of the step]
+
+   Compare the actual change (run \`git diff\` or read the affected files) against PLAN.md
+   and TASKS.json. Write review-comments.md via atomic-rename. Return verdict on its own
+   line as "PASS", "FIX: <issues>", or "BLOCK: <reason>".
+   EOF
+
+   RESULT_FILE=$(~/.claude/scripts/run-tier.sh review claude-sonnet-4-6 reviewer default \
+     "$PROMPT_FILE" --allowedTools "Read,Grep,Glob,Bash,Write,TodoWrite")
+
+   for i in $(seq 1 300); do [ -s "$RESULT_FILE" ] && break; sleep 2; done
+   REVIEW_VERDICT=$(cat "$RESULT_FILE")
+   rm -f "$RESULT_FILE" "$PROMPT_FILE"
+   ```
+   Model: `claude-sonnet-4-6`. Perm-mode: `default`.
+
+5. Parse `$REVIEW_VERDICT`:
    - **PASS** — move to the next step in the plan.
-   - **FIX** — delegate to Actor again with Reviewer's issue list. Increment iteration counter for this step.
+   - **FIX** — re-dispatch Actor with the issue list as the new step description; increment iteration counter.
    - **BLOCK** — stop the loop for this step, surface to user.
 6. Iteration cap: **3 fix loops per step**. On the 4th iteration request, stop and surface a summary to the user.
 
@@ -105,7 +183,7 @@ After all steps are PASS (or the user has resolved any blocks / caps manually):
    - `*-strategy.md` — design-decision changes
    - Any doc named in CLAUDE.md's project-file inventory
 
-   If Planner's plan already covered the necessary doc updates (i.e. they were numbered steps and Actor executed them), skip this check. Otherwise dispatch `actor` ONCE more with a prompt that:
+   If Planner's plan already covered the necessary doc updates (i.e. they were numbered steps and Actor executed them), skip this check. Otherwise dispatch the Actor ONCE more (via `run-tier.sh`, same pattern as Phase 3) with a prompt that:
    - Names the specific doc(s) and the specific change(s) needing reflection.
    - Reminds Actor to use atomic-rename and to reflect only WHAT actually changed — no speculation, no cleanup beyond the targeted doc.
 

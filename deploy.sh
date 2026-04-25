@@ -74,16 +74,36 @@ for f in "$REPO"/agents/*.md; do
     copy_file "$f" "$CLAUDE/agents/$(basename "$f")"
 done
 
+# Stripped versions (frontmatter removed) — consumed by run-tier.sh as
+# --append-system-prompt-file. Generated once at deploy; byte-stable across
+# subprocess invocations to maximise prompt-cache reuse.
+$DRY_RUN || mkdir -p "$CLAUDE/agents/.stripped"
+for f in "$REPO"/agents/*.md; do
+    name="$(basename "$f")"
+    dst="$CLAUDE/agents/.stripped/$name"
+    if $DRY_RUN; then
+        info "would generate stripped: $dst"
+    else
+        # Drop the YAML frontmatter (between first two `---` lines), keep body.
+        awk 'BEGIN{f=0} /^---$/{f++; next} f>=2{print}' "$f" > "$dst.tmp" && mv -f "$dst.tmp" "$dst"
+    fi
+done
+$DRY_RUN || ok "stripped: $CLAUDE/agents/.stripped/ ($(ls "$CLAUDE/agents/.stripped/" 2>/dev/null | wc -l) files)"
+
 # ── 4. Slash commands ─────────────────────────────────────────────────────────
 echo "Commands:"
 for f in "$REPO"/commands/*.md; do
     copy_file "$f" "$CLAUDE/commands/$(basename "$f")"
 done
 
-# ── 5. Hook script ────────────────────────────────────────────────────────────
+# ── 5. Hook + tier scripts ────────────────────────────────────────────────────
 echo "Scripts:"
-copy_file "$REPO/scripts/orchestra-hook.sh" "$CLAUDE/scripts/orchestra-hook.sh"
-$DRY_RUN || chmod +x "$CLAUDE/scripts/orchestra-hook.sh"
+for s in orchestra-hook.sh run-tier.sh format-stream.sh; do
+    if [ -f "$REPO/scripts/$s" ]; then
+        copy_file "$REPO/scripts/$s" "$CLAUDE/scripts/$s"
+        $DRY_RUN || chmod +x "$CLAUDE/scripts/$s"
+    fi
+done
 
 # ── 6. Orchestra config ───────────────────────────────────────────────────────
 echo "Config:"
