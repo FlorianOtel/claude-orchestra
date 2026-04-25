@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 date: 2026-04-24
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_on: 2026-04-25
+updated_on: 2026-04-26
 context: >
   Consolidated reference document for the "Claude Orchestra" design — a
   three-tier orchestration pattern layered on top of Claude Code, inspired by
@@ -200,7 +200,7 @@ Start a `/brain` invocation in tmux, `/clear`, resume in VSCode: the per-project
 
 - Global orchestra infrastructure: `~/.claude/agents/*.md`, `~/.claude/scripts/*`, `~/.claude/commands/*`, `~/.claude/settings.json`, `~/.claude/orchestra/config.yaml`
 - Per-project state (since projects like HomeAI also live on NFS): `${CLAUDE_PROJECT_DIR}/.claude/orchestra/PLAN.md`, `TASKS.json`, `review-comments.md`, `invocations.log`, per-invocation stage logs, `brain-state.md`
-- The `.enabled` opt-in marker, if used — visible on all hosts, so opting a project in from any machine opts it in everywhere
+- ~~`.enabled` opt-in marker~~ — removed 2026-04-25; orchestra is globally on
 
 ### 6.2 Race conditions if `claude` runs simultaneously on two hosts in the same project
 
@@ -260,6 +260,7 @@ Rules:
 │   └── reviewer.md
 ├── commands/
 │   ├── brain.md
+│   ├── duo.md
 │   └── orchestra-mode.md
 ├── scripts/
 │   └── orchestra-hook.sh
@@ -275,7 +276,6 @@ Rules:
 ${CLAUDE_PROJECT_DIR}/
 └── .claude/
     └── orchestra/
-        ├── .enabled                              # opt-in marker (user creates)
         ├── state.env                             # runtime state (mode, counters)
         ├── PLAN.md                               # atomic-rename
         ├── TASKS.json                            # atomic-rename
@@ -285,7 +285,8 @@ ${CLAUDE_PROJECT_DIR}/
         └── <stage>-<UTC-ts>-<HOST>-<PID>.log     # per-invocation stage logs
 ```
 
-Add `.claude/orchestra/` to each opted-in project's `.gitignore`.
+`.claude/orchestra/` is globally gitignored via `~/.gitignore_global` (configured
+2026-04-25) — no per-project `.gitignore` entry needed.
 
 ## 9. Locked decisions
 
@@ -416,7 +417,7 @@ Rule of thumb: aggressive use of `/brain` on small tasks is not cost-effective b
 
 ### 12.3 How to temporarily disable the orchestra
 
-- **Per-project**: delete `${CLAUDE_PROJECT_DIR}/.claude/orchestra/.enabled`. Hook continues to fire but no-ops.
+- **Per-project**: ~~delete `.enabled` marker~~ — **gate removed 2026-04-25** (orchestra is globally on). To suppress tmux windows for a session, set `CLAUDE_ORCHESTRA_DISABLE_TMUX=1`. A per-project opt-out marker is not currently implemented.
 - **Per-session**: unset the hook in the running session (edit `~/.claude/settings.json` to comment out the `PreToolUse`/`SubagentStop`/`PreCompact` entries, restart `claude`). Heavyweight; use only when debugging.
 - **Globally**: rename `~/.claude/scripts/orchestra-hook.sh` to `.bak`. Next `claude` invocation's hook will fail loudly (intentional — visible disable rather than silent) until you rename it back.
 
@@ -484,9 +485,8 @@ Anything with architectural impact or hard-to-reverse changes belongs in
 
 **Interaction with the hook**: the `implement` tmux window still spawns when
 Actor runs (same `PreToolUse(Agent)` → `SubagentStop` hooks; Actor's
-`subagent_type="actor"` maps to stage `implement`). Hook requires
-`.claude/orchestra/.enabled`; without it, the hook no-ops but Actor still
-executes — just no state files and no tmux window.
+`subagent_type="actor"` maps to stage `implement`). Orchestra state files
+are written to `${CLAUDE_PROJECT_DIR}/.claude/orchestra/` automatically.
 
 **When NOT to use `/duo`**: more than ~10 steps; multi-file refactors;
 architecture-level changes; anything where you'd want a Reviewer. Use `/brain`.
@@ -606,7 +606,7 @@ Three post-install polish items added on the same day as v1 shipped. No new agen
 - Do not commit / push / open a PR (unchanged from v1).
 
 **3. Status line shows orchestra state.**
-`~/.claude/scripts/status-line.sh` — a new conditional block runs after the existing git-branch field. It activates only when `${CLAUDE_PROJECT_DIR}/.claude/orchestra/.enabled` exists. Three new fields:
+`~/.claude/scripts/status-line.sh` — a new conditional block runs after the existing git-branch field. ~~Originally activated only when `.enabled` existed~~ — see Amendment 2026-04-25; now activates whenever the global orchestra config is present (`~/.claude/orchestra/config.yaml`). Three new fields:
 
 | Field | Example | When shown |
 |---|---|---|
@@ -658,7 +658,7 @@ Workflow:
 
 Risk trade-off: no automated review means errors in Actor's output won't be caught mechanically. Appropriate for low-blast-radius tasks only. Anything with deep interdependencies or architectural impact belongs in `/brain`.
 
-Reuses `~/.claude/agents/actor.md` unchanged. Hook infrastructure (PreToolUse Agent → `implement` tmux window) fires automatically. Requires `.claude/orchestra/.enabled` for state-file and hook support; no-ops silently without it.
+Reuses `~/.claude/agents/actor.md` unchanged. Hook infrastructure (PreToolUse Agent → `implement` tmux window) fires automatically. Orchestra state files (PLAN.md, TASKS.json, invocations.log) are written to `${CLAUDE_PROJECT_DIR}/.claude/orchestra/` — created automatically on first invocation.
 
 **2. Status-line badge disambiguation**
 
@@ -681,6 +681,31 @@ Files modified:
 No changes to `status-line.sh` — it already reads `ORCHESTRA_MODE` via `grep … | tail -n 1` (last-write-wins semantics on `state.env`), so the new values render automatically. Validated with four badge values (`default`, `orchestra`, `duo`, `acceptEdits`) — all render correctly.
 
 **Notable design point — `state.env` append semantics**: both pipelines append rather than rewrite `state.env`, consistent with the existing hook pattern. The file accumulates pairs of lines per pipeline run (`MODE=orchestra` on start, `MODE=default` on done). The status-line reads the last occurrence (`grep … | tail -n 1`), so earlier lines are shadowed. No cleanup is needed, but `state.env` will grow slowly over many sessions; a periodic trim is acceptable hygiene.
+
+### Amendment — 2026-04-25 (follow-up session): repo restructure + per-project deploy
+
+**1. Repo restructured to mirror `~/.claude/` layout (Option B).**
+`agents/` and `commands/` moved into `.claude/` inside the repo so that:
+- The repo layout is a direct mirror of the deployment target (`repo/.claude/` → `~/.claude/`).
+- Claude Code automatically picks up dev versions when launched inside the repo (project-level `.claude/agents/` and `.claude/commands/` take precedence over user-level `~/.claude/`). No deploy step needed to test agent/command changes while working in the repo.
+- `deploy.sh` and `collect.sh` paths updated accordingly.
+
+**2. `deploy.sh` now requires an explicit target argument.**
+```bash
+./deploy.sh --global          # deploy to ~/.claude/ (system-wide)
+./deploy.sh --local           # deploy to $PWD/.claude/ (current project only)
+```
+`--global` and `--local` are mutually exclusive and required. `--dry-run` and `--diff` remain additive. `--local` skips settings.json hooks merge, status-line patch, and gitignore setup (global-only infrastructure). This eliminates silent global deployments and supports isolated per-project testing.
+
+**3. Development (dogfooding) workflow — three-level promote model.**
+```
+repo/.claude/agents|commands (edit here)
+  └─ ./deploy.sh --local   → self-check + local config only
+  └─ ./deploy.sh --global  → promote to ~/.claude/ (all projects, all machines)
+```
+- **Level 1 (no deploy)**: just launch Claude Code from inside the repo — dev agents/commands are live immediately via project-level discovery.
+- **Level 2 (`--local` from repo root)**: self-check (agents/commands show "unchanged"), writes local hook copy and config. Note: the hook copied to `.claude/scripts/` is **not invoked** — the global `settings.json` references `~/.claude/scripts/orchestra-hook.sh` by absolute path. Hook changes require `--global`.
+- **Level 3 (`--global`)**: promotes committed changes to `~/.claude/` for all projects and machines.
 
 ### TO DO / reconsider later — Option B: dedicated FINALIZE stage
 
@@ -720,11 +745,11 @@ Unattended PLAN → IMPLEMENT → REVIEW requires mechanical substitutes for eve
 - `~/.claude/scripts/orchestra-dangerous-bash.sh` — PreToolUse(Bash) deny-pattern guard, active only under `auto`
 
 **Modified files (8):**
-- `commands/brain.md` — major rewrite: auto branch of control flow with branch-iso, step-level commits, test gate, scope check, auditor, CROSS-CHECK, replan trigger, stuck detection, halt/resume
-- `commands/orchestra-mode.md` — remove the `auto` stub; wire full behaviour (Axis X flip to `bypassPermissions` + state.env writes + prerequisite checks)
-- `agents/planner.md` — in auto mode, plan must include file allowlist + exact test command
-- `agents/actor.md` — scope-lock reminder; diff-summary in return; no-commit reinforced
-- `agents/reviewer.md` — rubric-based Y/N verdict alongside prose; mechanical derivation; Auditor cross-reference
+- `.claude/commands/brain.md` — major rewrite: auto branch of control flow with branch-iso, step-level commits, test gate, scope check, auditor, CROSS-CHECK, replan trigger, stuck detection, halt/resume
+- `.claude/commands/orchestra-mode.md` — remove the `auto` stub; wire full behaviour (Axis X flip to `bypassPermissions` + state.env writes + prerequisite checks)
+- `.claude/agents/planner.md` — in auto mode, plan must include file allowlist + exact test command
+- `.claude/agents/actor.md` — scope-lock reminder; diff-summary in return; no-commit reinforced
+- `.claude/agents/reviewer.md` — rubric-based Y/N verdict alongside prose; mechanical derivation; Auditor cross-reference
 - `orchestra/config.yaml` — activate all v2 keys (currently stubs)
 - `settings.json` — add second `PreToolUse(Bash)` entry for dangerous-bash guard
 - `scripts/orchestra-hook.sh` — invocation_id correlation, token-cost accumulator, stuck-detection signal
