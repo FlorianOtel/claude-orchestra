@@ -9,6 +9,8 @@
 # to that path when the result event arrives (via .tmp + atomic rename).
 #
 # Design reference: docs/design.md — live action feed Amendment 2026-04-26.
+# test: 2026-04-25
+# test: 2026-04-25T19:13
 
 set -uo pipefail
 

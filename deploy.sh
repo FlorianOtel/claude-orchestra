@@ -98,7 +98,7 @@ done
 
 # ── 5. Hook + tier scripts ────────────────────────────────────────────────────
 echo "Scripts:"
-for s in orchestra-hook.sh run-tier.sh format-stream.sh; do
+for s in orchestra-hook.sh run-tier.sh format-stream.sh runs-registry.sh start-research.sh; do
     if [ -f "$REPO/scripts/$s" ]; then
         copy_file "$REPO/scripts/$s" "$CLAUDE/scripts/$s"
         $DRY_RUN || chmod +x "$CLAUDE/scripts/$s"
@@ -156,8 +156,38 @@ STATUS_LINE="$CLAUDE/scripts/status-line.sh"
 if [ ! -f "$STATUS_LINE" ]; then
     warn "status-line.sh not found — skipping patch (see status-line/orchestra-block.sh)"
 else
-    if grep -q "ORCHESTRA_BLOCK_START" "$STATUS_LINE" 2>/dev/null; then
-        ok "unchanged: status-line.sh (orchestra block already present)"
+    # Idempotent re-deploy: if the block is already present, compare to the source.
+    # If different, strip the old block and re-append. (Old logic was append-once-only,
+    # which left the deployed block stale after orchestra-block.sh source updates.)
+    BLOCK_PRESENT=false
+    grep -q "ORCHESTRA_BLOCK_START" "$STATUS_LINE" 2>/dev/null && BLOCK_PRESENT=true
+
+    if $BLOCK_PRESENT; then
+        # Extract deployed block (from ORCHESTRA_BLOCK_START to just before "# Output the status line")
+        DEPLOYED_BLOCK="$(awk '/^# ORCHESTRA_BLOCK_START/,/^# Output the status line/' "$STATUS_LINE" | sed '$d')"
+        SOURCE_BLOCK="$(sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$REPO/status-line/orchestra-block.sh")"
+        if [ "$DEPLOYED_BLOCK" = "$SOURCE_BLOCK" ]; then
+            ok "unchanged: status-line.sh (orchestra block already present, matches source)"
+        elif $DRY_RUN; then
+            info "would re-deploy orchestra block (source has changed)"
+        else
+            # Strip old block (from ORCHESTRA_BLOCK_START up to but not including "# Output the status line")
+            TMPFILE="$STATUS_LINE.orchestra-deploy.tmp"
+            awk '
+                /^# ORCHESTRA_BLOCK_START/ { in_block=1; next }
+                in_block && /^# Output the status line/ { in_block=0 }
+                !in_block { print }
+            ' "$STATUS_LINE" > "$TMPFILE.stripped"
+            # Now append fresh block via the same awk-insert logic
+            BLOCK_CONTENT=$(sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$REPO/status-line/orchestra-block.sh")
+            awk -v block="$BLOCK_CONTENT" '
+                /^# Output the status line/ { print block; print ""; }
+                { print }
+            ' "$TMPFILE.stripped" > "$TMPFILE"
+            rm -f "$TMPFILE.stripped"
+            mv -f "$TMPFILE" "$STATUS_LINE"
+            ok "updated: status-line.sh (orchestra block refreshed)"
+        fi
     else
         if $DRY_RUN; then
             info "would append orchestra block to status-line.sh"

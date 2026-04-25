@@ -1,229 +1,126 @@
 ---
-description: Run a task through the full Claude Orchestra pipeline (PLAN → IMPLEMENT → REVIEW, auto-loop cap 3). Heavyweight opt-in; use for tasks that warrant the pipeline structure, not for simple edits.
+description: Launch a /brain pipeline — spawns a separate Opus 4.7 dialogue session for Phase 0 RESEARCH. Heavyweight opt-in. Use /brain-resume <slug> to continue after research is done.
 ---
 
-# /brain — run the Orchestra pipeline
+# /brain — launch a pipeline run (Phase 0 dispatch only)
 
-You are about to run a task through the full Claude Orchestra pipeline. The user has invoked `/brain`, which is a heavyweight opt-in for tasks big enough to benefit from explicit planning + review.
+You are the **launcher** for a `/brain` pipeline. Your job is small and bounded:
+spawn a Phase 0 RESEARCH dialogue session in a separate window/terminal, register
+the run, print user-facing instructions, and exit. **The launcher does NOT do the
+research dialogue itself, and does NOT orchestrate Phases 1-4** — those happen in
+the spawned session and via `/brain-resume <slug>` respectively.
 
-## Prerequisites
+## When to use /brain vs /duo
 
-1. **You must be in plan mode** so that `ExitPlanMode` can surface the plan for user approval. If you are not already in plan mode, ask the user to enter it (`Shift+Tab` cycle or `/permissions plan`) before you continue. Do not try to proceed without plan mode — the G2 gate depends on it.
+| Situation | Use |
+|---|---|
+| Multi-step task warranting research dialogue + planning + review | `/brain` |
+| Simple, well-scoped, ≤ 10 steps, low blast-radius | `/duo` |
 
-## Critical stance
+`/duo` is the lightweight pipeline (no Phase 0, no Reviewer); use it when you don't
+need the full interrogation+planning+review structure.
 
-Before delegating to Planner, Brain must interrogate the request. This is non-negotiable — do not skip it to be helpful.
+## Architecture (Option II.b + concurrent — see docs/design.md)
 
-**Push back on the request itself.** Ask: is this the right thing to do? Is the framing correct? Is there a simpler solution that doesn't need the full pipeline? If the request is vague, contradictory, or under-specified, stop and demand clarity. Do not interpret charitably when precision matters.
+- **Launcher chat panel** (this session): spawns Phase 0, then is **freed**. You can
+  use it for anything else, including a second `/brain` for a different task.
+- **Spawned dialogue session** (separate tmux window or terminal split): interactive
+  Claude on Opus 4.7 (regardless of launcher's model) with strict critical-stance
+  system prompt. User has the research dialogue THERE.
+- **Run registry** (`.claude/orchestra/runs.jsonl`): tracks all runs, their state,
+  and ages. Multiple concurrent runs supported.
+- **Per-run state subdir** (`.claude/orchestra/runs/<run_id>/`): RESEARCH.md, PLAN.md,
+  TASKS.json, review-comments.md, logs.
 
-**Surface alternatives explicitly.** Whenever more than one reasonable approach exists — different architectures, different scopes, different trade-offs — do not silently pick one. Present them as a structured comparison:
-- Name each alternative.
-- State the concrete pros and cons of each (not vague, not one-sided).
-- Explain the key trade-off in plain terms.
-- State which you recommend and why — but make the user's choice explicit before proceeding.
+## What you do (this entire skill, end to end)
 
-Do not proceed to Planner until the approach is unambiguous and agreed.
+1. **Validate `$ARGUMENTS`.** If empty, refuse: "Usage: `/brain <task>`. Provide a
+   description of the task to research and plan." Stop.
 
-**Force clarity at every gap.** If any of the following are unclear, stop and ask:
-- What the definition of "done" looks like
-- Which files, systems, or interfaces are in scope vs out of scope
-- Whether existing code should be reused or replaced
-- Whether tests are expected, and which framework
-- Whether this affects any documented behaviour, APIs, or contracts
-
-**Be sceptical of the plan Planner returns.** Brain's role is not rubber-stamping. If Planner's plan:
-- Misses a risk flagged in the original request
-- Includes steps that seem over-engineered or under-engineered
-- Makes a silent choice where an explicit decision was needed
-- Fails to match the agreed-upon approach
-
-…then iterate with Planner rather than surfacing a bad plan to the user.
-
-## Pipeline (v1)
-
-Execute these phases in order:
-
-### Phase 1 — PLAN
-
-Signal the pipeline is active by appending to `state.env` via `Bash`:
-```bash
-mkdir -p "${CLAUDE_PROJECT_DIR}/.claude/orchestra"
-echo "ORCHESTRA_MODE=orchestra" >> "${CLAUDE_PROJECT_DIR}/.claude/orchestra/state.env"
-```
-This makes the status-line badge show `♪ orchestra` for the duration of the pipeline.
-
-Dispatch the Planner as a `claude -p` subprocess via `~/.claude/scripts/run-tier.sh`. The
-subprocess runs in its own tmux window (or VSCode users tail `live.log`) showing the full
-live feed — thinking, prose, tool calls, and tool results — as the Planner works.
-
-**Critical: prompts must be fully self-contained.** The subprocess has NO access to this
-conversation's history. Include explicitly:
-- The user's original request (full text, not summarised)
-- Files / decisions already discussed in this conversation
-- An explicit instruction to write `PLAN.md` to `${CLAUDE_PROJECT_DIR}/.claude/orchestra/PLAN.md` via atomic-rename
-- An explicit instruction to return the plan text as the final response
-
-Dispatch via `Bash`:
-```bash
-PROMPT_FILE=$(mktemp /tmp/planner-prompt.XXXXXX)
-cat > "$PROMPT_FILE" <<'EOF'
-[user's full request]
-
-[any conversation context Planner needs]
-
-Write PLAN.md to ${CLAUDE_PROJECT_DIR}/.claude/orchestra/PLAN.md using atomic-rename
-(write to PLAN.md.tmp first, then `mv -f` to PLAN.md). Return the plan text as your
-final response.
-EOF
-
-RESULT_FILE=$(~/.claude/scripts/run-tier.sh plan claude-sonnet-4-6 planner default \
-  "$PROMPT_FILE" --allowedTools "Read,Grep,Glob,WebFetch,Bash,Write,TodoWrite")
-
-# Block until subprocess writes its result (poll, max ~10 min).
-for i in $(seq 1 300); do
-  [ -s "$RESULT_FILE" ] && break
-  sleep 2
-done
-PLANNER_RESPONSE=$(cat "$RESULT_FILE")
-rm -f "$RESULT_FILE" "$PROMPT_FILE"
-```
-
-The Planner runs on `claude-sonnet-4-6` with permission mode `default` (Planner is read-only
-+ writes only PLAN.md). After completion, read PLAN.md from disk and use `$PLANNER_RESPONSE`
-for the plan text in Phase 2.
-
-### Phase 2 — G2 approval via ExitPlanMode
-
-Read Planner's returned plan. If you need to amend it before surfacing (minor edits for clarity are fine; structural changes mean you should iterate with Planner, not rewrite silently), do so.
-
-Call the **`ExitPlanMode`** tool with the plan content. This is the G2 approval gate. **Do not call `ExitPlanMode` yourself before delegating to Planner** — the canonical flow is Planner-first, then Brain surfaces.
-
-If the user rejects the plan:
-- Stay in plan mode.
-- Ask for clarification, redirect, or abandon — user's call.
-- If they redirect, re-run Phase 1 with the updated intent.
-- Do not dispatch Actor on a rejected plan.
-
-If the user approves, exit plan mode (the tool does this automatically on approval) and continue.
-
-### Phase 3 — IMPLEMENT + REVIEW loop (auto-loop cap 3)
-
-Both Actor and Reviewer run as `claude -p` subprocesses via `run-tier.sh` — same self-
-contained-prompt rule as Phase 1. Each gets its own tmux window (`implement`, `review`)
-or appears sequentially in `live.log` for VSCode users.
-
-For each numbered step in the approved plan:
-
-1. Dispatch the Actor via `run-tier.sh`:
+2. **Spawn the dialogue session.** Run via `Bash`:
    ```bash
-   PROMPT_FILE=$(mktemp /tmp/actor-prompt.XXXXXX)
-   cat > "$PROMPT_FILE" <<EOF
-   You are executing step N from PLAN.md. The step is:
-
-   [text of the single step]
-
-   Read PLAN.md and TASKS.json from \${CLAUDE_PROJECT_DIR}/.claude/orchestra/ for context.
-   Stay in scope. Do NOT do other steps. Update TASKS.json via atomic-rename when done.
-   Return one of: "ready_for_review" / "blocked: <reason>" / "partial: <details>".
-   EOF
-
-   RESULT_FILE=$(~/.claude/scripts/run-tier.sh implement claude-haiku-4-5-20251001 actor \
-     bypassPermissions "$PROMPT_FILE" \
-     --allowedTools "Read,Edit,Write,Bash,Grep,Glob,TodoWrite")
-
-   for i in $(seq 1 300); do [ -s "$RESULT_FILE" ] && break; sleep 2; done
-   ACTOR_STATUS=$(cat "$RESULT_FILE")
-   rm -f "$RESULT_FILE" "$PROMPT_FILE"
+   OUTPUT=$(~/.claude/scripts/start-research.sh "$ARGUMENTS")
+   echo "$OUTPUT"
    ```
-   Model: `claude-haiku-4-5-20251001`. Perm-mode: `bypassPermissions` (Actor runs uninterrupted).
+   Parse the output (key=value pairs):
+   - `RUN_ID=<run_id>` — always present
+   - `MODE=tmux` or `MODE=manual` — environment branch
+   - `WINDOW=<name>` — present when MODE=tmux
+   - `LAUNCH_SCRIPT=<path>` — present when MODE=manual
 
-2. Inspect `$ACTOR_STATUS`.
-3. If status starts with `blocked`, surface to the user — do not auto-retry.
-4. If `ready_for_review`, dispatch the Reviewer:
+3. **Compute slug from RUN_ID.** Slug is everything after the timestamp prefix:
    ```bash
-   PROMPT_FILE=$(mktemp /tmp/reviewer-prompt.XXXXXX)
-   cat > "$PROMPT_FILE" <<EOF
-   Review the work just done by Actor for step N.
-
-   PLAN.md and TASKS.json are at \${CLAUDE_PROJECT_DIR}/.claude/orchestra/. The step Actor
-   just completed:
-
-   [text of the step]
-
-   Compare the actual change (run \`git diff\` or read the affected files) against PLAN.md
-   and TASKS.json. Write review-comments.md via atomic-rename. Return verdict on its own
-   line as "PASS", "FIX: <issues>", or "BLOCK: <reason>".
-   EOF
-
-   RESULT_FILE=$(~/.claude/scripts/run-tier.sh review claude-sonnet-4-6 reviewer default \
-     "$PROMPT_FILE" --allowedTools "Read,Grep,Glob,Bash,Write,TodoWrite")
-
-   for i in $(seq 1 300); do [ -s "$RESULT_FILE" ] && break; sleep 2; done
-   REVIEW_VERDICT=$(cat "$RESULT_FILE")
-   rm -f "$RESULT_FILE" "$PROMPT_FILE"
-   ```
-   Model: `claude-sonnet-4-6`. Perm-mode: `default`.
-
-5. Parse `$REVIEW_VERDICT`:
-   - **PASS** — move to the next step in the plan.
-   - **FIX** — re-dispatch Actor with the issue list as the new step description; increment iteration counter.
-   - **BLOCK** — stop the loop for this step, surface to user.
-6. Iteration cap: **3 fix loops per step**. On the 4th iteration request, stop and surface a summary to the user.
-
-### Phase 4 — VERIFY / DONE
-
-After all steps are PASS (or the user has resolved any blocks / caps manually):
-
-1. **Consolidate state.** Read `${CLAUDE_PROJECT_DIR}/.claude/orchestra/TASKS.json` to confirm every task is `done` or explicitly accepted.
-
-2. **Doc-delta check.** Run `git diff --stat HEAD` (or the staged-diff equivalent if changes aren't committed). For each non-doc file changed, ask: does this change make any statement in a project doc stale? Common targets:
-   - `CLAUDE.md` (project instructions) — architectural or config changes
-   - `TROUBLESHOOTING.md` — bug fixes that resolve documented issues
-   - `README*.md` — user-facing behaviour changes
-   - `*-strategy.md` — design-decision changes
-   - Any doc named in CLAUDE.md's project-file inventory
-
-   If Planner's plan already covered the necessary doc updates (i.e. they were numbered steps and Actor executed them), skip this check. Otherwise dispatch the Actor ONCE more (via `run-tier.sh`, same pattern as Phase 3) with a prompt that:
-   - Names the specific doc(s) and the specific change(s) needing reflection.
-   - Reminds Actor to use atomic-rename and to reflect only WHAT actually changed — no speculation, no cleanup beyond the targeted doc.
-
-   Treat this as one Actor invocation + one Reviewer pass (verdict PASS to finish; FIX loops still bounded by the cap-3 policy from Phase 3).
-
-3. **Memory-worthy-fact check.** Review what was decided or learned during this pipeline. For each of the four memory types defined in the global CLAUDE.md (user / feedback / project / reference), ask: "does anything from this task warrant persisting so a future session benefits?" If yes, update the auto-memory under `~/.claude/projects/<encoded-pwd>/memory/` per the global rules (new memory file + `MEMORY.md` index entry, or an update to an existing file). **This is Brain's direct responsibility — do NOT delegate to Actor.** Memory files live in Claude-side state, not project state, and Actor is unaware of them by design.
-
-4. **Final summary.** Produce a short report for the user:
-   - Steps completed.
-   - Files changed (include docs if updated in step 2).
-   - Tests run, if any.
-   - Memory entries created or updated, if any.
-   - Anything the user should verify manually.
-
-5. Restore the idle badge via `Bash`:
-   ```bash
-   echo "ORCHESTRA_MODE=default" >> "${CLAUDE_PROJECT_DIR}/.claude/orchestra/state.env"
+   SLUG="${RUN_ID#*Z-}"
    ```
 
-6. **Do NOT commit, push, or open a PR.** v1 respects the global "never commit unless asked" rule unconditionally. If the user wants a commit, they will request it separately.
+4. **Print user-facing instructions** based on MODE:
 
-## Non-goals in v1
+   ### If MODE=tmux
 
-- No `auto` mode. If the user invoked `/orchestra-mode auto`, it is stubbed — ignore any such state and proceed in `default`/`acceptEdits` semantics.
-- No CROSS-CHECK stage (v2).
-- No checkpoint commits (v2, `auto` only).
-- No branch isolation (v2, `auto` only).
+   ```
+   ✓ Run started: <slug>
+     run_id:      <run_id>
+     model:       claude-opus-4-7
+     window:      <window>  (in tmux)
 
-## If the user said "just do it" or similar
+   Switch to that tmux window now to begin the Phase 0 dialogue.
+   When research concludes (the spawned session writes RESEARCH.md and exits),
+   return here and run:
 
-They still want the pipeline; that's why they invoked `/brain`. Follow the phases. If they meant a one-shot small edit, politely remind them that `/brain` is for heavyweight tasks and suggest dropping the slash command for regular conversational delegation.
+       /brain-resume <slug>
 
-## Visibility
+   To list all active /brain runs:    /brain-status
+   To abandon this run:               /brain-abandon <slug>
+   ```
 
-If the user is in tmux, subagent invocations will spawn `plan` / `implement` / `review` tmux windows automatically via the hook — each window shows tool calls in real time as the subagent runs. No action needed from you.
+   ### If MODE=manual (VSCode without tmux, or tmux failed)
 
-If the user is in VSCode or a non-tmux terminal, tell them to open a terminal split and run:
-```
-tail -f "${CLAUDE_PROJECT_DIR}/.claude/orchestra/live.log"
-```
-This symlink always points to the most recently started subagent's logfile and shows live tool-call lines as they execute. It persists across pipeline stages without needing to be restarted.
+   ```
+   ✓ Run started: <slug>
+     run_id:      <run_id>
+     model:       claude-opus-4-7
+     window:      manual launcher (no tmux)
+
+   VSCode detected (or tmux unavailable). To start the Phase 0 dialogue:
+
+   1. Open a terminal split (Ctrl+` in VSCode)
+   2. Run:    bash <LAUNCH_SCRIPT>
+   3. Have the research dialogue in that terminal
+   4. When done, the spawned session writes RESEARCH.md and exits
+
+   Then return here and run:
+
+       /brain-resume <slug>
+
+   Other commands:    /brain-status  /brain-abandon <slug>
+
+   ── VSCode UX note (v1 stop-gap) ──
+   Manual `bash <script>` step is a known v1 ergonomics gap; tmux integration via
+   .vscode/tasks.json or clipboard injection is planned for next commit. See
+   docs/design.md "Phase 0 — VSCode polish TO DO".
+   ```
+
+5. **End your turn.** Do NOT enter a dialogue, do NOT do research yourself, do NOT
+   wait for RESEARCH.md. The launcher's job is done. The user will:
+   - Switch to the spawned window/terminal for Phase 0
+   - Eventually return to this chat panel and run `/brain-resume <slug>`
+
+## What this launcher does NOT do
+
+- ❌ Run the research dialogue (that's the spawned session's job)
+- ❌ Wait/poll for RESEARCH.md (the launcher session is freed)
+- ❌ Dispatch Planner / Actor / Reviewer (that's `/brain-resume`)
+- ❌ Call `ExitPlanMode` (that's `/brain-resume`)
+- ❌ Track pipeline state across turns (the registry does that)
+
+## Concurrency
+
+This launcher can be invoked multiple times for different tasks. Each invocation
+gets its own `run_id`, state subdir, and spawned window. The launcher chat panel
+remains usable between invocations.
+
+If multiple runs reach `research_complete` state, the user must specify which to
+resume by slug — there is no "most recent" default. See `/brain-status` and
+`/brain-resume`.
 
 $ARGUMENTS

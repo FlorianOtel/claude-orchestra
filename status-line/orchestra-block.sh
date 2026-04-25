@@ -28,6 +28,19 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     # Option 3: ◈  (U+25C8 diamond with dot) — neutral geometric
     # Option 4: 🎼 (U+1F3BC musical score) — emoji, variable-width, may misalign
 
+    # /brain run self-identification: env-first, registry fallback.
+    #
+    # BRANCH A — spawned window (CLAUDE_BRAIN_RUN_ID present in env):
+    #   start-research.sh exports CLAUDE_BRAIN_RUN_ID via `tmux new-window -e`.
+    #   Derive slug directly from the env var; no cwd or registry dependency.
+    #   Truncation: first 30 chars of slug component, no ellipsis.
+    if [ -n "${CLAUDE_BRAIN_RUN_ID:-}" ]; then
+        _sl_slug="${CLAUDE_BRAIN_RUN_ID#*Z-}"
+        orchestra_display="orchestra - brain $(printf '%s' "${_sl_slug:0:30}")"
+    else
+    # BRANCH B — launcher chat panel (no CLAUDE_BRAIN_RUN_ID in env):
+    #   Registry-driven display; preset fallback when no runs are active.
+
     # Preset (fallback to "default" when state.env is missing or unset)
     orchestra_mode="default"
     if [ -f "$cwd/.claude/orchestra/state.env" ]; then
@@ -35,7 +48,40 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         [ -n "$last_mode" ] && orchestra_mode="$last_mode"
     fi
 
-    status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET}" "$orchestra_mode")
+    # /brain registry-driven display override:
+    #   0 active runs : show state.env mode (default / duo / acceptEdits / …)
+    #   1 active run  : "orchestra - brain <slug-trunc30>"
+    #   N>1 active    : "orchestra(N)"
+    # Read the registry directly to avoid a helper-script fork on the status-line hot path.
+    runs_log="$cwd/.claude/orchestra/runs.jsonl"
+    orchestra_display="$orchestra_mode"
+    if [ -f "$runs_log" ]; then
+        active_count=0
+        single_slug=""
+        while IFS= read -r rid; do
+            [ -z "$rid" ] && continue
+            latest=$(jq -r --arg id "$rid" 'select(.run_id==$id) | .event' "$runs_log" 2>/dev/null | tail -n 1)
+            case "$latest" in
+                done|abandoned|error) ;;
+                *)
+                    active_count=$((active_count + 1))
+                    if [ "$active_count" -eq 1 ]; then
+                        single_slug=$(jq -r --arg id "$rid" 'select(.run_id==$id and .event=="start") | .slug' "$runs_log" 2>/dev/null | tail -n 1)
+                    fi
+                    ;;
+            esac
+        done < <(jq -r 'select(.event=="start") | .run_id' "$runs_log" 2>/dev/null | sort -u)
+
+        if [ "$active_count" -gt 1 ] 2>/dev/null; then
+            orchestra_display="orchestra(${active_count})"
+        elif [ "$active_count" -eq 1 ] 2>/dev/null; then
+            orchestra_display="orchestra - brain $(printf '%s' "${single_slug:0:30}")"
+        fi
+    fi
+
+    fi  # end BRANCH B
+
+    status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET}" "$orchestra_display")
 
     # Active-subagent indicator: latest "start" event with no later matching "end"
     invlog="$cwd/.claude/orchestra/invocations.log"

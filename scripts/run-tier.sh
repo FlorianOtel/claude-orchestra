@@ -30,10 +30,19 @@ AGENT_NAME="${3:-}"
 PERM_MODE="${4:-default}"
 PROMPT_FILE="${5:-}"
 shift 5 2>/dev/null || true
-EXTRA_FLAGS=("$@")
+EXTRA_FLAGS=()
+RUN_ID=""
+# Parse remaining args; intercept --run-id <id>, pass everything else through to claude.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --run-id) RUN_ID="${2:-}"; shift 2 ;;
+    --run-id=*) RUN_ID="${1#--run-id=}"; shift ;;
+    *) EXTRA_FLAGS+=("$1"); shift ;;
+  esac
+done
 
 if [ -z "$STAGE" ] || [ -z "$MODEL" ] || [ -z "$AGENT_NAME" ] || [ -z "$PROMPT_FILE" ]; then
-  echo "usage: run-tier.sh <stage> <model> <agent-name> <perm-mode> <prompt-file> [extra-flags...]" >&2
+  echo "usage: run-tier.sh <stage> <model> <agent-name> <perm-mode> <prompt-file> [--run-id <id>] [extra-flags...]" >&2
   exit 2
 fi
 
@@ -44,7 +53,15 @@ fi
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 ORCHESTRA_DIR="${PROJECT_DIR}/.claude/orchestra"
-LOGS_DIR="${ORCHESTRA_DIR}/logs"
+
+# Per-run state subdir if --run-id supplied (used by /brain-resume), else flat path
+# (used by /duo and any legacy callers). Both are valid; --run-id is the v2 default.
+if [ -n "$RUN_ID" ]; then
+  STATE_DIR="${ORCHESTRA_DIR}/runs/${RUN_ID}"
+else
+  STATE_DIR="$ORCHESTRA_DIR"
+fi
+LOGS_DIR="${STATE_DIR}/logs"
 mkdir -p "$LOGS_DIR" 2>/dev/null || true
 
 STAMP_TS="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -52,7 +69,7 @@ STAMP_HOST="${HOSTNAME:-$(hostname 2>/dev/null || echo unknown)}"
 STAMP_PID=$$
 
 LOGFILE="${LOGS_DIR}/${STAGE}-${STAMP_TS}-${STAMP_HOST}-${STAMP_PID}.log"
-RESULT_FILE="${ORCHESTRA_DIR}/${STAGE}-result-${STAMP_TS}-${STAMP_PID}.txt"
+RESULT_FILE="${STATE_DIR}/${STAGE}-result-${STAMP_TS}-${STAMP_PID}.txt"
 
 # Stripped agent file (frontmatter removed); produced by deploy.sh.
 STRIPPED_AGENT="${HOME}/.claude/agents/.stripped/${AGENT_NAME}.md"
@@ -92,8 +109,14 @@ for arg in "${EXTRA_FLAGS[@]}"; do
 done
 
 # Update live-feed pointers so a single `tail -f live.log` follows the pipeline.
+# When --run-id is supplied, both per-run AND project-wide pointers are updated:
+# the per-run live.log lets a user track one specific run; the project-wide one
+# remains the most recently dispatched (legacy /duo behaviour).
 printf 'ACTIVE_LOGFILE=%s\n' "$LOGFILE" > "${ORCHESTRA_DIR}/live-stage.env" 2>/dev/null || true
 ln -sfn "$LOGFILE" "${ORCHESTRA_DIR}/live.log" 2>/dev/null || true
+if [ -n "$RUN_ID" ]; then
+  ln -sfn "$LOGFILE" "${STATE_DIR}/live.log" 2>/dev/null || true
+fi
 
 # Build the command string the subprocess will run. Quote everything carefully.
 # We need: claude <args> < <prompt-file> | RESULT_FILE=... format-stream.sh | tee -a <logfile>

@@ -1095,6 +1095,169 @@ Anthropic SDK calls (non-trivial).
    - Break-even: at TTL-miss-rate r, switching is worthwhile when
      `r > 0.30 / (1.00 - 0.10) ≈ 33%` (rough — actual pricing has nuances)
 
+### Amendment — 2026-04-26: `/brain` Phase 0 — RESEARCH (Option II.b + concurrent runs)
+
+This amendment adds a formal **Phase 0 — RESEARCH** to `/brain`, splits the orchestration
+into a launcher + spawned-session model, introduces a multi-run registry, and decouples
+pipeline state into per-run subdirectories. Substantial architecture change to `/brain`;
+`/duo` left unchanged.
+
+**Origin.** User wanted Opus 4.7 specifically for the dialogue ("a more high-powered
+dialog"). Inline cannot deliver model switch — a slash command has no API to change the
+host session's model. The fix: spawn a **separate** interactive Claude session for Phase 0.
+
+**Architecture: Option II.b + concurrent (a)** — Phase 0 dialogue runs in its own
+interactive `claude` session in a separate tmux window (or terminal split for VSCode).
+Launcher chat panel is freed after dispatching Phase 0; operator returns to launcher and
+runs `/brain-resume <slug>` once research is done.
+
+#### Three levels of decoupling now in place
+
+| Level | What | Mechanism |
+|---|---|---|
+| 1 — Tier execution | Each tier runs as its own `claude -p` subprocess | Option A — `run-tier.sh` |
+| 2 — Phase 0 dialogue | Phase 0 in its own interactive `claude` session, with its own model | This amendment — `start-research.sh` |
+| 3 — Pipeline orchestration | Launcher chat panel freed after dispatch; operator resumes via `/brain-resume <slug>` | This amendment — split slash commands |
+
+#### Slash command split
+
+| Command | Purpose |
+|---|---|
+| `/brain <task>` | **Launcher only.** Slugifies, registers run, spawns Phase 0, prints instructions, exits. |
+| `/brain-resume <slug>` | After RESEARCH.md exists, dispatches Planner → Actor + Reviewer loop → Phase 4 summary. |
+| `/brain-status` | List all runs with state, age. |
+| `/brain-abandon <slug>` | Mark run abandoned. |
+
+`brain.md` is now a thin launcher (~140 lines). The bulk of orchestration logic lives in
+`brain-resume.md`. By design choice: each slash command has a single, clear job; no state
+machine spanning turns.
+
+#### Per-run state subdirectories
+
+`.claude/orchestra/runs/<run_id>/{RESEARCH.md, PLAN.md, TASKS.json, review-comments.md,
+researcher-prompt.txt, initial-prompt.txt, logs/}` — per-run isolation.
+
+`run_id` format: `<UTC-ts>-<slug>` (e.g. `20260425T193000Z-explore-pros-cons`). Timestamp
+prevents collision on duplicate slugs; slug is human-recognisable.
+
+`/duo` continues using the flat `.claude/orchestra/` path — Option II.b applies to `/brain`
+only.
+
+#### Run registry
+
+`.claude/orchestra/runs.jsonl` — append-only JSONL. Each line is a state-transition event:
+
+```json
+{"event":"start","run_id":"...","slug":"...","task":"...","window":"...","model":"claude-opus-4-7","host":"...","pid":12345,"ts":"..."}
+{"event":"research_complete","run_id":"...","ts":"..."}
+{"event":"plan_dispatched","run_id":"...","ts":"..."}
+{"event":"done","run_id":"...","ts":"..."}
+{"event":"abandoned","run_id":"...","reason":"...","ts":"..."}
+```
+
+Most-recent event per `run_id` defines current state. States: `start` → `research_complete`
+→ `plan_dispatched` → `planning` → `implementing` → `reviewing` → `done`. `abandoned` /
+`error` may occur at any point.
+
+CRUD via `scripts/runs-registry.sh {start|transition|latest-state|resolve|field|list|count-active|by-state}`.
+
+#### Disambiguation rules (operator must be precise)
+
+By design choice: **no most-recent-default**. Operator must reference each run explicitly
+by slug or unique prefix. Even with a single in-flight run, operator must reference it
+explicitly. Avoids ambiguity drift as more runs accumulate.
+
+- Exact slug — works
+- Unambiguous prefix — works (e.g. `explore` if only one slug starts with that)
+- Ambiguous prefix → registry helper prints candidates, exits non-zero
+- No prefix → command refuses with usage hint
+
+#### Status-line multi-run badge
+
+`status-line/orchestra-block.sh` appends `(N)` when more than one run is active:
+
+| Active runs | Badge |
+|---|---|
+| 0 | `♪ default` |
+| 1 | `♪ orchestra` |
+| N>1 | `♪ orchestra(N)` |
+
+Active = state not in `{done, abandoned, error}`. Counted from registry by reading
+`runs.jsonl` directly.
+
+#### VSCode workflow (v1 stop-gap)
+
+VSCode has no programmable way to spawn a new chat panel. For Phase 0 in VSCode,
+`start-research.sh` writes `/tmp/brain-launch-<run_id>.sh`. Operator manually opens a
+terminal split (Ctrl+\`) and runs `bash /tmp/brain-launch-<run_id>.sh`. Interactive claude
+runs in that terminal — the **model switch IS preserved** (the launcher script invokes
+`claude --model claude-opus-4-7`). The friction is the one-time copy-paste.
+
+##### TO DO — VSCode UX polish (next commit)
+
+1. **`.vscode/tasks.json` integration** — define a task that runs the most recent
+   `/tmp/brain-launch-*.sh`; trigger via Ctrl+Shift+P → "Run Task: Start Brain Run".
+2. **Clipboard injection** — copy the `bash <script>` command to clipboard automatically
+   (via `xclip` / `pbcopy` / `wl-copy` depending on platform).
+
+v1 ships with the manual step; either or both polish items planned for next commit.
+
+#### Concurrent runs
+
+Multiple `/brain` invocations can be in flight simultaneously. Each gets its own `run_id`,
+state subdir, spawned window. The launcher chat panel can be used for unrelated work
+between invocations.
+
+Bulk abandonment (`abandon all`) requires confirmation showing the count.
+
+Stale runs are NOT auto-cleaned (per user preference: "leave forever, operator should
+clean manually"). Registry retains all events.
+
+#### Files added / modified
+
+| File | Status |
+|---|---|
+| `agents/researcher.md` | New — Phase 0 system prompt |
+| `scripts/runs-registry.sh` | New — registry CRUD |
+| `scripts/start-research.sh` | New — Phase 0 spawner |
+| `commands/brain.md` | Rewritten as launcher only |
+| `commands/brain-resume.md` | New — Phases 1-4 orchestrator |
+| `commands/brain-status.md` | New — list |
+| `commands/brain-abandon.md` | New — abandon |
+| `scripts/run-tier.sh` | Modified — accepts `--run-id`, routes state to per-run subdir |
+| `status-line/orchestra-block.sh` | Modified — multi-run count suffix |
+| `deploy.sh` | Modified — handles new scripts |
+| `docs/design.md` | This amendment |
+
+#### Trade-offs accepted
+
+- **Brain in launcher does not retain pipeline state across turns** — each slash command
+  is independent. State lives in registry + per-run subdirs.
+- **VSCode requires one manual `bash <script>` step** — v1 ergonomics gap; polish queued
+  for next commit (see TO DO above).
+- **`/duo` not migrated** — adding Phase 0 + multi-run isolation would defeat the
+  lightweight purpose. Operators wanting research dialogue should use `/brain`.
+
+#### Verification performed
+
+- Unit tests for `runs-registry.sh` (start, transition, list, resolve prefix matching,
+  count-active, by-state, field) ✓
+- Mechanical smoke test of `start-research.sh` in tmux: registry event, tmux window
+  opens, per-run subdir created with substituted system prompt, abandonment transitions
+  cleanly, count-active drops to 0 ✓
+- All four slash commands visible in skills list after deploy ✓
+
+#### Verification deferred to first real use
+
+- End-to-end Phase 0 dialogue (interactive Opus 4.7 spawned, user signals proceed,
+  RESEARCH.md written) — requires manual operator interaction
+- `/brain-resume <slug>` end-to-end (Planner / Actor / Reviewer dispatch with per-run
+  subdir)
+- Multi-run concurrency in real use
+- VSCode manual-launcher path
+
+---
+
 ## v2 TO-DO classification (architecture-aware)
 
 The 2026-04-26 migration to Option A (`claude -p` subprocesses on `main`) makes some
