@@ -1,0 +1,56 @@
+# Claude Orchestra — global default config
+# Per-project override: ${CLAUDE_PROJECT_DIR}/.claude/orchestra/config.yaml
+# Design reference: docs/design.md (in this repo)
+
+# -----------------------------------------------------------------------------
+# Autonomy preset (combines Axis X — Claude Code permission mode — with
+# Axis Y — orchestra stage gates). v1 supports `default` and `acceptEdits`
+# only; `auto` is stubbed, see §10.2 of the design doc.
+# -----------------------------------------------------------------------------
+orchestra_mode: default            # v1: default | acceptEdits   (v2: + auto)
+
+# -----------------------------------------------------------------------------
+# Stage gates — used by /brain to decide whether to pause for user approval
+# between Sequential Phase Architecture stages.
+# -----------------------------------------------------------------------------
+gates:
+  after_research:  skip            # skip | notify | approve
+  after_plan:      approve         # THE gate — v1: via ExitPlanMode
+  after_implement: skip
+  after_review:    auto_loop       # skip | auto_loop | approve
+  after_verify:    notify
+
+approval_method: exit_plan_mode    # exit_plan_mode | slash_command | sentinel_file
+review_loop_max: 3                 # cap G5 iterations
+
+# -----------------------------------------------------------------------------
+# Commit policy. v1 is always explicit; v2 `auto` preset overrides.
+# -----------------------------------------------------------------------------
+commit:
+  policy: explicit                 # v1 | v2 auto overrides to commit_auto
+
+# -----------------------------------------------------------------------------
+# v2-only keys below — honored only when orchestra_mode: auto.
+# Present here so config shape is stable across v1 and v2.
+# -----------------------------------------------------------------------------
+crosscheck_loop_max: 5             # cap for replan→implement cycles under auto
+token_budget_usd:   5              # soft cap for auto runs; 0 disables
+
+commit_auto:
+  branch_prefix:    "orchestra/auto-"
+  branch_protect:   ["main", "master"]
+  checkpoint_every_iteration: true
+
+test_gate:
+  detect_from: [pytest, pnpm, npm, make, cargo]
+  required_for_finalize: true
+  # project override:
+  # command: "pytest -q tests/"
+
+# -----------------------------------------------------------------------------
+# Visibility / env overrides
+# -----------------------------------------------------------------------------
+tmux:
+  auto_close_seconds: 120          # window lives this long after SubagentStop
+  # Set CLAUDE_ORCHESTRA_DISABLE_TMUX=1 in the environment to force
+  # logfile-only visibility even inside a tmux session.

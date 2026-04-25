@@ -1,0 +1,36 @@
+{
+  "_comment": "Orchestra hooks to merge into ~/.claude/settings.json. Run deploy.sh to apply automatically, or merge manually with jq (see README).",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/scripts/orchestra-hook.sh start"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/scripts/orchestra-hook.sh end"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/scripts/orchestra-hook.sh compact"
+          }
+        ]
+      }
+    ]
+  }
+}

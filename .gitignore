@@ -1,0 +1,17 @@
+# Orchestra runtime state — never commit these
+*.env
+*.log
+PLAN.md
+TASKS.json
+review-comments.md
+brain-state.md
+auto-progress.md
+auto-halt-*.md
+auto-summary-*.md
+halts/
+logs/
+
+# Editor / OS
+.DS_Store
+*~
+*.swp
