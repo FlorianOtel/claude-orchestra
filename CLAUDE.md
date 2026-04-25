@@ -7,9 +7,8 @@ automatically. Deploying is an explicit, conscious step.
 ## Key workflows
 
 ```bash
-./deploy.sh --global       # promote committed changes to ~/.claude/ (system-wide)
-./deploy.sh --local        # deploy to this project only ($PWD/.claude/)
-./collect.sh               # sync ~/.claude/ changes back to repo before committing
+./deploy.sh          # deploy to ~/.claude/ (system-wide, all machines via NFS)
+./collect.sh         # sync ~/.claude/ changes back to repo before committing
 git add agents/ commands/ scripts/ config/ && git commit && git push
 ```
 

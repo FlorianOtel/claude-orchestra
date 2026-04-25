@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
-# deploy.sh — install or update Claude Orchestra into a Claude Code config dir
+# deploy.sh — install or update Claude Orchestra into ~/.claude/
 #
 # Usage:
-#   ./deploy.sh --global              — deploy to ~/.claude/ (system-wide)
-#   ./deploy.sh --local               — deploy to $PWD/.claude/ (current project only)
-#   ./deploy.sh --global --dry-run    — preview global deploy without writing
-#   ./deploy.sh --local  --diff       — show unified diff for local deploy
-#
-# --global and --local are mutually exclusive and required.
-# --dry-run and --diff are additive modifiers; both can be combined with either target.
+#   ./deploy.sh             — deploy to ~/.claude/ (system-wide, all machines via NFS)
+#   ./deploy.sh --dry-run   — preview what would change without writing anything
+#   ./deploy.sh --diff      — show unified diff of every file that would change
 #
 # Idempotent: safe to re-run after any change in the repo.
 
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET=""
+CLAUDE="${HOME}/.claude"
 DRY_RUN=false
 SHOW_DIFF=false
 
@@ -26,29 +22,11 @@ die()   { printf "\033[31m  ✗\033[0m %s\n" "$*"; exit 1; }
 
 for arg in "$@"; do
     case "$arg" in
-        --global)  TARGET="global" ;;
-        --local)   TARGET="local"  ;;
-        --dry-run) DRY_RUN=true    ;;
-        --diff)    SHOW_DIFF=true  ;;
-        *) die "Unknown argument: $arg" ;;
+        --dry-run) DRY_RUN=true   ;;
+        --diff)    SHOW_DIFF=true ;;
+        *) die "Unknown argument: $arg. Usage: ./deploy.sh [--dry-run] [--diff]" ;;
     esac
 done
-
-if [ -z "$TARGET" ]; then
-    echo "Usage: ./deploy.sh --global|--local [--dry-run] [--diff]"
-    echo ""
-    echo "  --global   Deploy to ~/.claude/  (system-wide)"
-    echo "  --local    Deploy to \$PWD/.claude/  (current project only)"
-    echo "  --dry-run  Show what would change without writing anything"
-    echo "  --diff     Show unified diff of every file that would change"
-    exit 1
-fi
-
-if [ "$TARGET" = "global" ]; then
-    CLAUDE="${HOME}/.claude"
-else
-    CLAUDE="${CLAUDE_PROJECT_DIR:-$PWD}/.claude"
-fi
 
 copy_file() {
     local src="$1" dst="$2"
@@ -75,13 +53,14 @@ copy_file() {
 echo ""
 echo "Claude Orchestra — deploy"
 echo "  repo:   $REPO"
-echo "  target: $CLAUDE  (--$TARGET)"
+echo "  target: $CLAUDE"
 $DRY_RUN  && echo "  mode:   DRY RUN (no writes)"
 $SHOW_DIFF && echo "  mode:   DIFF (no writes)"
 echo ""
 
 # ── 1. Prerequisite checks ────────────────────────────────────────────────────
 command -v jq >/dev/null 2>&1 || die "jq is required (sudo apt install jq)"
+[ -d "$CLAUDE" ] || die "~/.claude does not exist — is Claude Code installed?"
 
 # ── 2. Create target directories ─────────────────────────────────────────────
 for dir in agents commands scripts orchestra; do
@@ -110,85 +89,80 @@ $DRY_RUN || chmod +x "$CLAUDE/scripts/orchestra-hook.sh"
 echo "Config:"
 copy_file "$REPO/config/config.yaml" "$CLAUDE/orchestra/config.yaml"
 
-# ── 7-9. Global-only steps ───────────────────────────────────────────────────
-if [ "$TARGET" = "global" ]; then
+# ── 7. Merge orchestra hooks into settings.json ───────────────────────────────
+echo "Settings:"
+SETTINGS="$CLAUDE/settings.json"
+if [ ! -f "$SETTINGS" ]; then
+    warn "settings.json not found; creating minimal one"
+    $DRY_RUN || echo '{}' > "$SETTINGS"
+fi
 
-    # ── 7. Merge orchestra hooks into settings.json ───────────────────────────
-    echo "Settings:"
-    SETTINGS="$CLAUDE/settings.json"
-    if [ ! -f "$SETTINGS" ]; then
-        warn "settings.json not found; creating minimal one"
-        $DRY_RUN || echo '{}' > "$SETTINGS"
+if jq -e '.hooks.SubagentStop' "$SETTINGS" >/dev/null 2>&1; then
+    ok "unchanged: settings.json (hooks already present)"
+else
+    if $DRY_RUN; then
+        info "would merge orchestra hooks into settings.json"
+    else
+        FRAGMENT="$REPO/config/settings-hooks.json"
+        TMPFILE="$SETTINGS.orchestra-deploy.tmp"
+
+        jq -s '
+            .[0] as $existing |
+            .[1].hooks as $new_hooks |
+            ($existing.hooks.PreToolUse // []) as $existing_ptu |
+            ($new_hooks.PreToolUse // []) as $new_ptu |
+            ($existing_ptu | map(select(.matcher != "Agent"))) as $cleaned_ptu |
+            $existing
+            | .hooks.PreToolUse  = ($cleaned_ptu + $new_ptu)
+            | .hooks.SubagentStop = ($new_hooks.SubagentStop // [])
+            | .hooks.PreCompact  = ($new_hooks.PreCompact // [])
+        ' "$SETTINGS" "$FRAGMENT" > "$TMPFILE"
+
+        mv -f "$TMPFILE" "$SETTINGS"
+        ok "merged: settings.json (orchestra hooks added)"
     fi
+fi
 
-    if jq -e '.hooks.SubagentStop' "$SETTINGS" >/dev/null 2>&1; then
-        ok "unchanged: settings.json (hooks already present)"
+# ── 8. Patch status-line.sh ───────────────────────────────────────────────────
+echo "Status line:"
+STATUS_LINE="$CLAUDE/scripts/status-line.sh"
+if [ ! -f "$STATUS_LINE" ]; then
+    warn "status-line.sh not found — skipping patch (see status-line/orchestra-block.sh)"
+else
+    if grep -q "ORCHESTRA_BLOCK_START" "$STATUS_LINE" 2>/dev/null; then
+        ok "unchanged: status-line.sh (orchestra block already present)"
     else
         if $DRY_RUN; then
-            info "would merge orchestra hooks into settings.json"
+            info "would append orchestra block to status-line.sh"
         else
-            FRAGMENT="$REPO/config/settings-hooks.json"
-            TMPFILE="$SETTINGS.orchestra-deploy.tmp"
-
-            jq -s '
-                .[0] as $existing |
-                .[1].hooks as $new_hooks |
-                ($existing.hooks.PreToolUse // []) as $existing_ptu |
-                ($new_hooks.PreToolUse // []) as $new_ptu |
-                ($existing_ptu | map(select(.matcher != "Agent"))) as $cleaned_ptu |
-                $existing
-                | .hooks.PreToolUse  = ($cleaned_ptu + $new_ptu)
-                | .hooks.SubagentStop = ($new_hooks.SubagentStop // [])
-                | .hooks.PreCompact  = ($new_hooks.PreCompact // [])
-            ' "$SETTINGS" "$FRAGMENT" > "$TMPFILE"
-
-            mv -f "$TMPFILE" "$SETTINGS"
-            ok "merged: settings.json (orchestra hooks added)"
+            BLOCK="$REPO/status-line/orchestra-block.sh"
+            BLOCK_CONTENT=$(sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$BLOCK")
+            TMPFILE="$STATUS_LINE.orchestra-deploy.tmp"
+            awk -v block="$BLOCK_CONTENT" '
+                /^# Output the status line/ { print block; print ""; }
+                { print }
+            ' "$STATUS_LINE" > "$TMPFILE"
+            mv -f "$TMPFILE" "$STATUS_LINE"
+            ok "patched: status-line.sh (orchestra block appended)"
         fi
     fi
+fi
 
-    # ── 8. Patch status-line.sh ───────────────────────────────────────────────
-    echo "Status line:"
-    STATUS_LINE="$CLAUDE/scripts/status-line.sh"
-    if [ ! -f "$STATUS_LINE" ]; then
-        warn "status-line.sh not found — skipping patch (see status-line/orchestra-block.sh)"
+# ── 9. Global gitignore ───────────────────────────────────────────────────────
+echo "Gitignore:"
+GLOBAL_GI="${HOME}/.gitignore_global"
+GI_ENTRY=".claude/orchestra/"
+if grep -qF "$GI_ENTRY" "$GLOBAL_GI" 2>/dev/null; then
+    ok "unchanged: ~/.gitignore_global"
+else
+    if $DRY_RUN; then
+        info "would add $GI_ENTRY to ~/.gitignore_global"
     else
-        if grep -q "ORCHESTRA_BLOCK_START" "$STATUS_LINE" 2>/dev/null; then
-            ok "unchanged: status-line.sh (orchestra block already present)"
-        else
-            if $DRY_RUN; then
-                info "would append orchestra block to status-line.sh"
-            else
-                BLOCK="$REPO/status-line/orchestra-block.sh"
-                BLOCK_CONTENT=$(sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$BLOCK")
-                TMPFILE="$STATUS_LINE.orchestra-deploy.tmp"
-                awk -v block="$BLOCK_CONTENT" '
-                    /^# Output the status line/ { print block; print ""; }
-                    { print }
-                ' "$STATUS_LINE" > "$TMPFILE"
-                mv -f "$TMPFILE" "$STATUS_LINE"
-                ok "patched: status-line.sh (orchestra block appended)"
-            fi
-        fi
+        printf "\n# Claude Orchestra runtime state (auto-created in every project)\n%s\n" "$GI_ENTRY" >> "$GLOBAL_GI"
+        git config --global core.excludesFile "$GLOBAL_GI"
+        ok "updated: ~/.gitignore_global"
     fi
-
-    # ── 9. Global gitignore ───────────────────────────────────────────────────
-    echo "Gitignore:"
-    GLOBAL_GI="${HOME}/.gitignore_global"
-    GI_ENTRY=".claude/orchestra/"
-    if grep -qF "$GI_ENTRY" "$GLOBAL_GI" 2>/dev/null; then
-        ok "unchanged: ~/.gitignore_global"
-    else
-        if $DRY_RUN; then
-            info "would add $GI_ENTRY to ~/.gitignore_global"
-        else
-            printf "\n# Claude Orchestra runtime state (auto-created in every project)\n%s\n" "$GI_ENTRY" >> "$GLOBAL_GI"
-            git config --global core.excludesFile "$GLOBAL_GI"
-            ok "updated: ~/.gitignore_global"
-        fi
-    fi
-
-fi  # end --global-only steps
+fi
 
 echo ""
 $DRY_RUN && echo "Dry run complete — no files written." || echo "Deploy complete."

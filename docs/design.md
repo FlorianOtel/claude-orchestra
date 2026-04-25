@@ -716,15 +716,17 @@ The pipeline is wired correctly. The `state.env` badge write is intentionally pl
 
 ### Amendment — 2026-04-25 (follow-up session): deploy target disambiguation + repo restructure (later reverted)
 
-**1. `deploy.sh` now requires an explicit target argument.** (Permanent — still in effect.)
-```bash
-./deploy.sh --global          # deploy to ~/.claude/ (system-wide)
-./deploy.sh --local           # deploy to $PWD/.claude/ (current project only)
-```
-`--global` and `--local` are mutually exclusive and required. `--dry-run` and `--diff` remain additive. `--local` skips settings.json hooks merge, status-line patch, and gitignore setup (global-only infrastructure).
+**1. `deploy.sh` gained `--global`/`--local` target flags** — subsequently simplified. See Amendment 2026-04-26.
+~~`--global` and `--local` were mutually exclusive required arguments; `--dry-run` and `--diff` were additive.~~
 
 **2. Repo restructured to mirror `~/.claude/` layout (Option B) — subsequently reverted.** See Amendment 2026-04-26.
 ~~`agents/` and `commands/` moved into `.claude/` inside the repo. Claude Code picked up dev versions automatically when launched inside the repo. No deploy step needed to test agent/command changes.~~
+
+### Amendment — 2026-04-26: `deploy.sh` simplified — `--local` removed
+
+`--global` and `--local` target flags removed. `./deploy.sh` always deploys to `~/.claude/`. `--dry-run` and `--diff` remain.
+
+**Rationale:** `--local` created invisible divergence — two different versions of the same agent could be active in different projects simultaneously with no status-line indication. Without the per-project `.enabled` gate, there is no natural counterpart to `--local`. The correct workflow is: edit → commit → `./deploy.sh` → test in any project. If a staged-rollout is ever needed, that belongs in a separate test project with an explicit explicit opt-in, not a hidden local override.
 
 ### Amendment — 2026-04-26: revert Option B — explicit deploy model
 
@@ -736,7 +738,7 @@ Option B (repo `.claude/agents/` auto-discovery) was reverted. The reason: dogfo
 - `.claude/` in the repo is now **entirely gitignored** — it is pure runtime (orchestra state, local-deploy artifacts). No source files live there.
 - `deploy.sh` and `collect.sh` paths updated to match top-level `agents/` and `commands/`.
 - Claude Code running in this repo has **no** project-level agents or commands active. It uses `~/.claude/` exclusively.
-- Deploying is an explicit, conscious step: `./deploy.sh --local` (this project) or `./deploy.sh --global` (system-wide).
+- Deploying is an explicit, conscious step: `./deploy.sh` (always targets `~/.claude/`; see Amendment 2026-04-26 below).
 
 **Current repo layout (post-revert):**
 ```

@@ -47,35 +47,22 @@ Use for: simple, well-scoped tasks (≤ 10 steps) where the plan is clear enough
 ```bash
 git clone https://github.com/FlorianOtel/claude-orchestra
 cd claude-orchestra
-./deploy.sh --global
+./deploy.sh
 ```
 
-`deploy.sh` requires an explicit target argument and is idempotent — safe to re-run after any update.
+`deploy.sh` is idempotent — safe to re-run after any change in the repo.
 
 ```bash
-./deploy.sh --global              # install / update system-wide (~/.claude/)
-./deploy.sh --local               # deploy to current project only ($PWD/.claude/)
-./deploy.sh --global --dry-run    # preview without writing
-./deploy.sh --local  --diff       # show unified diff for local deploy
+./deploy.sh            # install / update to ~/.claude/
+./deploy.sh --dry-run  # preview what would change without writing
+./deploy.sh --diff     # show unified diff of every file that would change
 ```
 
-`--global` and `--local` are mutually exclusive. `--dry-run` and `--diff` are additive.
+It copies `agents/`, `commands/`, `scripts/`, and `config/` to `~/.claude/`, then:
 
-**`--global`** installs everything and:
-
-1. Copies `.claude/agents/`, `.claude/commands/`, `scripts/`, and `config/` to `~/.claude/`
-2. Merges orchestra hooks (`PreToolUse → Agent`, `SubagentStop`, `PreCompact`) into `~/.claude/settings.json` without touching existing entries
-3. Patches `~/.claude/scripts/status-line.sh` to add orchestra state indicators (if you have one; skipped otherwise)
-4. Adds `.claude/orchestra/` to your global gitignore so auto-created runtime state is never accidentally committed
-
-**`--local`** deploys agents, commands, scripts, and config to `$PWD/.claude/` of the current project. Skips settings.json hooks, status-line patch, and gitignore setup (those are global-only). Use this to test a change in a specific project without touching `~/.claude/`:
-
-```bash
-cd /path/to/my-project
-/path/to/claude-orchestra/deploy.sh --local
-```
-
-When Claude Code is launched inside a project that has been locally deployed, its `.claude/agents/` and `.claude/commands/` take precedence over the system-wide `~/.claude/` versions — giving you isolated testing without affecting any other project.
+1. Merges orchestra hooks (`PreToolUse → Agent`, `SubagentStop`, `PreCompact`) into `~/.claude/settings.json` without touching existing entries
+2. Patches `~/.claude/scripts/status-line.sh` to add orchestra state indicators (if you have one; skipped otherwise)
+3. Adds `.claude/orchestra/` to your global gitignore so per-project runtime state is never accidentally committed
 
 ## Development workflow (dogfooding)
 
@@ -84,22 +71,20 @@ in this directory has **no** project-level agents or commands — it uses `~/.cl
 exclusively. Deploying to the local project is a conscious, explicit step, not automatic.
 
 ```
-repo (agents/, commands/)   ← edit source here
+repo (agents/, commands/, scripts/, config/)   ← edit source here
         │
-        │  ./deploy.sh --local   (explicit: deploy to this project for testing)
-        │  ./deploy.sh --global  (explicit: promote to ~/.claude/ system-wide)
+        │  ./deploy.sh   (explicit step — nothing deploys automatically)
         ▼
-target/.claude/  (agents, commands, hook, config)
+~/.claude/  (agents, commands, hook, config — shared NFS, all machines)
 ```
 
 ```bash
 # Typical development cycle:
-# 1. Edit agents/planner.md, commands/brain.md, etc. in the repo
+# 1. Edit agents/planner.md, commands/brain.md, etc.
 # 2. Commit
 git add agents/ commands/ && git commit -m "..."
-# 3. Deploy — choose scope deliberately:
-./deploy.sh --local   # test in this project only ($PWD/.claude/)
-./deploy.sh --global  # promote system-wide (~/.claude/)
+# 3. Deploy
+./deploy.sh
 # 4. Push
 git push
 ```
@@ -151,7 +136,7 @@ git push
 After pulling new changes from the repo:
 
 ```bash
-./deploy.sh         # apply to ~/.claude/
+./deploy.sh
 ```
 
 ## Cross-machine deployment
@@ -183,7 +168,7 @@ claude-orchestra/
 ├── docs/
 │   ├── design.md              Full design reference (architecture, decisions, TO DOs)
 │   └── design-history.md      Design session notes and change log
-├── deploy.sh                  Install / update (--global or --local)
+├── deploy.sh                  Install / update to ~/.claude/
 └── collect.sh                 Sync changes from ~/.claude/ back to repo
 ```
 
