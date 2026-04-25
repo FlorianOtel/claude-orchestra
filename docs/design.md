@@ -505,6 +505,93 @@ architecture-level changes; anything where you'd want a Reviewer. Use `/brain`.
 
 ---
 
+## 13. Known limitations — why a full live feed is not possible
+
+The live action feed added in 2026-04-25 (§4.5, §5.3 Gap 3) shows `Edit`, `Write`, and `Bash`
+calls in real time inside the stage tmux windows. This is useful, but it is not the same as
+the live feed a user sees when working interactively with Claude Code in the main session.
+
+### 13.1 What a "full" live feed would show
+
+When Claude Code runs interactively (Brain in window 1), the user sees:
+
+1. **Thinking blocks** — the model's extended reasoning (`<thinking>…</thinking>`) streamed
+   before the first tool call.
+2. **Tool calls** — each tool use (Read, Edit, Write, Bash, …) with its arguments, shown as
+   it is dispatched.
+3. **Tool results** — the output returned from each tool, shown inline.
+4. **Prose between tool calls** — any text the model emits between tool invocations.
+5. **The final response** — the model's concluding message.
+
+The stage windows currently show only item 2, partially (Edit/Write/Bash only; Read excluded
+by design) — and only if `PreToolUse` hooks fire inside subagents (an assumption still pending
+live confirmation).
+
+### 13.2 Why the rest cannot be captured
+
+**Hook system scope.** Claude Code's hook system exposes exactly four event types:
+`PreToolUse`, `PostToolUse`, `SubagentStop`, and `PreCompact`. All four fire at tool-call
+boundaries or session lifecycle points. None fire at model-output boundaries. The hooks have
+no access to the token stream.
+
+**Thinking blocks are model output, not tool calls.** The `<thinking>` content is part of the
+Claude API response before the first `tool_use` block. It never passes through a hook. There
+is no `PreThinking`, `PostThinking`, or streaming-chunk hook. Claude Code itself receives
+the thinking content over the API and renders it in the interactive session, but the hook
+script — a shell command invoked at discrete tool-call moments — has no channel to intercept it.
+
+**Prose between tool calls is also model output.** When the model emits text like "Now I will
+edit the file…" before calling Edit, that prose is in the API response stream. Same blind spot:
+no hook fires for it.
+
+**Tool results flow through the Claude Code process, not through hooks.** `PostToolUse` does
+fire after each tool, and in principle could be used to append results to the logfile. But
+tool results can be large (full file contents from a `Read`, long `Bash` output) and logging
+them verbatim would produce unusable noise. The current design logs only the *call*, not the
+*result*, which is why the feed shows `[14:32:07] BASH git diff --stat HEAD` but not the diff
+itself.
+
+**Subagents run inside the Claude Code process.** Unlike a standalone agent that writes to a
+log file, a Claude Code subagent executes as an internal Agent tool call. Its full conversational
+content (thinking → tool calls → tool results → prose → final output) exists only inside the
+Claude Code process's memory. The `SubagentStop` hook receives the subagent's final return
+value as a string, but nothing in between — and that string is not passed to the hook payload
+in any accessible form in v1.
+
+### 13.3 What would be required to close the gap
+
+A truly full live feed would require one of:
+
+1. **A Claude Code streaming hook** — a new hook type that fires on each streamed token or
+   on each model-output chunk (thinking block, prose segment, etc.). This would require an
+   Anthropic-side change to Claude Code's hook architecture. Not available in v1 or v2 as
+   currently documented; would need to be raised as a feature request.
+
+2. **A dedicated subprocess per subagent** (Option A from the design history, §9) — spawn
+   each tier as a separate `claude --model … --print` process whose stdout Claude Code can
+   pipe to the tmux window directly. This was explicitly rejected in favour of Option B
+   (native subagents) because it requires managing inter-process communication and loses the
+   native `ExitPlanMode` / permission-mode integration. Revisit only if native subagent
+   visibility proves insufficient for real workflows.
+
+3. **Agent self-reporting** (Tier 2 fallback) — instruct Actor/Planner/Reviewer to emit a
+   structured progress line via `Bash` (e.g., `echo "[step] …" >> $LOGFILE`) after each
+   significant action. This captures actor *intent* but not *thinking*, and requires every
+   subagent prompt to carry the logfile path. Viable workaround; invasive.
+
+### 13.4 Practical implication
+
+The current live feed is best understood as a **tool-dispatch log**, not a reasoning transcript.
+It answers "what is the subagent doing right now?" (editing this file, running that command)
+but not "why is it doing it?" (thinking blocks) or "what did it see?" (tool results).
+
+For use cases where reasoning visibility matters — debugging a misbehaving plan, auditing an
+unexpected edit — the post-hoc per-invocation logfile (the file `live.log` points at) contains
+the full prompt sent to the subagent, which encodes the plan and context. The thinking itself
+remains inaccessible without a Claude Code architecture change.
+
+---
+
 ## Implementation v1 — 2026-04-24 21:10 CEST (19:10 UTC)
 
 ### Files created / modified
