@@ -714,30 +714,60 @@ All deployed files verified identical between the repo and `~/.claude/`:
 
 The pipeline is wired correctly. The `state.env` badge write is intentionally placed after plan approval — it fires in Phase 1 execution, not during the planning conversation itself.
 
-### Amendment — 2026-04-25 (follow-up session): repo restructure + per-project deploy
+### Amendment — 2026-04-25 (follow-up session): deploy target disambiguation + repo restructure (later reverted)
 
-**1. Repo restructured to mirror `~/.claude/` layout (Option B).**
-`agents/` and `commands/` moved into `.claude/` inside the repo so that:
-- The repo layout is a direct mirror of the deployment target (`repo/.claude/` → `~/.claude/`).
-- Claude Code automatically picks up dev versions when launched inside the repo (project-level `.claude/agents/` and `.claude/commands/` take precedence over user-level `~/.claude/`). No deploy step needed to test agent/command changes while working in the repo.
-- `deploy.sh` and `collect.sh` paths updated accordingly.
-
-**2. `deploy.sh` now requires an explicit target argument.**
+**1. `deploy.sh` now requires an explicit target argument.** (Permanent — still in effect.)
 ```bash
 ./deploy.sh --global          # deploy to ~/.claude/ (system-wide)
 ./deploy.sh --local           # deploy to $PWD/.claude/ (current project only)
 ```
-`--global` and `--local` are mutually exclusive and required. `--dry-run` and `--diff` remain additive. `--local` skips settings.json hooks merge, status-line patch, and gitignore setup (global-only infrastructure). This eliminates silent global deployments and supports isolated per-project testing.
+`--global` and `--local` are mutually exclusive and required. `--dry-run` and `--diff` remain additive. `--local` skips settings.json hooks merge, status-line patch, and gitignore setup (global-only infrastructure).
 
-**3. Development (dogfooding) workflow — three-level promote model.**
+**2. Repo restructured to mirror `~/.claude/` layout (Option B) — subsequently reverted.** See Amendment 2026-04-26.
+~~`agents/` and `commands/` moved into `.claude/` inside the repo. Claude Code picked up dev versions automatically when launched inside the repo. No deploy step needed to test agent/command changes.~~
+
+### Amendment — 2026-04-26: revert Option B — explicit deploy model
+
+Option B (repo `.claude/agents/` auto-discovery) was reverted. The reason: dogfooding is an intentional, as-agreed step — not something that should happen automatically whenever Claude Code is launched in the repo. Silent shadowing of the deployed versions was undesirable.
+
+**What changed:**
+
+- `agents/` and `commands/` moved back to repo root (from `.claude/agents/` and `.claude/commands/`). Git history preserved via `git mv`.
+- `.claude/` in the repo is now **entirely gitignored** — it is pure runtime (orchestra state, local-deploy artifacts). No source files live there.
+- `deploy.sh` and `collect.sh` paths updated to match top-level `agents/` and `commands/`.
+- Claude Code running in this repo has **no** project-level agents or commands active. It uses `~/.claude/` exclusively.
+- Deploying is an explicit, conscious step: `./deploy.sh --local` (this project) or `./deploy.sh --global` (system-wide).
+
+**Current repo layout (post-revert):**
 ```
-repo/.claude/agents|commands (edit here)
-  └─ ./deploy.sh --local   → self-check + local config only
-  └─ ./deploy.sh --global  → promote to ~/.claude/ (all projects, all machines)
+agents/           ← source: planner, actor, reviewer
+commands/         ← source: brain, duo, orchestra-mode
+scripts/          ← source: orchestra-hook.sh
+config/           ← source: config.yaml, settings-hooks.json
+status-line/      ← standalone orchestra-block.sh
+docs/             ← design.md (symlink), design-history.md (symlink)
+.claude/          ← runtime only, gitignored entirely
 ```
-- **Level 1 (no deploy)**: just launch Claude Code from inside the repo — dev agents/commands are live immediately via project-level discovery.
-- **Level 2 (`--local` from repo root)**: self-check (agents/commands show "unchanged"), writes local hook copy and config. Note: the hook copied to `.claude/scripts/` is **not invoked** — the global `settings.json` references `~/.claude/scripts/orchestra-hook.sh` by absolute path. Hook changes require `--global`.
-- **Level 3 (`--global`)**: promotes committed changes to `~/.claude/` for all projects and machines.
+
+**No silent shadowing.** Changes to agent/command files only take effect after an explicit deploy.
+
+### Amendment — 2026-04-26: Brain critical stance + Planner pedantic posture
+
+Behavioral changes to `brain.md` and `agents/planner.md`:
+
+**Brain (`commands/brain.md`) — Critical stance section added before the pipeline.**
+Before delegating to Planner, Brain must interrogate the request:
+- Push back on the request itself — challenge framing, necessity, and clarity before accepting.
+- Surface alternatives explicitly — when multiple approaches exist, present each with concrete pros/cons and require an explicit user choice; do not silently pick one.
+- Force clarity at every gap — definition of done, scope, reuse vs replace, test expectations, API/contract impact must all be unambiguous before proceeding.
+- Be sceptical of the plan Planner returns — Brain reviews critically (is the approach matched? are risks covered? were silent choices made?); iterate with Planner rather than surfacing a bad plan.
+
+**Planner (`agents/planner.md`) — Pedantic posture section added before the plan structure.**
+Before producing a plan, Planner challenges the task:
+- Demand precision from the caller — if Brain's prompt is ambiguous (wrong target, unspecified scope, unresolved approach choice), return questions rather than guessing.
+- Surface alternatives at step level — when a step can be implemented in multiple meaningful ways, name options with pros/cons and mark pending decisions; applies especially to data model, API contracts, error handling, dependencies, test scope.
+- Be aggressive about risks — the Risks/unknowns section is mandatory and substantive; unverifiable assumptions and system boundary gaps must be flagged loudly.
+- Flag scope creep — anything implied by the task but not explicitly mentioned must be named as in-scope or explicitly deferred in "Out of scope".
 
 ### TO DO / reconsider later — Option B: dedicated FINALIZE stage
 
