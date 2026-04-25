@@ -1240,6 +1240,7 @@ clean manually"). Registry retains all events.
 
 #### Verification performed
 
+**Mechanical (pre-dogfooding):**
 - Unit tests for `runs-registry.sh` (start, transition, list, resolve prefix matching,
   count-active, by-state, field) ✓
 - Mechanical smoke test of `start-research.sh` in tmux: registry event, tmux window
@@ -1247,14 +1248,37 @@ clean manually"). Registry retains all events.
   cleanly, count-active drops to 0 ✓
 - All four slash commands visible in skills list after deploy ✓
 
-#### Verification deferred to first real use
+**End-to-end dogfooding** (run_id `20260425T185840Z-test-the-new-phase-0-spawn-mechanics`,
+2026-04-26):
 
-- End-to-end Phase 0 dialogue (interactive Opus 4.7 spawned, user signals proceed,
-  RESEARCH.md written) — requires manual operator interaction
-- `/brain-resume <slug>` end-to-end (Planner / Actor / Reviewer dispatch with per-run
-  subdir)
-- Multi-run concurrency in real use
-- VSCode manual-launcher path
+| Phase | Tier / role | Model | Duration | Outcome |
+|---|---|---|---|---|
+| Phase 0 | Researcher (interactive in tmux window) | Opus 4.7 | manual | Dialogue produced 5.4 KB RESEARCH.md; spawned session correctly self-discovered the status-line bug (spawned windows showing `♪ default` instead of self-identifying) |
+| Phase 1 | Planner subprocess | Sonnet 4.6 | 156 s | 9.8 KB / 242-line PLAN.md with verbatim before/after code blocks and step-level scope guards |
+| Phase 2 | G2 gate (`ExitPlanMode`) | n/a | < 1 s | Approved |
+| Phase 3 (impl) | Actor subprocess | Haiku 4.5 | 74 s | Edited `status-line/orchestra-block.sh` per plan (env-first BRANCH A + registry BRANCH B + 30-char truncation in both). Steps 1-4 done; step 5 manual smoke deferred to operator |
+| Phase 3 (review) | Reviewer subprocess | Sonnet 4.6 | 140 s | Verdict **PASS**: source matches spec, syntax check passes, deployed grep finds expected markers, scope honoured |
+| Phase 4 | Brain (launcher chat) | Opus 4.7 | < 1 s | Registry transitioned `done`, idle badge restored |
+
+**Dogfooded fix (real bug shipped):** `status-line/orchestra-block.sh` — env-first
+detection of `CLAUDE_BRAIN_RUN_ID` for spawned windows; identical 30-char no-ellipsis
+truncation in both branches; verified to produce identical output in launcher (registry
+path) and spawned (env path) contexts.
+
+**Bug found and patched mid-flight:** the original `agents/researcher.md` did NOT
+instruct the spawned session to transition the registry to `research_complete` after
+writing `RESEARCH.md`. Without the transition, `/brain-resume` would refuse with state
+mismatch. Patched in source (added `runs-registry.sh transition … research_complete`
+step after the atomic-rename) and redeployed; future spawned sessions auto-transition.
+
+#### Verification still deferred
+
+- Multi-run concurrency in real use (multiple `/brain` invocations simultaneously) —
+  smoke-tested mechanically but not exercised under realistic load
+- VSCode manual-launcher path (`bash /tmp/brain-launch-<id>.sh` in a terminal split) —
+  the path exists in code; not yet driven through an actual VSCode-only workflow
+- A `/brain-resume` round that triggers the FIX-loop (Reviewer returns FIX, not PASS,
+  forcing re-dispatch) — first dogfooded run had Reviewer PASS on first pass
 
 ---
 
