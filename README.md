@@ -79,48 +79,33 @@ When Claude Code is launched inside a project that has been locally deployed, it
 
 ## Development workflow (dogfooding)
 
-Working on the orchestra itself uses a three-level promote model:
+Source files live in `agents/` and `commands/` at the repo root. Claude Code running
+in this directory has **no** project-level agents or commands — it uses `~/.claude/`
+exclusively. Deploying to the local project is a conscious, explicit step, not automatic.
 
 ```
-repo (.claude/agents/, .claude/commands/)   ← edit here
-        │  ./deploy.sh --local (self-check + config)
-        │  ./deploy.sh --global             (promote to stable)
+repo (agents/, commands/)   ← edit source here
+        │
+        │  ./deploy.sh --local   (explicit: deploy to this project for testing)
+        │  ./deploy.sh --global  (explicit: promote to ~/.claude/ system-wide)
         ▼
-~/.claude/ (system-wide, all projects)
+target/.claude/  (agents, commands, hook, config)
 ```
-
-**Level 1 — edit in the repo (no deploy needed for agents/commands).**
-Because agents and commands live in `.claude/` inside the repo, Claude Code
-picks them up automatically when launched from `~/Gin-AI/projects/claude-orchestra/`.
-Just edit `.claude/agents/*.md` or `.claude/commands/*.md` and the change is
-live immediately — no deploy step.
-
-**Level 2 — `./deploy.sh --local` from the repo root (self-check + local config).**
-Running `--local` from inside the repo is a useful self-check: agents and commands
-report "unchanged" (source = destination), while the hook script and orchestra
-config are written into `.claude/scripts/` and `.claude/orchestra/` giving the
-project its own config separate from the global one.
-
-Note: the hook script copied to `.claude/scripts/orchestra-hook.sh` is **not
-invoked** by the local deploy — the global `~/.claude/settings.json` references
-`~/.claude/scripts/orchestra-hook.sh` by absolute path. Changes to the hook
-script only take effect after `./deploy.sh --global`.
-
-**Level 3 — `./deploy.sh --global` (promote to stable).**
-Once changes are tested and committed, promote to `~/.claude/` so all projects
-and all machines pick them up.
 
 ```bash
-# Typical dogfood cycle:
-# 1. Edit .claude/agents/planner.md or .claude/commands/brain.md in the repo
-# 2. Test with Claude Code launched from inside this repo (no deploy needed)
-# 3. Commit
-git add .claude/agents/ .claude/commands/ && git commit -m "..."
-# 4. Promote to global
-./deploy.sh --global
-# 5. Push
+# Typical development cycle:
+# 1. Edit agents/planner.md, commands/brain.md, etc. in the repo
+# 2. Commit
+git add agents/ commands/ && git commit -m "..."
+# 3. Deploy — choose scope deliberately:
+./deploy.sh --local   # test in this project only ($PWD/.claude/)
+./deploy.sh --global  # promote system-wide (~/.claude/)
+# 4. Push
 git push
 ```
+
+**No silent shadowing.** Working in this repo does not activate any dev version of
+the orchestra automatically. Changes only take effect after an explicit deploy.
 
 ## Usage
 
@@ -175,22 +160,19 @@ If `~/.claude/` is shared across machines (e.g. via an NFS-mounted home director
 
 ## Files
 
-The repo layout mirrors the `~/.claude/` deployment target. `.claude/agents/` and
-`.claude/commands/` are picked up automatically by Claude Code when launched inside
-this repo — making the repo itself the dev/test environment without needing to deploy.
+`.claude/` is entirely runtime (gitignored). Source files live at the repo root
+and are deployed explicitly — no automatic shadowing.
 
 ```
 claude-orchestra/
-├── .claude/
-│   ├── agents/
-│   │   ├── planner.md         Sonnet 4.6 — writes numbered plan to PLAN.md
-│   │   ├── actor.md           Haiku 4.5  — executes one scoped step
-│   │   └── reviewer.md        Sonnet 4.6 — reviews diff, emits PASS/FIX/BLOCK
-│   ├── commands/
-│   │   ├── brain.md           /brain slash command — full pipeline
-│   │   ├── duo.md             /duo slash command   — lightweight pipeline
-│   │   └── orchestra-mode.md  /orchestra-mode      — set autonomy preset (v1 stub for auto)
-│   └── orchestra/             Runtime state (auto-created; gitignored)
+├── agents/
+│   ├── planner.md         Sonnet 4.6 — writes numbered plan to PLAN.md
+│   ├── actor.md           Haiku 4.5  — executes one scoped step
+│   └── reviewer.md        Sonnet 4.6 — reviews diff, emits PASS/FIX/BLOCK
+├── commands/
+│   ├── brain.md           /brain slash command — full pipeline
+│   ├── duo.md             /duo slash command   — lightweight pipeline
+│   └── orchestra-mode.md  /orchestra-mode      — set autonomy preset (v1 stub for auto)
 ├── scripts/
 │   └── orchestra-hook.sh      PreToolUse / SubagentStop / PreCompact hook dispatcher
 ├── status-line/

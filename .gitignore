@@ -11,9 +11,9 @@ auto-summary-*.md
 halts/
 logs/
 
-# Claude Code project-level runtime state and local-deploy artifacts (never commit)
-.claude/orchestra/
-.claude/scripts/
+# Claude Code project-level directory — entirely runtime; never commit
+# (agents and commands live in top-level agents/ and commands/ instead)
+.claude/
 
 # Editor / OS
 .DS_Store

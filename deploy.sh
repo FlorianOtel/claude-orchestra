@@ -91,13 +91,13 @@ $DRY_RUN || mkdir -p "$CLAUDE/orchestra/logs"
 
 # ── 3. Subagent definitions ───────────────────────────────────────────────────
 echo "Agents:"
-for f in "$REPO"/.claude/agents/*.md; do
+for f in "$REPO"/agents/*.md; do
     copy_file "$f" "$CLAUDE/agents/$(basename "$f")"
 done
 
 # ── 4. Slash commands ─────────────────────────────────────────────────────────
 echo "Commands:"
-for f in "$REPO"/.claude/commands/*.md; do
+for f in "$REPO"/commands/*.md; do
     copy_file "$f" "$CLAUDE/commands/$(basename "$f")"
 done
 
