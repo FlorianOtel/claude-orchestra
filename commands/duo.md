@@ -1,107 +1,122 @@
 ---
-description: Lightweight Plan (Sonnet 4.6, interactive) → Act (Haiku 4.5, auto) pipeline. No review tier, no Opus Brain. For simple, well-scoped tasks where unreviewed direct execution is acceptable.
+description: Lightweight pipeline — Sonnet plans interactively (you), dispatches Actor as a Haiku subagent. No Phase 0, no Reviewer. For simple, well-scoped tasks.
 ---
 
-# /duo — Sonnet plans interactively, Haiku acts automatically
+# /duo — Sonnet plans, Haiku acts
 
-You are running the **duo pipeline**: you (Sonnet 4.6) plan interactively with the user; Haiku 4.5 executes automatically without permission prompts. There is no Reviewer, no review loop, no CROSS-CHECK stage. Use this for well-scoped tasks where the plan is clear enough to trust Haiku to execute unsupervised.
+You are running the **duo** pipeline. You (Sonnet 4.6) plan interactively with the operator; then you dispatch a single **Actor subagent** (Haiku 4.5) via the `Task` tool to execute. There is no Phase 0 RESEARCH (use `/brain` if you need interrogation). There is no Reviewer.
 
-## Cost note
-
-Duo is designed to run from a **Sonnet 4.6 session** to keep the planning phase cheap. If you are running as Opus 4.7, the pipeline still works but the planning tokens cost Opus rates. For the intended cost profile, start from:
-```
-claude --model claude-sonnet-4-5
-```
-or switch with `/model claude-sonnet-4-5` before typing `/duo`.
+Use `/duo` when the task is simple enough that a plan + execute is sufficient, and you don't need a review loop.
 
 ## When to use /duo vs /brain
 
 | Situation | Use |
 |---|---|
 | Simple, well-scoped, ≤ 10 steps, low blast-radius | `/duo` |
-| Multi-file refactor, architecture change, or anything where a review loop matters | `/brain` |
-| Overnight / unattended run with test gate and branch isolation | `/brain --mode auto` (v2, not yet implemented) |
+| Multi-file refactor, architecture change, anything where review matters | `/brain` |
+
+## Cost note
+
+`/duo` is designed to run from a **Sonnet 4.6 session** for the planning phase. Switch with `/model claude-sonnet-4-5` before invoking if you're currently on Opus. The Actor subagent is pinned to Haiku 4.5 by frontmatter regardless of parent model.
 
 ## Prerequisites
 
-**Plan mode must be active.** The G2 gate requires it. If you are not in plan mode, tell the user:
-> "Please enter plan mode first (Shift+Tab or `/plan-mode`), then run `/duo` again."
+1. **Plan mode is active.** If not, stop and say:
+   > "Please enter plan mode first (Shift+Tab), then run `/duo` again."
+2. **Sonnet 4.6 at parent** (recommended, not enforced).
+3. **Bypass-flattens-down caveat.** Same as `/brain`: if the operator launched the parent with `--dangerously-skip-permissions`, Actor inherits bypass and the Plan-Then-Execute gate is decorative.
 
-## Phase 1 — Interactive plan
+## Setup — per-invocation artifact directory
 
-Signal the pipeline is active by appending to `state.env` via `Bash`:
+Run via `Bash`:
+
 ```bash
-mkdir -p "${CLAUDE_PROJECT_DIR}/.claude/orchestra"
-echo "ORCHESTRA_MODE=duo" >> "${CLAUDE_PROJECT_DIR}/.claude/orchestra/state.env"
+SESSION_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+SESSION_DIR="${CLAUDE_PROJECT_DIR}/.claude/orchestra/sessions/${SESSION_ID}"
+mkdir -p "${SESSION_DIR}"
+export CLAUDE_ORCHESTRA_SESSION_DIR="${SESSION_DIR}"
+echo "session_dir=${SESSION_DIR}"
 ```
-This makes the status-line badge show `♪ duo` while the pipeline runs.
 
-Work with the user interactively to crystallise the plan. Read files, explore the codebase, ask questions, propose alternatives. The user can push back, redirect, or narrow scope across as many turns as needed — this is the "interactive" part.
+Print the session_dir so the operator can locate `PLAN.md` and `TASKS.json` later.
+
+(Housekeeping cleanup of >30d subdirs is added in a follow-up step.)
+
+---
+
+## Phase 1 — Interactive plan (you)
+
+Work with the operator interactively to crystallise the plan. Read files, explore the codebase, ask questions, propose alternatives. The operator can push back, redirect, or narrow scope across as many turns as needed — this is the "interactive" part.
 
 When the plan is agreed, write it with this structure:
 
 1. **Intent** — one line: what will be true when done.
 2. **Steps** — numbered, imperative, each executable by Actor as a single edit or shell command.
 3. **Expected outcome per step** — one line each.
-4. **Doc impact** — which project docs (CLAUDE.md, README, TROUBLESHOOTING.md, etc.) need updating; include as numbered steps if any.
+4. **Doc impact** — which project docs need updating; include as numbered steps if any.
 5. **Risks / unknowns** — anything you couldn't verify by reading.
 6. **Out of scope** — the hard fence Actor must not cross.
 
 **Keep it tight:** if more than ~10 steps, recommend `/brain` instead.
 
-Persist PLAN.md via atomic-rename:
-1. Write full plan text to `${CLAUDE_PROJECT_DIR}/.claude/orchestra/PLAN.md.tmp`.
-2. `Bash`: `mv -f "${CLAUDE_PROJECT_DIR}/.claude/orchestra/PLAN.md.tmp" "${CLAUDE_PROJECT_DIR}/.claude/orchestra/PLAN.md"`.
-
-## Phase 2 — G2 approval
-
-Call **ExitPlanMode** with the plan content. You are the only caller — do not call it before the plan is fully agreed.
-
-On rejection: stay in plan mode, refine, repeat Phase 1.
-
-## Phase 3 — Execute (Haiku, auto)
-
-On approval, dispatch the Actor as a `claude -p` subprocess via `~/.claude/scripts/run-tier.sh`.
-This runs Actor on Haiku 4.5 with `bypassPermissions` set explicitly — no `Shift+Tab` needed,
-the model and permission mode are set per-subprocess. The `implement` tmux window (or
-`tail -f .claude/orchestra/live.log` for VSCode users) shows the full live feed: thinking,
-prose, tool calls with arguments, and tool results.
+Persist via atomic-rename:
 
 ```bash
-PROMPT_FILE=$(mktemp /tmp/actor-prompt.XXXXXX)
-cat > "$PROMPT_FILE" <<'EOF'
-[full plan text from above]
-
-Execute all steps sequentially. Stay in scope per the plan's "Out of scope" section.
-Hard-deny rules apply: no `rm -rf`, no `git push`, no commits.
-Update ${CLAUDE_PROJECT_DIR}/.claude/orchestra/TASKS.json via atomic-rename as steps complete.
-Return one of: "ready_for_review", "blocked: <reason>", or "partial: <details>".
+cat > "${CLAUDE_ORCHESTRA_SESSION_DIR}/PLAN.md.tmp" <<'EOF'
+[full plan text]
 EOF
-
-RESULT_FILE=$(~/.claude/scripts/run-tier.sh implement claude-haiku-4-5-20251001 actor \
-  bypassPermissions "$PROMPT_FILE" \
-  --allowedTools "Read,Edit,Write,Bash,Grep,Glob,TodoWrite")
-
-for i in $(seq 1 300); do [ -s "$RESULT_FILE" ] && break; sleep 2; done
-ACTOR_STATUS=$(cat "$RESULT_FILE")
-rm -f "$RESULT_FILE" "$PROMPT_FILE"
+mv -f "${CLAUDE_ORCHESTRA_SESSION_DIR}/PLAN.md.tmp" "${CLAUDE_ORCHESTRA_SESSION_DIR}/PLAN.md"
 ```
 
-If Actor reports `blocked` on any step, surface that to the user and stop — do not auto-retry.
+---
+
+## Phase 2 — Plan approval gate
+
+Call `ExitPlanMode` with the full plan content. You are the only caller — do not call it before the plan is fully agreed.
+
+The operator will see Claude Code's standard "auto-edit / manually approve / cancel" prompt at the parent layer. Their choice sets the permission posture for Phase 3.
+
+On rejection: stay in plan mode, refine the plan, repeat Phase 1.
+
+---
+
+## Phase 3 — Execute (Task → Actor subagent)
+
+Dispatch Actor via the `Task` tool with `subagent_type: actor`. Prompt includes:
+
+- The session directory path (`${CLAUDE_ORCHESTRA_SESSION_DIR}`).
+- The full plan text from `PLAN.md`.
+- An instruction to update `TASKS.json` in the session dir as steps complete.
+- An instruction to return one of `ready_for_review | blocked | partial`.
+- An instruction to include a diff summary in the final message.
+
+Actor returns when:
+
+- All steps complete: status `ready_for_review`, with diff summary. Show the diff to the operator.
+- Blocked on a step: status `blocked: <reason>`. Surface to operator. Do not auto-retry. Decide whether to revise the plan and re-run, or abandon.
+- Partial: status `partial: <details>`. Usually means dispatch Actor again for the remainder, possibly after operator clarification.
+
+---
 
 ## Phase 4 — Done
 
-Short summary:
+Short summary to the operator:
+
+- Session dir path.
 - Files changed.
-- Tests run, if Actor chose to run them.
-- Memory-worthy facts from this task (Brain writes to `~/.claude/projects/<encoded-pwd>/memory/` directly if any decisions were made that future sessions should know).
-- Anything the user should verify manually.
+- Tests run (if Actor chose to run any).
+- Anything to verify manually.
 
-Restore the idle badge via `Bash`:
-```bash
-echo "ORCHESTRA_MODE=default" >> "${CLAUDE_PROJECT_DIR}/.claude/orchestra/state.env"
-```
+Do **not** commit, push, or open a PR unless explicitly asked.
 
-**Do NOT commit, push, or open a PR** unless explicitly asked.
+---
+
+## What this command does NOT do
+
+- ❌ Spawn `claude -p` subprocesses or use `run-tier.sh`.
+- ❌ Have a Phase 0 RESEARCH stage (use `/brain` for that).
+- ❌ Have a Reviewer (use `/brain` for that).
+- ❌ Auto-commit or auto-push.
+- ❌ Run multiple parallel Actor invocations (single Actor handles the whole plan).
 
 $ARGUMENTS
