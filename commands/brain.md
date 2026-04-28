@@ -47,6 +47,7 @@ need the full interrogation+planning+review structure.
    - `MODE=tmux` or `MODE=manual` — environment branch
    - `WINDOW=<name>` — present when MODE=tmux
    - `LAUNCH_SCRIPT=<path>` — present when MODE=manual
+   - `CLIPBOARD=<tool>` or `CLIPBOARD=no` — present when MODE=manual
 
 3. **Compute slug from RUN_ID.** Slug is everything after the timestamp prefix:
    ```bash
@@ -75,6 +76,30 @@ need the full interrogation+planning+review structure.
 
    ### If MODE=manual (VSCode without tmux, or tmux failed)
 
+   **If CLIPBOARD is not "no" (clipboard injection succeeded):**
+   ```
+   ✓ Run started: <slug>
+     run_id:      <run_id>
+     model:       claude-opus-4-7
+     window:      manual launcher (no tmux)
+
+   VSCode detected (or tmux unavailable). To start the Phase 0 dialogue:
+
+   1. Open a terminal split (Ctrl+` in VSCode)
+   2. Paste and press Enter (command already in clipboard)
+      (or run manually: bash <LAUNCH_SCRIPT>)
+   3. Have the research dialogue in that terminal
+   4. When done, the spawned session writes RESEARCH.md and exits
+
+   Then return here and run:
+
+       /brain-resume <slug>
+
+   Other commands:    /brain-status  /brain-abandon <slug>
+   Keyboard shortcut: Ctrl+Shift+P → Tasks: Run Task → Start Brain Run
+   ```
+
+   **If CLIPBOARD is "no" (manual fallback):**
    ```
    ✓ Run started: <slug>
      run_id:      <run_id>
@@ -93,11 +118,7 @@ need the full interrogation+planning+review structure.
        /brain-resume <slug>
 
    Other commands:    /brain-status  /brain-abandon <slug>
-
-   ── VSCode UX note (v1 stop-gap) ──
-   Manual `bash <script>` step is a known v1 ergonomics gap; tmux integration via
-   .vscode/tasks.json or clipboard injection is planned for next commit. See
-   docs/design.md "Phase 0 — VSCode polish TO DO".
+   Keyboard shortcut: Ctrl+Shift+P → Tasks: Run Task → Start Brain Run
    ```
 
 5. **End your turn.** Do NOT enter a dialogue, do NOT do research yourself, do NOT

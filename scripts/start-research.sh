@@ -131,6 +131,23 @@ export CLAUDE_BRAIN_RUN_DIR=$(qt "$RUN_DIR")
 exec ${CLAUDE_CMD} < $(qt "$INITIAL_PROMPT_FILE")
 LAUNCHER
       chmod +x "$LAUNCH_SCRIPT"
+      CLIPBOARD_TOOL=""
+      if   command -v wl-copy  >/dev/null 2>&1; then CLIPBOARD_TOOL="wl-copy"
+      elif command -v xclip    >/dev/null 2>&1; then CLIPBOARD_TOOL="xclip"
+      elif command -v pbcopy   >/dev/null 2>&1; then CLIPBOARD_TOOL="pbcopy"
+      fi
+      if [ -n "$CLIPBOARD_TOOL" ]; then
+        case "$CLIPBOARD_TOOL" in
+          wl-copy) printf '%s' "bash $LAUNCH_SCRIPT" | wl-copy 2>/dev/null || CLIPBOARD_TOOL="" ;;
+          xclip)   printf '%s' "bash $LAUNCH_SCRIPT" | xclip -selection clipboard 2>/dev/null || CLIPBOARD_TOOL="" ;;
+          pbcopy)  printf '%s' "bash $LAUNCH_SCRIPT" | pbcopy 2>/dev/null || CLIPBOARD_TOOL="" ;;
+        esac
+      fi
+      if [ -n "$CLIPBOARD_TOOL" ]; then
+        echo "CLIPBOARD=$CLIPBOARD_TOOL"
+      else
+        echo "CLIPBOARD=no"
+      fi
     }
     write_launcher_script
     echo "RUN_ID=$RUN_ID"
@@ -155,6 +172,24 @@ export CLAUDE_BRAIN_RUN_DIR=$(qt "$RUN_DIR")
 exec ${CLAUDE_CMD} < $(qt "$INITIAL_PROMPT_FILE")
 LAUNCHER
   chmod +x "$LAUNCH_SCRIPT"
+
+  CLIPBOARD_TOOL=""
+  if   command -v wl-copy  >/dev/null 2>&1; then CLIPBOARD_TOOL="wl-copy"
+  elif command -v xclip    >/dev/null 2>&1; then CLIPBOARD_TOOL="xclip"
+  elif command -v pbcopy   >/dev/null 2>&1; then CLIPBOARD_TOOL="pbcopy"
+  fi
+  if [ -n "$CLIPBOARD_TOOL" ]; then
+    case "$CLIPBOARD_TOOL" in
+      wl-copy) printf '%s' "bash $LAUNCH_SCRIPT" | wl-copy 2>/dev/null || CLIPBOARD_TOOL="" ;;
+      xclip)   printf '%s' "bash $LAUNCH_SCRIPT" | xclip -selection clipboard 2>/dev/null || CLIPBOARD_TOOL="" ;;
+      pbcopy)  printf '%s' "bash $LAUNCH_SCRIPT" | pbcopy 2>/dev/null || CLIPBOARD_TOOL="" ;;
+    esac
+  fi
+  if [ -n "$CLIPBOARD_TOOL" ]; then
+    echo "CLIPBOARD=$CLIPBOARD_TOOL"
+  else
+    echo "CLIPBOARD=no"
+  fi
 
   echo "RUN_ID=$RUN_ID"
   echo "MODE=manual"

@@ -1193,14 +1193,13 @@ terminal split (Ctrl+\`) and runs `bash /tmp/brain-launch-<run_id>.sh`. Interact
 runs in that terminal — the **model switch IS preserved** (the launcher script invokes
 `claude --model claude-opus-4-7`). The friction is the one-time copy-paste.
 
-##### TO DO — VSCode UX polish (next commit)
+##### VSCode UX polish (implemented)
 
-1. **`.vscode/tasks.json` integration** — define a task that runs the most recent
-   `/tmp/brain-launch-*.sh`; trigger via Ctrl+Shift+P → "Run Task: Start Brain Run".
-2. **Clipboard injection** — copy the `bash <script>` command to clipboard automatically
-   (via `xclip` / `pbcopy` / `wl-copy` depending on platform).
-
-v1 ships with the manual step; either or both polish items planned for next commit.
+1. **`.vscode/tasks.json` integration** ✓ — `.vscode/tasks.json` in orchestra repo root defines a
+   "Start Brain Run" task that runs the most recent `/tmp/brain-launch-*.sh`; trigger via
+   Ctrl+Shift+P → "Run Task: Start Brain Run".
+2. **Clipboard injection** ✓ — `start-research.sh` auto-copies the `bash <script>` command to
+   clipboard (via `wl-copy` / `xclip` / `pbcopy` depending on platform, with failure-safe fallback).
 
 #### Concurrent runs
 
@@ -1233,8 +1232,8 @@ clean manually"). Registry retains all events.
 
 - **Brain in launcher does not retain pipeline state across turns** — each slash command
   is independent. State lives in registry + per-run subdirs.
-- **VSCode requires one manual `bash <script>` step** — v1 ergonomics gap; polish queued
-  for next commit (see TO DO above).
+- **VSCode**: clipboard injection auto-copies the command; `.vscode/tasks.json` provides
+  one-keystroke launch via Ctrl+Shift+P → Start Brain Run.
 - **`/duo` not migrated** — adding Phase 0 + multi-run isolation would defeat the
   lightweight purpose. Operators wanting research dialogue should use `/brain`.
 
