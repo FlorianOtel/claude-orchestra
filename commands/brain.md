@@ -22,23 +22,46 @@ No separate sessions. No `claude -p` subprocesses. No multi-run registry. If the
 2. **Model.** Sonnet 4.6 minimum. Opus 4.7 recommended for hard architectural reasoning. The operator picks the model before invoking; you (Brain) inherit it.
 3. **Bypass-flattens-down caveat.** If the operator launched the parent session with `--dangerously-skip-permissions`, all subagent permission frontmatter is silently overridden and Phase 0's read-only posture is not enforced by the framework. Subagents inherit bypass. Document but do not refuse — this is the operator's choice.
 
-## Setup — per-invocation artifact directory
+## Setup — per-invocation artifact directory + housekeeping
 
-Before Phase 0 begins, create a fresh per-invocation subdirectory under `.claude/orchestra/sessions/` and export it as an environment variable that subagents read for artifact paths.
+Before Phase 0 begins, create a fresh per-invocation subdirectory under `.claude/orchestra/sessions/`, export its path as an environment variable that subagents read for artifact paths, and lazily clean up any subdirs older than the configured retention window.
 
 Run via `Bash`:
 
 ```bash
+# 1. Read retention window from config (default 30 if not set / not parseable).
+SESSIONS_ROOT="${CLAUDE_PROJECT_DIR}/.claude/orchestra/sessions"
+_parse_retention() {
+  awk '
+    /^housekeeping:/ { in_hk = 1; next }
+    in_hk && /^[^ ]/ { in_hk = 0 }
+    in_hk && /session_retention_days:/ {
+      gsub(/[^0-9]/, "", $2); print $2; exit
+    }
+  ' "$1" 2>/dev/null
+}
+# Precedence: per-project override > global default > hardcoded 30.
+RETENTION_DAYS=$(_parse_retention "${CLAUDE_PROJECT_DIR}/.claude/orchestra/config.yaml")
+[ -z "${RETENTION_DAYS}" ] && \
+  RETENTION_DAYS=$(_parse_retention "${HOME}/.claude/orchestra/config.yaml")
+RETENTION_DAYS="${RETENTION_DAYS:-30}"
+
+# 2. Lazy cleanup: drop session subdirs older than RETENTION_DAYS days.
+if [ -d "${SESSIONS_ROOT}" ]; then
+  find "${SESSIONS_ROOT}" -mindepth 1 -maxdepth 1 -type d \
+       -mtime +"${RETENTION_DAYS}" -exec rm -rf {} + 2>/dev/null
+fi
+
+# 3. Create fresh per-invocation subdir.
 SESSION_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-SESSION_DIR="${CLAUDE_PROJECT_DIR}/.claude/orchestra/sessions/${SESSION_ID}"
+SESSION_DIR="${SESSIONS_ROOT}/${SESSION_ID}"
 mkdir -p "${SESSION_DIR}"
 export CLAUDE_ORCHESTRA_SESSION_DIR="${SESSION_DIR}"
 echo "session_dir=${SESSION_DIR}"
+echo "retention_days=${RETENTION_DAYS}"
 ```
 
 Print the session_dir to the operator so they can locate artifacts later.
-
-(Housekeeping: the cleanup of subdirs older than `housekeeping.session_retention_days` is added in a follow-up step. For now, the directory just accumulates.)
 
 ---
 

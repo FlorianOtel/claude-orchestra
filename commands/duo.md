@@ -26,21 +26,43 @@ Use `/duo` when the task is simple enough that a plan + execute is sufficient, a
 2. **Sonnet 4.6 at parent** (recommended, not enforced).
 3. **Bypass-flattens-down caveat.** Same as `/brain`: if the operator launched the parent with `--dangerously-skip-permissions`, Actor inherits bypass and the Plan-Then-Execute gate is decorative.
 
-## Setup — per-invocation artifact directory
+## Setup — per-invocation artifact directory + housekeeping
+
+Same idiom as `/brain`: create a fresh subdir, export it for the Actor subagent, lazily clean up old subdirs.
 
 Run via `Bash`:
 
 ```bash
+SESSIONS_ROOT="${CLAUDE_PROJECT_DIR}/.claude/orchestra/sessions"
+_parse_retention() {
+  awk '
+    /^housekeeping:/ { in_hk = 1; next }
+    in_hk && /^[^ ]/ { in_hk = 0 }
+    in_hk && /session_retention_days:/ {
+      gsub(/[^0-9]/, "", $2); print $2; exit
+    }
+  ' "$1" 2>/dev/null
+}
+# Precedence: per-project override > global default > hardcoded 30.
+RETENTION_DAYS=$(_parse_retention "${CLAUDE_PROJECT_DIR}/.claude/orchestra/config.yaml")
+[ -z "${RETENTION_DAYS}" ] && \
+  RETENTION_DAYS=$(_parse_retention "${HOME}/.claude/orchestra/config.yaml")
+RETENTION_DAYS="${RETENTION_DAYS:-30}"
+
+if [ -d "${SESSIONS_ROOT}" ]; then
+  find "${SESSIONS_ROOT}" -mindepth 1 -maxdepth 1 -type d \
+       -mtime +"${RETENTION_DAYS}" -exec rm -rf {} + 2>/dev/null
+fi
+
 SESSION_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-SESSION_DIR="${CLAUDE_PROJECT_DIR}/.claude/orchestra/sessions/${SESSION_ID}"
+SESSION_DIR="${SESSIONS_ROOT}/${SESSION_ID}"
 mkdir -p "${SESSION_DIR}"
 export CLAUDE_ORCHESTRA_SESSION_DIR="${SESSION_DIR}"
 echo "session_dir=${SESSION_DIR}"
+echo "retention_days=${RETENTION_DAYS}"
 ```
 
 Print the session_dir so the operator can locate `PLAN.md` and `TASKS.json` later.
-
-(Housekeeping cleanup of >30d subdirs is added in a follow-up step.)
 
 ---
 

@@ -48,9 +48,11 @@ test_gate:
   # command: "pytest -q tests/"
 
 # -----------------------------------------------------------------------------
-# Visibility / env overrides
+# Per-invocation session housekeeping
 # -----------------------------------------------------------------------------
-tmux:
-  auto_close_seconds: 120          # window lives this long after SubagentStop
-  # Set CLAUDE_ORCHESTRA_DISABLE_TMUX=1 in the environment to force
-  # logfile-only visibility even inside a tmux session.
+# Each /brain or /duo invocation creates a fresh subdirectory under
+# .claude/orchestra/sessions/<id>/ for its PLAN.md, TASKS.json,
+# RESEARCH.md, review-comments.md.  Lazy cleanup runs at the start of
+# every /brain or /duo invocation.
+housekeeping:
+  session_retention_days: 30       # delete sessions/ subdirs older than N days
