@@ -15,7 +15,7 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 ## Layout
 
 - `agents/`   — planner (Sonnet 4.6), actor (Haiku 4.5), reviewer (Sonnet 4.6)
-- `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents), /duo (lightweight: Planner + Actor)
+- `commands/` — /explore (full pipeline: Phase 0 inline + 3 subagents), /duo (lightweight: Planner + Actor)
 - `scripts/orchestra-hook.sh` — PreToolUse / SubagentStop / PreCompact dispatcher
 - `config/config.yaml` — global orchestra defaults
 - `docs/design.md`    — full architecture reference
@@ -34,4 +34,4 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - **Reason:** smoke 2 from subagents branch
 - **Timestamp:** 2026-04-28T14:52:58Z
 - **Model:** claude-sonnet-4-6
-- **Reason:** smoke 3 from /brain — via brain pipeline
+- **Reason:** smoke 3 from /explore — via explore pipeline

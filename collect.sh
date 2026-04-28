@@ -56,7 +56,7 @@ collect_file "$CLAUDE/agents/actor.md"           "$REPO/agents/actor.md"
 collect_file "$CLAUDE/agents/reviewer.md"        "$REPO/agents/reviewer.md"
 
 echo "Commands:"
-collect_file "$CLAUDE/commands/brain.md"         "$REPO/commands/brain.md"
+collect_file "$CLAUDE/commands/explore.md"       "$REPO/commands/explore.md"
 collect_file "$CLAUDE/commands/duo.md"           "$REPO/commands/duo.md"
 
 echo "Scripts:"

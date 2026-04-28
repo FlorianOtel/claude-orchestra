@@ -6,7 +6,7 @@ A three-tier orchestration layer for [Claude Code](https://claude.ai/code) that 
 
 | Tier | Model | Role |
 |---|---|---|
-| **Brain** | Claude Opus 4.7 | Your main session — orchestrates, delegates, approves |
+| **Explore** | Claude Sonnet 4.6 | Your main session — orchestrates, delegates, approves |
 | **Planner** | Claude Sonnet 4.6 | Decomposes tasks into numbered, reviewable plans |
 | **Actor** | Claude Haiku 4.5 | Executes individual plan steps; scoped, fast, cheap |
 | **Reviewer** | Claude Sonnet 4.6 | Reviews Actor's output; emits PASS / FIX / BLOCK verdicts |
@@ -15,13 +15,13 @@ A three-tier orchestration layer for [Claude Code](https://claude.ai/code) that 
 
 Two invocation styles depending on how much structure the task warrants:
 
-### `/brain` — full pipeline
+### `/explore` — full pipeline
 
 ```
 PLAN → [G2 approval] → IMPLEMENT + REVIEW loop (cap 3) → VERIFY + doc/memory update
 ```
 
-Planner (Sonnet) drafts a numbered plan; Brain surfaces it for your approval via `ExitPlanMode`; Actor (Haiku) executes each step; Reviewer (Sonnet) reviews each step with up to 3 fix iterations; Brain does a doc-delta check and memory update on completion.
+Planner (Sonnet) drafts a numbered plan; Explore surfaces it for your approval via `ExitPlanMode`; Actor (Haiku) executes each step; Reviewer (Sonnet) reviews each step with up to 3 fix iterations; Explore does a doc-delta check and memory update on completion.
 
 Use for: multi-file refactors, architecture changes, anything where a review loop matters.
 
@@ -80,7 +80,7 @@ repo (agents/, commands/, scripts/, config/)   ← edit source here
 
 ```bash
 # Typical development cycle:
-# 1. Edit agents/planner.md, commands/brain.md, etc.
+# 1. Edit agents/planner.md, commands/explore.md, etc.
 # 2. Commit
 git add agents/ commands/ && git commit -m "..."
 # 3. Deploy
@@ -99,8 +99,8 @@ the orchestra automatically. Changes only take effect after an explicit deploy.
 Shift+Tab   (or /plan-mode in Claude Code)
 
 # 2. Choose a pipeline
-/brain implement the X feature         — full pipeline
-/duo   add a docstring to function Y   — lightweight
+/explore implement the X feature       — full pipeline
+/duo     add a docstring to function Y — lightweight
 ```
 
 Orchestra is globally on once installed — no per-project setup needed. Each project's runtime state (PLAN.md, TASKS.json, logs) is written to `${CLAUDE_PROJECT_DIR}/.claude/orchestra/` and is globally gitignored.
@@ -112,12 +112,12 @@ If you use a custom `status-line.sh`, `deploy.sh` appends orchestra indicators a
 Status line shows (when orchestra is installed):
 
 ```
-✦ Opus 4.7 | [bar] 10% | ↯ 100k/1000k | ◆ MyProject | ⎇ main | ♪ default
+✦ Sonnet 4.6 | [bar] 10% | ↯ 100k/1000k | ◆ MyProject | ⎇ main | ♪ default
                                                                   ▲
                                                           orchestra badge
 
-♪ duo ▶ Haiku:implement          — Haiku Actor is currently running
-♪ brain ⚠ >200K                  — Brain context too large to delegate safely
+♪ duo ▶ Haiku:implement           — Haiku Actor is currently running
+♪ explore ⚠ >200K                 — Explore context too large to delegate safely
 ```
 
 ## Updating
@@ -155,8 +155,8 @@ claude-orchestra/
 │   ├── actor.md           Haiku 4.5  — executes one scoped step
 │   └── reviewer.md        Sonnet 4.6 — reviews diff, emits PASS/FIX/BLOCK
 ├── commands/
-│   ├── brain.md           /brain slash command — full pipeline (Phase 0 inline + Planner/Actor/Reviewer subagents)
-│   └── duo.md             /duo slash command   — lightweight pipeline (Planner subagent + Actor subagent)
+│   ├── explore.md         /explore slash command — full pipeline (Phase 0 inline + Planner/Actor/Reviewer subagents)
+│   └── duo.md             /duo slash command     — lightweight pipeline (Planner subagent + Actor subagent)
 ├── scripts/
 │   └── orchestra-hook.sh      PreToolUse / SubagentStop / PreCompact hook dispatcher
 ├── status-line/
@@ -177,4 +177,4 @@ Full architecture, gate policy (G1–G7), autonomy presets (`default` / `acceptE
 
 ## v2 roadmap
 
-`/brain --mode auto` (fully unattended PLAN → IMPLEMENT → REVIEW → CROSS-CHECK → FINALIZE) is documented but not yet implemented. See the TO DO section at the end of [docs/design.md](docs/design.md) for the 10 design decisions that need to be resolved before building it.
+`/explore --mode auto` (fully unattended PLAN → IMPLEMENT → REVIEW → CROSS-CHECK → FINALIZE) is documented but not yet implemented. See the TO DO section at the end of [docs/design.md](docs/design.md) for the 10 design decisions that need to be resolved before building it.

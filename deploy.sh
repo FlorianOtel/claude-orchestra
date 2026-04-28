@@ -108,7 +108,7 @@ if ! $DRY_RUN; then
     fi
 
     # 7c. Obsolete commands (Step 6 of the revert plan).
-    for orphan in brain-resume.md brain-abandon.md brain-status.md orchestra-mode.md; do
+    for orphan in brain.md brain-resume.md brain-abandon.md brain-status.md orchestra-mode.md; do
         if [ -f "$CLAUDE/commands/$orphan" ]; then
             rm -f "$CLAUDE/commands/$orphan"
             ok "cleaned orphan: $CLAUDE/commands/$orphan"
@@ -246,7 +246,7 @@ $DRY_RUN && echo "Dry run complete — no files written." || echo "Deploy comple
 echo ""
 echo "  Quick-start:"
 echo "    1. In Claude Code: Shift+Tab to enter plan mode"
-echo "    2. Type /brain <task>   — full pipeline (Planner → Actor → Reviewer)"
+echo "    2. Type /explore <task> — full pipeline (Planner → Actor → Reviewer)"
 echo "    3. Type /duo <task>     — lightweight pipeline (Sonnet plans, Haiku acts)"
 echo "    4. See docs/design.md for full reference"
 echo ""

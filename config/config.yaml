@@ -10,7 +10,7 @@
 orchestra_mode: default            # v1: default | acceptEdits   (v2: + auto)
 
 # -----------------------------------------------------------------------------
-# Stage gates — used by /brain to decide whether to pause for user approval
+# Stage gates — used by /explore to decide whether to pause for user approval
 # between Sequential Phase Architecture stages.
 # -----------------------------------------------------------------------------
 gates:
@@ -50,9 +50,9 @@ test_gate:
 # -----------------------------------------------------------------------------
 # Per-invocation session housekeeping
 # -----------------------------------------------------------------------------
-# Each /brain or /duo invocation creates a fresh subdirectory under
+# Each /explore or /duo invocation creates a fresh subdirectory under
 # .claude/orchestra/sessions/<id>/ for its PLAN.md, TASKS.json,
 # RESEARCH.md, review-comments.md.  Lazy cleanup runs at the start of
-# every /brain or /duo invocation.
+# every /explore or /duo invocation.
 housekeeping:
   session_retention_days: 30       # delete sessions/ subdirs older than N days

@@ -4,16 +4,16 @@ description: Lightweight pipeline — Sonnet plans interactively (you), dispatch
 
 # /duo — Sonnet plans, Haiku acts
 
-You are running the **duo** pipeline. You (Sonnet 4.6) plan interactively with the operator; then you dispatch a single **Actor subagent** (Haiku 4.5) via the `Task` tool to execute. There is no Phase 0 RESEARCH (use `/brain` if you need interrogation). There is no Reviewer.
+You are running the **duo** pipeline. You (Sonnet 4.6) plan interactively with the operator; then you dispatch a single **Actor subagent** (Haiku 4.5) via the `Task` tool to execute. There is no Phase 0 RESEARCH (use `/explore` if you need interrogation). There is no Reviewer.
 
 Use `/duo` when the task is simple enough that a plan + execute is sufficient, and you don't need a review loop.
 
-## When to use /duo vs /brain
+## When to use /duo vs /explore
 
 | Situation | Use |
 |---|---|
 | Simple, well-scoped, ≤ 10 steps, low blast-radius | `/duo` |
-| Multi-file refactor, architecture change, anything where review matters | `/brain` |
+| Multi-file refactor, architecture change, anything where review matters | `/explore` |
 
 ## Cost note
 
@@ -24,11 +24,11 @@ Use `/duo` when the task is simple enough that a plan + execute is sufficient, a
 1. **Plan mode is active.** If not, stop and say:
    > "Please enter plan mode first (Shift+Tab), then run `/duo` again."
 2. **Sonnet 4.6 at parent** (recommended, not enforced).
-3. **Bypass-flattens-down caveat.** Same as `/brain`: if the operator launched the parent with `--dangerously-skip-permissions`, Actor inherits bypass and the Plan-Then-Execute gate is decorative.
+3. **Bypass-flattens-down caveat.** Same as `/explore`: if the operator launched the parent with `--dangerously-skip-permissions`, Actor inherits bypass and the Plan-Then-Execute gate is decorative.
 
 ## Setup — per-invocation artifact directory + housekeeping
 
-Same idiom as `/brain`: create a fresh subdir, export it for the Actor subagent, lazily clean up old subdirs.
+Same idiom as `/explore`: create a fresh subdir, export it for the Actor subagent, lazily clean up old subdirs.
 
 Run via `Bash`:
 
@@ -79,7 +79,7 @@ When the plan is agreed, write it with this structure:
 5. **Risks / unknowns** — anything you couldn't verify by reading.
 6. **Out of scope** — the hard fence Actor must not cross.
 
-**Keep it tight:** if more than ~10 steps, recommend `/brain` instead.
+**Keep it tight:** if more than ~10 steps, recommend `/explore` instead.
 
 Persist via atomic-rename:
 
@@ -136,8 +136,8 @@ Do **not** commit, push, or open a PR unless explicitly asked.
 ## What this command does NOT do
 
 - ❌ Spawn `claude -p` subprocesses or use `run-tier.sh`.
-- ❌ Have a Phase 0 RESEARCH stage (use `/brain` for that).
-- ❌ Have a Reviewer (use `/brain` for that).
+- ❌ Have a Phase 0 RESEARCH stage (use `/explore` for that).
+- ❌ Have a Reviewer (use `/explore` for that).
 - ❌ Auto-commit or auto-push.
 - ❌ Run multiple parallel Actor invocations (single Actor handles the whole plan).
 
