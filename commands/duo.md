@@ -62,6 +62,17 @@ echo "session_dir=${SESSION_DIR}"
 echo "retention_days=${RETENTION_DAYS}"
 ```
 
+After creating the session directory, write a `.duo-inflight` marker containing the task title. The title is the operator's invocation text (the args after `/duo`), truncated to 30 printable characters, with single-quotes replaced by spaces. Run via `Bash`:
+
+```bash
+printf '%s' "<task title, ≤30 chars, no single-quotes>" \
+  > "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight.tmp"
+mv -f "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight.tmp" \
+      "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight"
+```
+
+Replace `<task title, ≤30 chars, no single-quotes>` with the first 30 printable characters of the operator's task description, stripping any single-quote characters.
+
 Print the session_dir so the operator can locate `PLAN.md` and `TASKS.json` later.
 
 ---
@@ -94,11 +105,22 @@ mv -f "${CLAUDE_ORCHESTRA_SESSION_DIR}/PLAN.md.tmp" "${CLAUDE_ORCHESTRA_SESSION_
 
 ## Phase 2 — Plan approval gate
 
-Call `ExitPlanMode` with the full plan content. You are the only caller — do not call it before the plan is fully agreed.
+Before calling `ExitPlanMode`, remove the in-flight marker so the status line clears as soon as planning ends:
+
+```bash
+rm -f "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight"
+```
+
+Then call `ExitPlanMode` with the full plan content. You are the only caller — do not call it before the plan is fully agreed.
 
 The operator will see Claude Code's standard "auto-edit / manually approve / cancel" prompt at the parent layer. Their choice sets the permission posture for Phase 3.
 
-On rejection: stay in plan mode, refine the plan, repeat Phase 1.
+On rejection: stay in plan mode, re-create the marker and refine the plan, repeat Phase 1:
+
+```bash
+printf '%s' "<task title>" > "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight.tmp"
+mv -f "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight.tmp" "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight"
+```
 
 ---
 

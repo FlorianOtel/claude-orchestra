@@ -61,6 +61,17 @@ echo "session_dir=${SESSION_DIR}"
 echo "retention_days=${RETENTION_DAYS}"
 ```
 
+After creating the session directory, write the pipeline mode and task title to the orchestra badge. The title is the operator's invocation text (the args after `/explore`), truncated to 30 printable characters, with single-quotes replaced by spaces. Run via `Bash`:
+
+```bash
+ORCH_DIR="${CLAUDE_PROJECT_DIR}/.claude/orchestra"
+mkdir -p "$ORCH_DIR"
+printf 'ORCHESTRA_MODE=orchestra exploring\nORCHESTRA_TITLE=%s\n' \
+  "<task title, ≤30 chars, no single-quotes>" >> "${ORCH_DIR}/state.env"
+```
+
+Replace `<task title, ≤30 chars, no single-quotes>` with the first 30 printable characters of the operator's task description, stripping any single-quote characters.
+
 Print the session_dir to the operator so they can locate artifacts later.
 
 ---
@@ -235,6 +246,13 @@ Verdict semantics (Reviewer states verdict in its return text):
 ---
 
 ## Cleanup
+
+Clear the pipeline badge from state.env:
+
+```bash
+printf 'ORCHESTRA_MODE=default\nORCHESTRA_TITLE=\n' \
+  >> "${CLAUDE_PROJECT_DIR}/.claude/orchestra/state.env"
+```
 
 When the pipeline ends (pass, abandon, or hard-stop), print a short summary:
 

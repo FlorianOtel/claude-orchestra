@@ -19,11 +19,32 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     ACTIVE_COLOR="\033[38;2;215;153;33m"      # dark yellow   #D79921
     WARNING_COLOR="\033[38;2;254;128;25m"     # bright_orange #FE8019
 
+    # --- /explore badge: read mode+title from state.env ---
+    state_env="$cwd/.claude/orchestra/state.env"
+    orch_mode="orchestra"
+    orch_title=""
+    if [ -f "$state_env" ]; then
+        _om=$(grep '^ORCHESTRA_MODE=' "$state_env" 2>/dev/null | tail -n 1 | cut -d= -f2-)
+        _ot=$(grep '^ORCHESTRA_TITLE=' "$state_env" 2>/dev/null | tail -n 1 | cut -d= -f2-)
+        [ -n "$_om" ] && [ "$_om" != "default" ] && orch_mode="$_om"
+        orch_title="$_ot"
+    fi
 
-    # Active-subagent indicator: latest "start" event in invocations.log with no
-    # later matching "end". orchestra-hook.sh writes both events (PreToolUse(Agent)
-    # = start, SubagentStop = end). Visible while a Planner/Actor/Reviewer is running.
+    # --- /duo badge: count .duo-inflight markers across session dirs ---
+    duo_count=0
+    duo_title=""
+    sessions_root="$cwd/.claude/orchestra/sessions"
+    if [ -d "$sessions_root" ]; then
+        duo_count=$(find "$sessions_root" -maxdepth 2 -name ".duo-inflight" 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$duo_count" -eq 1 ]; then
+            duo_title=$(find "$sessions_root" -maxdepth 2 -name ".duo-inflight" 2>/dev/null \
+                        -exec cat {} \; 2>/dev/null | head -c 30)
+        fi
+    fi
+
+    # --- active-subagent indicator ---
     invlog="$cwd/.claude/orchestra/invocations.log"
+    active_indicator=""
     if [ -f "$invlog" ]; then
         last_start_line=$(grep '"event":"start"' "$invlog" 2>/dev/null | tail -n 1)
         last_end_line=$(grep   '"event":"end"'   "$invlog" 2>/dev/null | tail -n 1)
@@ -38,13 +59,35 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
                     actor)            tier="Haiku"  ;;
                     *)                tier="agent"  ;;
                 esac
-                status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ orchestra${RESET} ${ACTIVE_COLOR}▶ %s:%s${RESET}" "$tier" "$active_stage")
+                active_indicator=$(printf "${ACTIVE_COLOR}▶ %s:%s${RESET}" "$tier" "$active_stage")
             fi
         fi
     fi
 
+    # --- badge rendering (priority: duo > explore > plain subagent) ---
+    if [ "$duo_count" -gt 0 ]; then
+        if [ "$duo_count" -eq 1 ]; then
+            duo_badge="duo ${duo_title}"
+        else
+            duo_badge="duo #${duo_count}"
+        fi
+        if [ -n "$active_indicator" ]; then
+            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET} %s" "$duo_badge" "$active_indicator")
+        else
+            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET}" "$duo_badge")
+        fi
+    elif [ -n "$orch_title" ]; then
+        badge="${orch_mode} ${orch_title}"
+        if [ -n "$active_indicator" ]; then
+            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET} %s" "$badge" "$active_indicator")
+        else
+            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET}" "$badge")
+        fi
+    elif [ -n "$active_indicator" ]; then
+        status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ orchestra${RESET} %s" "$active_indicator")
+    fi
+
     # Subagent context-overflow warning: Brain context >180K risks truncation
-    # when delegating to a 200K-context subagent.
     if [ "$tokens_used" -gt 180000 ]; then
         status_line+=$(printf " ${WARNING_COLOR}⚠ >200K${RESET}")
     fi
