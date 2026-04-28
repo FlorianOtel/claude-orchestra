@@ -50,32 +50,24 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
 
     # /brain registry-driven display override:
     #   0 active runs : show state.env mode (default / duo / acceptEdits / …)
-    #   1 active run  : "orchestra - brain <slug-trunc30>"
-    #   N>1 active    : "orchestra(N)"
+    #   N≥1 active    : "orchestra(N)"
+    # Slug display is Branch A's exclusive domain (spawned RESEARCH window only).
     # Read the registry directly to avoid a helper-script fork on the status-line hot path.
     runs_log="$cwd/.claude/orchestra/runs.jsonl"
     orchestra_display="$orchestra_mode"
     if [ -f "$runs_log" ]; then
         active_count=0
-        single_slug=""
         while IFS= read -r rid; do
             [ -z "$rid" ] && continue
             latest=$(jq -r --arg id "$rid" 'select(.run_id==$id) | .event' "$runs_log" 2>/dev/null | tail -n 1)
             case "$latest" in
                 done|abandoned|error) ;;
-                *)
-                    active_count=$((active_count + 1))
-                    if [ "$active_count" -eq 1 ]; then
-                        single_slug=$(jq -r --arg id "$rid" 'select(.run_id==$id and .event=="start") | .slug' "$runs_log" 2>/dev/null | tail -n 1)
-                    fi
-                    ;;
+                *) active_count=$((active_count + 1)) ;;
             esac
         done < <(jq -r 'select(.event=="start") | .run_id' "$runs_log" 2>/dev/null | sort -u)
 
-        if [ "$active_count" -gt 1 ] 2>/dev/null; then
+        if [ "$active_count" -gt 0 ] 2>/dev/null; then
             orchestra_display="orchestra(${active_count})"
-        elif [ "$active_count" -eq 1 ] 2>/dev/null; then
-            orchestra_display="orchestra - brain $(printf '%s' "${single_slug:0:30}")"
         fi
     fi
 

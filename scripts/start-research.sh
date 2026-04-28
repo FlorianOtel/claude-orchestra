@@ -139,7 +139,7 @@ LAUNCHER
       if [ -n "$CLIPBOARD_TOOL" ]; then
         case "$CLIPBOARD_TOOL" in
           wl-copy) printf '%s' "bash $LAUNCH_SCRIPT" | wl-copy 2>/dev/null || CLIPBOARD_TOOL="" ;;
-          xclip)   printf '%s' "bash $LAUNCH_SCRIPT" | xclip -selection clipboard 2>/dev/null || CLIPBOARD_TOOL="" ;;
+          xclip)   printf '%s' "bash $LAUNCH_SCRIPT" | xclip -selection clipboard -l 1 2>/dev/null || CLIPBOARD_TOOL="" ;;
           pbcopy)  printf '%s' "bash $LAUNCH_SCRIPT" | pbcopy 2>/dev/null || CLIPBOARD_TOOL="" ;;
         esac
       fi
@@ -181,7 +181,7 @@ LAUNCHER
   if [ -n "$CLIPBOARD_TOOL" ]; then
     case "$CLIPBOARD_TOOL" in
       wl-copy) printf '%s' "bash $LAUNCH_SCRIPT" | wl-copy 2>/dev/null || CLIPBOARD_TOOL="" ;;
-      xclip)   printf '%s' "bash $LAUNCH_SCRIPT" | xclip -selection clipboard 2>/dev/null || CLIPBOARD_TOOL="" ;;
+      xclip)   printf '%s' "bash $LAUNCH_SCRIPT" | xclip -selection clipboard -l 1 2>/dev/null || CLIPBOARD_TOOL="" ;;
       pbcopy)  printf '%s' "bash $LAUNCH_SCRIPT" | pbcopy 2>/dev/null || CLIPBOARD_TOOL="" ;;
     esac
   fi
