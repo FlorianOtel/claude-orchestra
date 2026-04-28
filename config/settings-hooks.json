@@ -10,33 +10,6 @@
             "command": "~/.claude/scripts/orchestra-hook.sh start"
           }
         ]
-      },
-      {
-        "matcher": "Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/scripts/orchestra-hook.sh tool"
-          }
-        ]
-      },
-      {
-        "matcher": "Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/scripts/orchestra-hook.sh tool"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/scripts/orchestra-hook.sh tool"
-          }
-        ]
       }
     ],
     "SubagentStop": [
