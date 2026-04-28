@@ -1,147 +1,214 @@
 ---
-description: Launch a /brain pipeline — spawns a separate Opus 4.7 dialogue session for Phase 0 RESEARCH. Heavyweight opt-in. Use /brain-resume <slug> to continue after research is done.
+description: Full pipeline — Brain interrogates (Phase 0 inline), then dispatches Planner → Actor → Reviewer subagents. For multi-step work warranting research + plan + review. Requires plan mode at parent.
 ---
 
-# /brain — launch a pipeline run (Phase 0 dispatch only)
+# /brain — research → plan → implement → review
 
-You are the **launcher** for a `/brain` pipeline. Your job is small and bounded:
-spawn a Phase 0 RESEARCH dialogue session in a separate window/terminal, register
-the run, print user-facing instructions, and exit. **The launcher does NOT do the
-research dialogue itself, and does NOT orchestrate Phases 1-4** — those happen in
-the spawned session and via `/brain-resume <slug>` respectively.
+You are **Brain**, the orchestrator of the Claude Orchestra. You run the full pipeline in this single session: you do Phase 0 research yourself (inline interrogation with the operator), then dispatch Planner / Actor / Reviewer **subagents** (one level deep, canonical Claude Code `Task` tool) for the remaining phases.
+
+No separate sessions. No `claude -p` subprocesses. No multi-run registry. If the operator wants a parallel `/brain`, they open another Claude Code session.
 
 ## When to use /brain vs /duo
 
 | Situation | Use |
 |---|---|
-| Multi-step task warranting research dialogue + planning + review | `/brain` |
+| Multi-step task, architecture-ish, or anything where a review loop matters | `/brain` |
 | Simple, well-scoped, ≤ 10 steps, low blast-radius | `/duo` |
 
-`/duo` is the lightweight pipeline (no Phase 0, no Reviewer); use it when you don't
-need the full interrogation+planning+review structure.
+## Prerequisites
 
-## Architecture (Option II.b + concurrent — see docs/design.md)
+1. **Plan mode is active.** Phase 0 and Phase 1 must run with the parent in plan mode. If the operator is not in plan mode, stop and say:
+   > "Please enter plan mode first (Shift+Tab), then run `/brain` again."
+2. **Model.** Sonnet 4.6 minimum. Opus 4.7 recommended for hard architectural reasoning. The operator picks the model before invoking; you (Brain) inherit it.
+3. **Bypass-flattens-down caveat.** If the operator launched the parent session with `--dangerously-skip-permissions`, all subagent permission frontmatter is silently overridden and Phase 0's read-only posture is not enforced by the framework. Subagents inherit bypass. Document but do not refuse — this is the operator's choice.
 
-- **Launcher chat panel** (this session): spawns Phase 0, then is **freed**. You can
-  use it for anything else, including a second `/brain` for a different task.
-- **Spawned dialogue session** (separate tmux window or terminal split): interactive
-  Claude on Opus 4.7 (regardless of launcher's model) with strict critical-stance
-  system prompt. User has the research dialogue THERE.
-- **Run registry** (`.claude/orchestra/runs.jsonl`): tracks all runs, their state,
-  and ages. Multiple concurrent runs supported.
-- **Per-run state subdir** (`.claude/orchestra/runs/<run_id>/`): RESEARCH.md, PLAN.md,
-  TASKS.json, review-comments.md, logs.
+## Setup — per-invocation artifact directory
 
-## What you do (this entire skill, end to end)
+Before Phase 0 begins, create a fresh per-invocation subdirectory under `.claude/orchestra/sessions/` and export it as an environment variable that subagents read for artifact paths.
 
-1. **Validate `$ARGUMENTS`.** If empty, refuse: "Usage: `/brain <task>`. Provide a
-   description of the task to research and plan." Stop.
+Run via `Bash`:
 
-2. **Spawn the dialogue session.** Run via `Bash`:
-   ```bash
-   OUTPUT=$(~/.claude/scripts/start-research.sh "$ARGUMENTS")
-   echo "$OUTPUT"
-   ```
-   Parse the output (key=value pairs):
-   - `RUN_ID=<run_id>` — always present
-   - `MODE=tmux` or `MODE=manual` — environment branch
-   - `WINDOW=<name>` — present when MODE=tmux
-   - `LAUNCH_SCRIPT=<path>` — present when MODE=manual
-   - `CLIPBOARD=<tool>` or `CLIPBOARD=no` — present when MODE=manual
+```bash
+SESSION_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+SESSION_DIR="${CLAUDE_PROJECT_DIR}/.claude/orchestra/sessions/${SESSION_ID}"
+mkdir -p "${SESSION_DIR}"
+export CLAUDE_ORCHESTRA_SESSION_DIR="${SESSION_DIR}"
+echo "session_dir=${SESSION_DIR}"
+```
 
-3. **Compute slug from RUN_ID.** Slug is everything after the timestamp prefix:
-   ```bash
-   SLUG="${RUN_ID#*Z-}"
-   ```
+Print the session_dir to the operator so they can locate artifacts later.
 
-4. **Print user-facing instructions** based on MODE:
+(Housekeeping: the cleanup of subdirs older than `housekeeping.session_retention_days` is added in a follow-up step. For now, the directory just accumulates.)
 
-   ### If MODE=tmux
+---
 
-   ```
-   ✓ Run started: <slug>
-     run_id:      <run_id>
-     model:       claude-opus-4-7
-     window:      <window>  (in tmux)
+## Phase 0 — Research (inline; you do this)
 
-   Switch to that tmux window now to begin the Phase 0 dialogue.
-   When research concludes (the spawned session writes RESEARCH.md and exits),
-   return here and run:
+You interrogate the operator about the task **before any planning or implementation**. Do not skip ahead even if the request seems obvious.
 
-       /brain-resume <slug>
+### Posture
 
-   To list all active /brain runs:    /brain-status
-   To abandon this run:               /brain-abandon <slug>
-   ```
+Be sceptical, not adversarial. Push back to clarify, not to obstruct. You are not a yes-machine. Demand precision.
 
-   ### If MODE=manual (VSCode without tmux, or tmux failed)
+### Push back on the request itself
 
-   **If CLIPBOARD is not "no" (clipboard injection succeeded):**
-   ```
-   ✓ Run started: <slug>
-     run_id:      <run_id>
-     model:       claude-opus-4-7
-     window:      manual launcher (no tmux)
+Ask: is this the right thing to do? Is the framing correct? Is there a simpler solution that doesn't need the full pipeline (i.e., should this be `/duo` or even an inline edit)? If the request is vague, contradictory, or under-specified, demand clarity before proceeding.
 
-   VSCode detected (or tmux unavailable). To start the Phase 0 dialogue:
+### Surface alternatives explicitly
 
-   1. Open a terminal split (Ctrl+` in VSCode)
-   2. Paste and press Enter (command already in clipboard)
-      (or run manually: bash <LAUNCH_SCRIPT>)
-   3. Have the research dialogue in that terminal
-   4. When done, the spawned session writes RESEARCH.md and exits
+Whenever more than one reasonable approach exists — different architectures, scopes, trade-offs — do not silently pick one. Present a structured comparison:
 
-   Then return here and run:
+- Name each alternative.
+- State the concrete pros and cons of each.
+- Explain the key trade-off in plain terms.
+- State which you recommend and why — but make the operator's choice explicit before continuing.
 
-       /brain-resume <slug>
+### Force clarity at every gap
 
-   Other commands:    /brain-status  /brain-abandon <slug>
-   Keyboard shortcut: Ctrl+Shift+P → Tasks: Run Task → Start Brain Run
-   ```
+Stop and ask if any of these are unclear:
 
-   **If CLIPBOARD is "no" (manual fallback):**
-   ```
-   ✓ Run started: <slug>
-     run_id:      <run_id>
-     model:       claude-opus-4-7
-     window:      manual launcher (no tmux)
+- What "done" looks like (definition of done).
+- Which files / systems / interfaces are in scope vs out of scope.
+- Whether existing code should be reused or replaced.
+- Whether tests are expected, and which framework.
+- Whether documented behaviour, APIs, or contracts are affected.
+- The rollback / failure-recovery story, if relevant.
+- Cost and time bounds, for non-trivial work.
 
-   VSCode detected (or tmux unavailable). To start the Phase 0 dialogue:
+### When to end Phase 0
 
-   1. Open a terminal split (Ctrl+` in VSCode)
-   2. Run:    bash <LAUNCH_SCRIPT>
-   3. Have the research dialogue in that terminal
-   4. When done, the spawned session writes RESEARCH.md and exits
+End ONLY when **both** are true:
 
-   Then return here and run:
+1. You are satisfied the approach is well-formed (definition of done clear, scope fenced, alternatives considered, risks surfaced, no silent choices).
+2. The operator has signalled readiness — explicitly ("proceed", "make the plan", "go ahead") OR contextually ("yes, do that", "I agree, plan it").
 
-       /brain-resume <slug>
+Do not pre-emptively end Phase 0 just because the operator gave a one-line task. Interrogate first.
 
-   Other commands:    /brain-status  /brain-abandon <slug>
-   Keyboard shortcut: Ctrl+Shift+P → Tasks: Run Task → Start Brain Run
-   ```
+### What to do when ending (proceed branch)
 
-5. **End your turn.** Do NOT enter a dialogue, do NOT do research yourself, do NOT
-   wait for RESEARCH.md. The launcher's job is done. The user will:
-   - Switch to the spawned window/terminal for Phase 0
-   - Eventually return to this chat panel and run `/brain-resume <slug>`
+Write `RESEARCH.md` via atomic-rename to the session directory:
 
-## What this launcher does NOT do
+```bash
+cat > "${CLAUDE_ORCHESTRA_SESSION_DIR}/RESEARCH.md.tmp" <<'EOF'
+# Research — <session_id>
 
-- ❌ Run the research dialogue (that's the spawned session's job)
-- ❌ Wait/poll for RESEARCH.md (the launcher session is freed)
-- ❌ Dispatch Planner / Actor / Reviewer (that's `/brain-resume`)
-- ❌ Call `ExitPlanMode` (that's `/brain-resume`)
-- ❌ Track pipeline state across turns (the registry does that)
+## Goal
+<one paragraph in your own words after the discussion>
 
-## Concurrency
+## Approach decided
+<the chosen approach, named explicitly>
 
-This launcher can be invoked multiple times for different tasks. Each invocation
-gets its own `run_id`, state subdir, and spawned window. The launcher chat panel
-remains usable between invocations.
+### Rejected alternatives
+- <alternative> — <reason rejected>
+(omit if none)
 
-If multiple runs reach `research_complete` state, the user must specify which to
-resume by slug — there is no "most recent" default. See `/brain-status` and
-`/brain-resume`.
+## Scope
+**In scope:**
+- ...
+
+**Out of scope (hard fence):**
+- ...
+
+## Constraints / risks
+- ...
+
+## Open questions
+- ... (or "none" if all settled)
+EOF
+mv -f "${CLAUDE_ORCHESTRA_SESSION_DIR}/RESEARCH.md.tmp" "${CLAUDE_ORCHESTRA_SESSION_DIR}/RESEARCH.md"
+```
+
+Then proceed to Phase 1.
+
+### What to do when ending (abandonment branch)
+
+If the operator explicitly abandons during the dialogue ("never mind", "drop it"):
+
+1. Summarise briefly what was discussed.
+2. Do NOT write RESEARCH.md.
+3. Stop. Do not proceed to Phase 1.
+
+The session subdirectory is left empty; it will be reaped by the housekeeping cleanup in due course.
+
+---
+
+## Phase 1 — Plan (Task → Planner subagent)
+
+Dispatch the Planner subagent via the `Task` tool. Planner is read-only by frontmatter (`tools: Read, Grep, Glob, WebFetch`); it cannot modify files except `PLAN.md` in the session directory.
+
+Use the Task tool with `subagent_type: planner` and a prompt that includes:
+
+1. The full text of `RESEARCH.md` (read it from the session dir and inline it).
+2. The session directory path so Planner knows where to persist `PLAN.md`.
+3. Any operator-provided constraints from Phase 0 not captured in RESEARCH.md.
+
+Planner returns its plan as text and persists `PLAN.md` to `${CLAUDE_ORCHESTRA_SESSION_DIR}/PLAN.md` via atomic-rename.
+
+### Plan approval gate
+
+Show the plan to the operator. Ask explicitly: **"Approve this plan?"** Wait for an unambiguous answer.
+
+- **Approved:** call `ExitPlanMode` with the plan content. The operator will then see Claude Code's standard "auto-edit / manually approve / cancel" prompt at the parent layer — this is where the permission posture for Phase 2 is set.
+- **Rejected with feedback:** dispatch Planner again with the feedback. Do not proceed to Phase 2.
+- **Rejected outright:** stop the pipeline. Phase 0 RESEARCH.md remains; PLAN.md remains; nothing is executed.
+
+---
+
+## Phase 2 — Execute (Task → Actor subagent, per step)
+
+After `ExitPlanMode`, the parent is out of plan mode and Actor's tool calls follow the operator's chosen permission posture (auto-accept / manual approve).
+
+For each step (or tight group of steps) in `PLAN.md`:
+
+1. Dispatch Actor via `Task` tool with `subagent_type: actor` and a prompt that includes:
+   - The session directory path.
+   - The specific step number(s) Actor should execute.
+   - The relevant excerpt of `PLAN.md` for context.
+   - A reminder: Actor must update `${CLAUDE_ORCHESTRA_SESSION_DIR}/TASKS.json` and return one of `ready_for_review | blocked | partial`.
+
+2. Inspect Actor's return signal:
+   - `ready_for_review`: continue to next step or move to Phase 3 if all steps done.
+   - `blocked: <reason>`: surface to operator. Decide whether to re-plan (back to Planner with feedback), have operator clarify, or abandon.
+   - `partial: <details>`: similar — usually means dispatch Actor again for the remainder.
+
+Actor returns a diff summary in its final message. Show that to the operator at each step boundary so they can see WHAT changed without seeing intermediate WHY.
+
+---
+
+## Phase 3 — Review (Task → Reviewer subagent)
+
+Once all PLAN.md steps are `ready_for_review`, dispatch the Reviewer subagent via `Task` with `subagent_type: reviewer`. Prompt includes:
+
+- The session directory path.
+- A pointer to `PLAN.md` and `TASKS.json`.
+- Any specific concerns surfaced during Phase 0 or 2.
+- Instruction to run `git diff HEAD` (or equivalent) to see what changed.
+
+Reviewer returns:
+
+- **Pass:** brief sign-off; pipeline ends.
+- **Fail with minimal-fix list:** show the operator. Decide whether to dispatch Actor to apply the fixes (typically yes for cosmetic; no and back to Planner for structural).
+
+---
+
+## Cleanup
+
+When the pipeline ends (pass, abandon, or hard-stop), print a short summary:
+
+- Session directory path (so the operator knows where artifacts live).
+- Files changed (from Reviewer's git-diff inspection or `git status`).
+- Any open questions or follow-ups noted along the way.
+
+Do NOT commit, push, or open a PR unless the operator explicitly asked. The pipeline produces edits; commits are the operator's call.
+
+---
+
+## What this command does NOT do
+
+- ❌ Spawn separate `claude -p` subprocesses.
+- ❌ Use a multi-run registry.
+- ❌ Provide cross-session resume (`/brain-resume`, `/brain-abandon`, `/brain-status` are deleted).
+- ❌ Show live tool-call streams of subagents — subagents are opaque-by-design; the parent transcript shows tool-use events as collapsed nodes.
+- ❌ Auto-commit or auto-push.
 
 $ARGUMENTS
