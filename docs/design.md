@@ -22,7 +22,26 @@ context: >
 
 # Claude Orchestra
 
-A three-tier orchestration layer over Claude Code: **Brain (Opus 4.7)** / **Planner (Sonnet 4.6)** / **Actor (Haiku 4.5)** / **Reviewer (Sonnet 4.6)**, using Claude Code's native subagent primitive. Tmux windows for live visibility in terminal; logfile-only in VSCode. Designed to be installed once at `~/.claude/` and usable from any project on any machine that mounts the NFS home.
+A three-tier orchestration layer over Claude Code: **Brain (Opus 4.7 / Sonnet 4.6)** / **Planner (Sonnet 4.6)** / **Actor (Haiku 4.5)** / **Reviewer (Sonnet 4.6)**, using Claude Code's native subagent primitive (`Task` tool). Designed to be installed once at `~/.claude/` and usable from any project on any machine that mounts the NFS home.
+
+> ## ⚠ Status banner (2026-04-28)
+>
+> Between 2026-04-26 and 2026-04-28 the orchestra ran on a **headless `claude -p` execution model** (Option A, per-tier subprocesses, multi-run registry, separate Phase 0 dialogue session). That detour has been **reverted on the `subagents` branch**. The current architecture is again the **canonical Claude Code subagent model** described in §§1–13 below.
+>
+> If you are reading the lower amendment sections dated 2026-04-26 (lines ~899–1334), treat those as **historical record** of an experiment, not active design. The authoritative explanation of the revert is in:
+>
+> - The closing **Amendment — 2026-04-28** of this document (search "Amendment — 2026-04-28").
+> - The standalone **`docs/architecture/2026-04-28-headless-revert.md`** that captures the research note from run `subagents-vs-headless-revisited-20260428`.
+>
+> Top-line summary of what changed back:
+>
+> - Single Claude Code session orchestrates everything inline (Brain). No `claude -p` subprocesses. No tmux windows for stages. No multi-run registry.
+> - Phase 0 RESEARCH happens inside Brain (it interrogates the operator directly), not in a separate Opus session. The `agents/researcher.md` file is deleted.
+> - Subagents are dispatched via the canonical `Task` tool with `subagent_type: planner | actor | reviewer`.
+> - Per-invocation artifact subdirectories (`.claude/orchestra/sessions/<UTC-timestamp>-<PID>/`) replace the flat `.claude/orchestra/PLAN.md` etc.
+> - Lazy 30-day cleanup of session subdirs at every `/brain` and `/duo` start.
+> - Permission flow: parent in plan mode → `ExitPlanMode` after plan approval → standard Claude Code "auto-edit / manually approve / cancel" UX.
+> - Deleted: `commands/{brain-resume,brain-abandon,brain-status,orchestra-mode}.md`, `agents/researcher.md`, `scripts/{start-research,runs-registry,run-tier,format-stream}.sh`, `.vscode/tasks.json`. ~890 lines of headless plumbing gone.
 
 ## 1. Premise
 
@@ -1514,3 +1533,186 @@ Build v2 `auto` when:
 - You're comfortable with the wallet exposure implied by default `token_budget: 5M` (configurable lower).
 
 Until then, v1 `default` + `acceptEdits` presets cover all interactive flows — the thing v2 adds is specifically unattended-ness, which isn't yet a pressing need.
+
+---
+
+## Amendment — 2026-04-28: revert headless detour, return to canonical subagents
+
+**This amendment supersedes earlier amendments dated 2026-04-26 onwards** (the Option A migration, the Phase 0 separate-session, the multi-run registry). Those amendments described an experiment that was rolled back. The original §§1–13 description of subagent architecture is again authoritative.
+
+### Why the revert
+
+Five pieces of evidence accumulated between 2026-04-26 and 2026-04-28 made the headless approach untenable:
+
+1. **The capability rationale was wrong.** The 2026-04-26 migration was justified by a belief that subagents could not carry per-agent model + permission settings. They can. The Anthropic Claude Code Subagents guide (Apr 2026) and the operator's own empirical test confirm that subagent YAML frontmatter supports `model`, `permissionMode`, `tools`, `disallowedTools`, `effort`, `maxTurns`, `isolation`, and `memory`. The only documented caveat is that a parent's `--dangerously-skip-permissions` flattens children — which is a constraint we already had to design around in any architecture.
+
+2. **The cost story was inverted.** The "headless = cheaper because per-tier model routing" intuition is false in practice. Each `claude -p` cold-starts a new process and defeats the parent session's prompt cache. The PDF guide reports that ~90% of subagent token cost in long sessions is cache reads at ~$0.50/MTok on Opus-equivalent — **subagents within a warm parent are plausibly cheaper than headless subprocesses**, despite the nominal 4–7× multiplier looking scarier on paper.
+
+3. **The complexity tax was real.** The headless approach added ~890 lines of bash plumbing (`start-research.sh`, `runs-registry.sh`, `run-tier.sh`, `format-stream.sh`, status-line tracking, multi-run state machine) and a separate VSCode tasks.json launcher integration. Subagents need none of it.
+
+4. **Two of the four claimed benefits were illusory or anti-goals.** The headless approach was supposed to deliver: (a) live visibility into substream work, (b) cross-day resumability, (c) parallel runs in one operator session, (d) independent permission contexts. The operator disavowed (a) and (b) explicitly ("I want WHAT not WHY", "/brain-resume is overkill"); (c) is replaced by "open another `claude` session"; (d) is provided by subagents already.
+
+5. **`/orchestra-mode` was forgotten.** When the operator was asked which commands to keep, they did not remember `/orchestra-mode` existed. That is sufficient evidence it was not earning its slot. Deleted alongside the rest.
+
+### What the new architecture looks like
+
+```
+operator's main claude session
+    │
+    └── Brain (Sonnet 4.6 minimum, Opus 4.7 recommended for /brain)
+            │
+            ├── Phase 0 RESEARCH ← inline (Brain interrogates the operator)
+            │   posture absorbed from old researcher.md system prompt
+            │   parent must be in plan mode
+            │
+            ├── Phase 1 PLAN
+            │   └── Task(subagent_type: planner)  ── Sonnet 4.6, read-only
+            │       returns plan text; Brain persists PLAN.md
+            │       operator approves plan
+            │       Brain calls ExitPlanMode → standard CC "auto-edit/manual/cancel" prompt
+            │
+            ├── Phase 2 EXECUTE  (one or more invocations)
+            │   └── Task(subagent_type: actor)    ── Haiku 4.5, read+write
+            │       executes one or more steps; self-persists TASKS.json
+            │       returns diff summary + ready_for_review|blocked|partial
+            │
+            └── Phase 3 REVIEW
+                └── Task(subagent_type: reviewer) ── Sonnet 4.6, read-only
+                    returns PASS|FIX|BLOCK + minimal-fix list
+                    Brain persists review-comments.md
+```
+
+`/duo` is the same shape minus Phase 0 and Phase 3:
+
+```
+operator's main claude session (Sonnet 4.6)
+    │
+    └── interactive plan with operator
+            ├── ExitPlanMode after plan approval
+            └── Task(subagent_type: actor) ── Haiku 4.5
+```
+
+### What the new architecture explicitly does NOT do
+
+- No `claude -p` subprocesses.
+- No tmux windows opened by the orchestra.
+- No multi-run registry (`runs.jsonl`) or per-run subdirs under `runs/<run_id>/`.
+- No `/brain-resume`, `/brain-abandon`, `/brain-status`, `/orchestra-mode` slash commands.
+- No live tool-call streaming feed (subagents are opaque-by-design; PreToolUse(Edit/Write/Bash) hook removed).
+- No state.env `ORCHESTRA_MODE` badge tracking.
+- No CLAUDE_BRAIN_RUN_ID env propagation.
+- No status-line "active runs count" or "spawned-window slug" displays.
+
+### Permission flow (Plan-Then-Execute)
+
+The canonical Claude Code pattern:
+
+1. Operator launches `claude` in normal mode (not `--dangerously-skip-permissions`).
+2. Operator enters plan mode (Shift+Tab) before typing `/brain` or `/duo`.
+3. Brain runs Phase 0 (in `/brain`) or Phase 1 (in `/duo`) under plan mode — read-only by parent constraint.
+4. Subagent dispatch during these phases is also read-only (Planner is read-only by frontmatter; the parent's plan mode would constrain even a write-capable subagent).
+5. Operator approves the plan.
+6. Brain calls `ExitPlanMode` with the plan content.
+7. Claude Code displays the standard "Yes, and auto-edit / Yes, manually approve edits / Cancel" prompt at the parent.
+8. Operator's choice sets the permission posture for Phase 2.
+9. Brain dispatches Actor, whose tool calls fire under whatever permission posture the operator just chose.
+
+**Bypass-flattens-down caveat (documented prominently):** If the operator launches the parent with `--dangerously-skip-permissions`, all subagent `permissionMode` frontmatter is silently overridden. Read-only Planners and Reviewers can still write files. The permission architecture is a useful invariant only when the operator does *not* bypass at the parent.
+
+Subagent `permissionMode` frontmatter is used to **narrow** (e.g., Planner read-only by tool list), never to **widen**. Children cannot escalate above parent.
+
+### Per-session subdirectory + 30-day cleanup
+
+Each `/brain` or `/duo` invocation:
+
+1. Reads `housekeeping.session_retention_days` from config (project override > global default > hardcoded 30).
+2. Lazily cleans up any `.claude/orchestra/sessions/<id>/` subdirs older than that retention window via `find -mtime +N -exec rm -rf`.
+3. Creates a fresh per-invocation subdir `<UTC-timestamp>-<PID>/` for its `RESEARCH.md`, `PLAN.md`, `TASKS.json`, `review-comments.md`.
+4. Exports `CLAUDE_ORCHESTRA_SESSION_DIR` so the spawned subagents read/write artifacts under the same root.
+
+There is no canonical `CLAUDE_SESSION_ID` env var in Claude Code 2.1.121; PID-based identifiers are stable enough for the practical use case.
+
+### Persistence ownership
+
+| Artifact | Written by | Read by |
+|---|---|---|
+| `RESEARCH.md` | **Brain** (after operator agrees Phase 0 is done) | Planner (as input prompt context) |
+| `PLAN.md` | **Brain** (after Planner returns plan text) | Actor; operator review |
+| `TASKS.json` | **Actor** (frequent intra-step updates; atomic-rename) | Brain; Reviewer; operator |
+| `review-comments.md` | **Brain** (after Reviewer returns review text) | operator review |
+
+Planner and Reviewer are purely read-only (`tools` lists exclude `Write` and `Edit`). The earlier "exception clause" in their `.md` bodies that granted them Write/Bash for atomic-rename was inconsistent with the actual frontmatter allowlist and could not work — Brain owning persistence resolves that.
+
+### Hook script behaviour
+
+`scripts/orchestra-hook.sh` is reduced to three modes (was four):
+
+- `start` (PreToolUse on Agent matcher): record subagent invocation; create per-stage logfile under `.claude/orchestra/logs/`; append event to `.claude/orchestra/invocations.log`.
+- `end` (SubagentStop): mark logfile as done; append completion event to invocations.log.
+- `compact` (PreCompact): write `.claude/orchestra/brain-state.md` snapshot listing the most recent session subdir's artifacts. Audit-only — there is no `/brain-resume` to consume it.
+
+Removed: `tool` mode (PreToolUse on Edit/Write/Bash matchers) and all tmux operations.
+
+### Status-line behaviour
+
+`status-line/orchestra-block.sh` reduced to ~50 lines:
+
+- `♪ orchestra` — static badge when this project has the orchestra installed.
+- `▶ Sonnet:plan` / `▶ Haiku:implement` / `▶ Sonnet:review` — active subagent indicator (reads `invocations.log`).
+- `⚠ >200K` — warning when Brain context exceeds 180K (subagent-overflow risk).
+
+Removed: BRANCH A (CLAUDE_BRAIN_RUN_ID env-driven slug display), BRANCH B (state.env mode badge + runs.jsonl active-count tracking).
+
+### Deferred features (with trigger conditions)
+
+Documented as not-in-scope for v1 but cleanly addable when the trigger fires:
+
+| Feature | Trigger to revisit |
+|---|---|
+| `memory:` field on subagents (per-agent persistent MEMORY.md) | When telemetry shows Brain re-injecting the same context block in ≥50% of invocations of a given subagent |
+| `Explorer` subagent for parallel codebase investigation (PDF p.10 domain-routing pattern) | When Brain's own Read/Grep/Glob proves insufficient on real workloads — likely never |
+| `/brain --mode auto` (overnight unattended run with test gate, branch isolation, CROSS-CHECK loop) | The original v2 plan; trigger documented in the "auto preset" section above |
+| `/brain-resume` style cross-day continuation | Currently disavowed; revisit if multi-day work patterns emerge |
+| Cleanup of stale remote branches (`origin/headless-claude`, `origin/sub-agents` hyphenated, `origin/headless-caude` typo) | After this revert is merged to main |
+
+### Files deleted in the revert
+
+```
+agents/researcher.md             (159 lines)
+commands/brain-abandon.md         (47 lines)
+commands/brain-resume.md         (127 lines)
+commands/brain-status.md          (31 lines)
+commands/orchestra-mode.md
+scripts/start-research.sh        (199 lines)
+scripts/runs-registry.sh         (146 lines)
+scripts/run-tier.sh              (192 lines)
+scripts/format-stream.sh         (194 lines)
+.vscode/tasks.json
++ ~106 lines from scripts/orchestra-hook.sh
++ ~70 lines from status-line/orchestra-block.sh
++ deploy.sh: ~30 lines (stripped/ generation, multi-script for-loop)
++ config/config.yaml: tmux block
++ config/settings-hooks.json: Edit/Write/Bash matchers
+```
+
+Total: ~1100 lines removed; ~150 lines added (new minimal hook script body, new per-session preamble, new orphan-cleanup logic in deploy.sh).
+
+### Implementation history (commit chain on the `subagents` branch)
+
+```
+b606508  chore: delete researcher agent + headless scripts; clean orphans on deploy
+4474a2b  chore: delete obsolete /brain-{resume,abandon,status} + /orchestra-mode
+bbb69d9  feat(orchestra): per-session subdirs + 30d lazy cleanup
+e300329  refactor(agents): per-session paths; clarify persistence ownership
+ebb3f88  feat(duo): dispatch Actor as Haiku subagent; remove headless run-tier path
+eaa535c  feat(brain): inline Phase 0, dispatch Planner/Actor/Reviewer as subagents
+c1947ef  refactor(hooks): trim orchestra-hook.sh of headless dispatch
+a4a7dc0  chore: trim status-line + drop .vscode/tasks.json
+```
+
+(Plus this docs commit and the research-note preservation commit.)
+
+### Open question deferred to operator
+
+The `subagents` branch is local-only at the time of this writing. Whether it eventually merges to `main`, replaces `main`, or remains a parallel "canonical" track is an operator decision — out of scope for the revert work itself.
+
