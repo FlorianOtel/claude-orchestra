@@ -19,10 +19,6 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     ACTIVE_COLOR="\033[38;2;215;153;33m"      # dark yellow   #D79921
     WARNING_COLOR="\033[38;2;254;128;25m"     # bright_orange #FE8019
 
-    # Static orchestra badge — single cue that this project has orchestra installed.
-    # No multi-run registry to consult; no per-mode sub-badge ("duo"/"acceptEdits"
-    # state.env tracking is gone with the headless plumbing).
-    status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ orchestra${RESET}")
 
     # Active-subagent indicator: latest "start" event in invocations.log with no
     # later matching "end". orchestra-hook.sh writes both events (PreToolUse(Agent)
@@ -42,7 +38,7 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
                     actor)            tier="Haiku"  ;;
                     *)                tier="agent"  ;;
                 esac
-                status_line+=$(printf " ${ACTIVE_COLOR}▶ %s:%s${RESET}" "$tier" "$active_stage")
+                status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ orchestra${RESET} ${ACTIVE_COLOR}▶ %s:%s${RESET}" "$tier" "$active_stage")
             fi
         fi
     fi

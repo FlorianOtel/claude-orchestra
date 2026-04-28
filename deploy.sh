@@ -196,12 +196,12 @@ else
                 !in_block { print }
             ' "$STATUS_LINE" > "$TMPFILE.stripped"
             # Now append fresh block via the same awk-insert logic
-            BLOCK_CONTENT=$(sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^# just before the final/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$REPO/status-line/orchestra-block.sh")
-            awk -v block="$BLOCK_CONTENT" '
-                /^# Output the status line/ { print block; print ""; }
+            sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^# just before the final/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$REPO/status-line/orchestra-block.sh" > "$TMPFILE.block"
+            awk -v bfile="$TMPFILE.block" '
+                /^# Output the status line/ { while ((getline line < bfile) > 0) print line; print ""; }
                 { print }
             ' "$TMPFILE.stripped" > "$TMPFILE"
-            rm -f "$TMPFILE.stripped"
+            rm -f "$TMPFILE.stripped" "$TMPFILE.block"
             mv -f "$TMPFILE" "$STATUS_LINE"
             chmod +x "$STATUS_LINE"
             ok "updated: status-line.sh (orchestra block refreshed)"
@@ -211,12 +211,13 @@ else
             info "would append orchestra block to status-line.sh"
         else
             BLOCK="$REPO/status-line/orchestra-block.sh"
-            BLOCK_CONTENT=$(sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^# just before the final/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$BLOCK")
             TMPFILE="$STATUS_LINE.orchestra-deploy.tmp"
-            awk -v block="$BLOCK_CONTENT" '
-                /^# Output the status line/ { print block; print ""; }
+            sed '/^#!/d; /^# orchestra-block.sh/d; /^# USAGE/d; /^# just before the final/d; /^#$/d; /^# Prerequisites/d; /^#   -/d; /^# deploy.sh will/d; /^# The presence/d' "$BLOCK" > "$TMPFILE.block"
+            awk -v bfile="$TMPFILE.block" '
+                /^# Output the status line/ { while ((getline line < bfile) > 0) print line; print ""; }
                 { print }
             ' "$STATUS_LINE" > "$TMPFILE"
+            rm -f "$TMPFILE.block"
             mv -f "$TMPFILE" "$STATUS_LINE"
             chmod +x "$STATUS_LINE"
             ok "patched: status-line.sh (orchestra block appended)"

@@ -29,3 +29,9 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - **Timestamp:** 2026-04-28T14:24:09Z
 - **Model:** claude-haiku-4-5-20251001
 - **Reason:** Subagents smoke test — verifies that /duo can dispatch Actor as a Haiku subprocess
+- **Timestamp:** 2026-04-28T14:49:27Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** smoke 2 from subagents branch
+- **Timestamp:** 2026-04-28T14:52:58Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** smoke 3 from /brain — via brain pipeline
