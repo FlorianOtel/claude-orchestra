@@ -15,7 +15,7 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 ## Layout
 
 - `agents/`   — planner (Sonnet 4.6), actor (Haiku 4.5), reviewer (Sonnet 4.6)
-- `commands/` — /brain (full pipeline), /duo (lightweight), /orchestra-mode (preset)
+- `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents), /duo (lightweight: Planner + Actor)
 - `scripts/orchestra-hook.sh` — PreToolUse / SubagentStop / PreCompact dispatcher
 - `config/config.yaml` — global orchestra defaults
 - `docs/design.md`    — full architecture reference
@@ -23,3 +23,9 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 ## Do not commit
 
 - `.claude/` — entirely runtime (orchestra state, local-deploy artifacts); gitignored
+
+## Smoke test
+
+- **Timestamp:** 2026-04-28T14:24:09Z
+- **Model:** claude-haiku-4-5-20251001
+- **Reason:** Subagents smoke test — verifies that /duo can dispatch Actor as a Haiku subprocess

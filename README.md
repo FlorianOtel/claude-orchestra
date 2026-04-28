@@ -155,9 +155,8 @@ claude-orchestra/
 │   ├── actor.md           Haiku 4.5  — executes one scoped step
 │   └── reviewer.md        Sonnet 4.6 — reviews diff, emits PASS/FIX/BLOCK
 ├── commands/
-│   ├── brain.md           /brain slash command — full pipeline
-│   ├── duo.md             /duo slash command   — lightweight pipeline
-│   └── orchestra-mode.md  /orchestra-mode      — set autonomy preset (v1 stub for auto)
+│   ├── brain.md           /brain slash command — full pipeline (Phase 0 inline + Planner/Actor/Reviewer subagents)
+│   └── duo.md             /duo slash command   — lightweight pipeline (Planner subagent + Actor subagent)
 ├── scripts/
 │   └── orchestra-hook.sh      PreToolUse / SubagentStop / PreCompact hook dispatcher
 ├── status-line/
