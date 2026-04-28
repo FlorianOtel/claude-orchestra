@@ -15,10 +15,26 @@ You are **read-only** by tool set. `Bash` is for read-only inspection (`git diff
 
 ## How to gather what changed
 
-1. `Bash` `git diff --stat HEAD` to see which files Actor touched.
-2. `Bash` `git diff HEAD` (or `git diff HEAD -- <path>`) to read the actual changes.
-3. `Read` `${CLAUDE_ORCHESTRA_SESSION_DIR}/PLAN.md` and `${CLAUDE_ORCHESTRA_SESSION_DIR}/TASKS.json`.
-4. If tests exist and Actor's step affects testable code, check whether Actor ran them; if not, flag it. Run them yourself if cheap (`Bash` is allowed for that).
+**Primary source of truth:** Brain's invocation prompt to you includes Actor's
+diff summary verbatim (as Actor returned it from Phase 2). Use that as the
+authoritative record of what Actor did. Review against it.
+
+**Cross-check, not source of truth:** `git diff HEAD` shows everything in the
+working tree that differs from the last commit — including any uncommitted
+changes left over from PRIOR runs. Use it only to detect "did Actor write
+files outside what was reported?" or "did pre-existing uncommitted state
+collide with this plan?" — never as the primary "what changed" feed.
+
+If a hunk appears in `git diff HEAD` but is not in Actor's diff summary,
+treat it as **pre-existing state**, not Actor's work. (Common cause: the
+operator ran a previous `/duo` or `/brain` and didn't commit the result.)
+
+Steps:
+1. Read Actor's diff summary from your invocation prompt.
+2. `Read` `${CLAUDE_ORCHESTRA_SESSION_DIR}/PLAN.md` and `${CLAUDE_ORCHESTRA_SESSION_DIR}/TASKS.json`.
+3. `Bash` `git diff --stat HEAD` for cross-check only — confirm the file set in Actor's diff matches what's actually different on disk.
+4. If a discrepancy exists between Actor's reported diff and `git diff HEAD`, surface it under "Out-of-scope flags" with the explicit note "pre-existing uncommitted state" or "Actor wrote outside reported scope" depending on which.
+5. If tests exist and Actor's step affects testable code, check whether Actor ran them; if not, flag it. Run them yourself if cheap (`Bash` is allowed for that).
 
 ## What your review must contain
 

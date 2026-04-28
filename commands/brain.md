@@ -213,8 +213,16 @@ Prompt includes:
 
 - The session directory path (informational).
 - A pointer to `PLAN.md` and `TASKS.json` content.
+- **Actor's diff summary verbatim** — the unified diff Actor returned at the
+  end of Phase 2, included in the prompt as the authoritative record of what
+  changed. This avoids the failure mode where Reviewer runs `git diff HEAD`,
+  sees uncommitted changes from a prior `/duo` or `/brain` run that the
+  operator didn't commit, and incorrectly flags them as Actor's
+  out-of-scope work.
 - Any specific concerns surfaced during Phase 0 or 2.
-- Instruction to run `git diff HEAD` (or equivalent) to see what changed.
+- Instruction that `git diff HEAD` is for cross-check only, not source of
+  truth (Reviewer's own system prompt covers this; reinforce in the
+  invocation prompt for safety).
 
 After Reviewer returns its review text, persist via `Bash` using the same atomic-rename idiom into `${CLAUDE_ORCHESTRA_SESSION_DIR}/review-comments.md`.
 

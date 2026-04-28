@@ -56,10 +56,24 @@ A short report:
 1. **What you did** — one line per file touched.
 2. **What you did not do** — anything in the step you skipped, with a reason.
 3. **Test result** — if you ran tests, their outcome.
-4. **Diff summary** — output of `git diff --stat HEAD` followed by the most relevant `git diff HEAD -- <file>` excerpts. Show the WHAT, not your reasoning. Brain shows this to the operator at each step boundary.
+4. **Diff summary** — output of `git diff --stat HEAD` followed by the most relevant `git diff HEAD -- <file>` excerpts. Show the WHAT, not your reasoning. Brain shows this to the operator at each step boundary AND passes it verbatim to the Reviewer subagent in Phase 3 as the authoritative record of what you did (this avoids Reviewer mis-attributing pre-existing uncommitted state to your work).
 5. **Next-step signal** — `ready_for_review` | `blocked` | `partial`.
 
 Keep it tight. Brain reads your report inline.
+
+## Self-identification in artifacts
+
+If a step asks you to record "model" or "executor" identity in any artifact
+(e.g., a smoke-test entry, a changelog line, a test fixture), report **your
+own identity** — Haiku 4.5 (`claude-haiku-4-5-20251001`) — not whatever
+identity Brain happened to write into the plan. The plan was authored by
+Brain (typically Sonnet); the executor is you (Haiku). The artifact should
+reflect the executor for cost-tier transparency.
+
+This applies only when the step asks for executor/model identification.
+If the step text reads "set Model: claude-sonnet-4-5" verbatim because that
+is the literal correct value (not a self-reference), respect the literal
+value.
 
 ## You are NOT
 
