@@ -134,15 +134,22 @@ The session subdirectory is left empty; it will be reaped by the housekeeping cl
 
 ## Phase 1 — Plan (Task → Planner subagent)
 
-Dispatch the Planner subagent via the `Task` tool. Planner is read-only by frontmatter (`tools: Read, Grep, Glob, WebFetch`); it cannot modify files except `PLAN.md` in the session directory.
+Dispatch the Planner subagent via the `Task` tool. Planner is **purely read-only** by frontmatter (`tools: Read, Grep, Glob, WebFetch`); it cannot modify any files. **You (Brain) own persistence of `PLAN.md`** — Planner returns the plan text in its final message; you do the atomic-rename.
 
 Use the Task tool with `subagent_type: planner` and a prompt that includes:
 
 1. The full text of `RESEARCH.md` (read it from the session dir and inline it).
-2. The session directory path so Planner knows where to persist `PLAN.md`.
+2. The session directory path (informational; Planner does not write).
 3. Any operator-provided constraints from Phase 0 not captured in RESEARCH.md.
 
-Planner returns its plan as text and persists `PLAN.md` to `${CLAUDE_ORCHESTRA_SESSION_DIR}/PLAN.md` via atomic-rename.
+After Planner returns, persist its plan via `Bash`:
+
+```bash
+cat > "${CLAUDE_ORCHESTRA_SESSION_DIR}/PLAN.md.tmp" <<'EOF'
+[full plan text returned by Planner]
+EOF
+mv -f "${CLAUDE_ORCHESTRA_SESSION_DIR}/PLAN.md.tmp" "${CLAUDE_ORCHESTRA_SESSION_DIR}/PLAN.md"
+```
 
 ### Plan approval gate
 
@@ -177,17 +184,22 @@ Actor returns a diff summary in its final message. Show that to the operator at 
 
 ## Phase 3 — Review (Task → Reviewer subagent)
 
-Once all PLAN.md steps are `ready_for_review`, dispatch the Reviewer subagent via `Task` with `subagent_type: reviewer`. Prompt includes:
+Once all PLAN.md steps are `ready_for_review`, dispatch the Reviewer subagent via `Task` with `subagent_type: reviewer`. Reviewer is **read-only** (`tools: Read, Grep, Glob, Bash, TodoWrite`; `Bash` is for read-only `git diff` / test runs only). **You (Brain) own persistence of `review-comments.md`**.
 
-- The session directory path.
-- A pointer to `PLAN.md` and `TASKS.json`.
+Prompt includes:
+
+- The session directory path (informational).
+- A pointer to `PLAN.md` and `TASKS.json` content.
 - Any specific concerns surfaced during Phase 0 or 2.
 - Instruction to run `git diff HEAD` (or equivalent) to see what changed.
 
-Reviewer returns:
+After Reviewer returns its review text, persist via `Bash` using the same atomic-rename idiom into `${CLAUDE_ORCHESTRA_SESSION_DIR}/review-comments.md`.
 
-- **Pass:** brief sign-off; pipeline ends.
-- **Fail with minimal-fix list:** show the operator. Decide whether to dispatch Actor to apply the fixes (typically yes for cosmetic; no and back to Planner for structural).
+Verdict semantics (Reviewer states verdict in its return text):
+
+- **PASS:** brief sign-off; pipeline ends.
+- **FIX:** bounded actionable issues; dispatch Actor again with the issue list as a follow-up step, then re-Review.
+- **BLOCK:** structural concern; stop the loop and surface to operator.
 
 ---
 
