@@ -89,20 +89,36 @@ for s in orchestra-hook.sh; do
     fi
 done
 
-# Clean up scripts deleted in the headless→subagents revert (idempotent).
-# These were the headless `claude -p` plumbing: run-tier.sh, format-stream.sh,
-# runs-registry.sh, start-research.sh. The new subagent architecture does not
-# use them. Also clean up the now-defunct .stripped agent variants.
+# Clean up artifacts deleted in the headless→subagents revert (idempotent).
+# Per-category orphan removal — only delete specific known-deleted files,
+# not "anything not in repo" (operator may have personal commands/agents).
 if ! $DRY_RUN; then
+    # 7a. Headless scripts (Step 7 of the revert plan).
     for orphan in run-tier.sh format-stream.sh runs-registry.sh start-research.sh; do
         if [ -f "$CLAUDE/scripts/$orphan" ]; then
             rm -f "$CLAUDE/scripts/$orphan"
             ok "cleaned orphan: $CLAUDE/scripts/$orphan"
         fi
     done
+
+    # 7b. Stripped agent variants (consumed by run-tier.sh; gone with it).
     if [ -d "$CLAUDE/agents/.stripped" ]; then
         rm -rf "$CLAUDE/agents/.stripped"
         ok "cleaned orphan: $CLAUDE/agents/.stripped/"
+    fi
+
+    # 7c. Obsolete commands (Step 6 of the revert plan).
+    for orphan in brain-resume.md brain-abandon.md brain-status.md orchestra-mode.md; do
+        if [ -f "$CLAUDE/commands/$orphan" ]; then
+            rm -f "$CLAUDE/commands/$orphan"
+            ok "cleaned orphan: $CLAUDE/commands/$orphan"
+        fi
+    done
+
+    # 7d. Researcher agent (Phase 0 dialogue agent; Phase 0 now inline in /brain).
+    if [ -f "$CLAUDE/agents/researcher.md" ]; then
+        rm -f "$CLAUDE/agents/researcher.md"
+        ok "cleaned orphan: $CLAUDE/agents/researcher.md"
     fi
 fi
 
