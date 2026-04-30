@@ -222,15 +222,43 @@ See design-history.md §13.3 for three potential approaches to close the gap.
 
 ### Per-session telemetry
 
+#### Why it exists
+
+Multi-tier orchestration has non-obvious cost structure. Brain (Opus or Sonnet) dominates by token volume — it re-reads its full context on every turn and receives all subagent returns. Planner and Reviewer (Sonnet) are single-call-per-phase. Actor (Haiku) is cheap per token but may iterate. Without measurement, cost/quality trade-offs (which tier to change? which phase to skip?) are guesses. Telemetry makes them data-driven.
+
+The original motivation was a specific question: does the built-in `Explore` subagent (dispatched during `/duo` Phase 0 and `/brain` Phase 0 research) justify a dedicated cheaper Researcher agent? Telemetry answered it: measure first, then decide. See `TODO.md §0` for the full decision-gate framework.
+
+#### What is collected
+
 Every `/brain` and `/duo` run is instrumented post-hoc by `scripts/telemetry-summarize.{sh,py}`, invoked from each command's cleanup block. The parser walks the parent's JSONL for parent tokens, then walks `<parent-uuid>/subagents/agent-*.jsonl` (each subagent's own transcript) attributed via the matching `agent-*.meta.json` sidecar (`{"agentType": "…"}`). It applies USD rates from `config/pricing.yaml` and writes:
 
-- `${SESSION_DIR}/telemetry.json` — rich per-session record (parent + subagents tokens, cost, iterations, blast_radius, outcome).
-- `~/.claude/orchestra/telemetry.jsonl` — global append-only trend log (flat summary).
-- `${SESSION_DIR}/telemetry-events.jsonl` — live event stream emitted by the T1 hook (`orchestra-hook.sh start|end` modes); used for the status-line `~$X.YZ` running-cost indicator and as a T1↔T2 cross-check.
+- `${SESSION_DIR}/telemetry.json` — rich per-session record (parent + subagent tokens per tier, USD cost, iteration counts, outcome, blast_radius).
+- `~/.claude/orchestra/telemetry.jsonl` — global append-only trend log (flat summary; one line per session).
+- `${SESSION_DIR}/telemetry-events.jsonl` — live T1 hook event stream (timing-only; `usage=null` since hook payloads don't expose token counts); drives the real-time `~$X.YZ` status-line indicator.
 
-Pricing maintenance: `pricing.yaml` carries a `last_updated` field. `scripts/telemetry-report.sh` warns if rates are >90 days stale; bump manually after verifying against https://docs.anthropic.com/en/docs/about-claude/models/all-models.
+On-demand report: `~/.claude/scripts/telemetry-report.sh --last N`. Per-session verification: `./scripts/smoke-test.sh`.
 
-Safety net: the Claude Code `Stop` hook (`orchestra-hook.sh stop`) runs the summariser on any unfinalised session_dirs at session end, covering the case where the operator quits without a clean cleanup.
+#### T1 + T2 hybrid
+
+Two complementary layers:
+
+- **T1 (hook-based, real-time)**: `orchestra-hook.sh start/end` appends one JSON event per subagent dispatch/completion to `telemetry-events.jsonl`. Captures timing and stage identity; `usage` is always `null` (hook payloads don't expose token counts). Drives the live `~$X.YZ` status-line badge via a cached last-known value — the cost persists through subagent execution even though the parent's reported `used_percentage` drops to 0 while a subagent runs.
+
+- **T2 (transcript parsing, authoritative)**: runs once at cleanup. Reads the actual JSONL transcripts for real token counts and model attribution. Normalises versioned model IDs (strips `-YYYYMMDD` suffix for pricing lookup) and skips `<synthetic>` messages (written by `/compact`). T2 supersedes T1 for all cost figures.
+
+Safety net: the Claude Code `Stop` hook runs the T2 summariser on any unfinalised session dirs at session end.
+
+#### What the data is intended for
+
+The global log drives five decision gates (see `TODO.md §0` for thresholds and sample-size requirements):
+
+1. **Researcher agent** — implement only if `Explore` dispatches are frequent and account for > 15% of session cost. Currently too few sessions to decide.
+2. **Planner model** — downgrade to Haiku only if `planner_replans` rate is low and Planner cost fraction is measurable.
+3. **1-hour TTL caching** — activate per-tier when TTL-miss rate exceeds 33% (requires measuring inter-call gaps).
+4. **Reviewer skip** — only if FIX-verdict rate drops below 10% over ≥ 50 sessions (quality risk).
+5. **Opus vs Sonnet for Brain** — compare `regret_flag` rate at different model tiers once sufficient data exists.
+
+Pricing maintenance: `pricing.yaml` carries a `last_updated` field. `telemetry-report.sh` warns if rates are > 90 days stale; bump manually after verifying against https://docs.anthropic.com/en/docs/about-claude/models/all-models.
 
 ## See also
 

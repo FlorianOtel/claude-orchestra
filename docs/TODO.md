@@ -3,7 +3,7 @@ title: "Claude Orchestra — v2 Deferred & TODO items"
 date: 2026-04-28
 created_by: Claude Code (Claude Haiku 4.5)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_on: 2026-04-30
+updated_on: 2026-04-30 (session 3)
 context: >
   Extract from the design.md reference document, capturing all deferred
   features, v2 architectural stubs, optimization opportunities, and open
@@ -11,6 +11,83 @@ context: >
 ---
 
 # TODO & Deferred Items
+
+## §0. Metrics gathering & decision policy
+
+Telemetry exists to make cost/quality trade-off decisions **data-driven** rather than projected. The global log at `~/.claude/orchestra/telemetry.jsonl` accumulates one record per `/brain` or `/duo` invocation. On-demand report: `~/.claude/scripts/telemetry-report.sh --last N`.
+
+### What is captured
+
+| Field | Source | Purpose |
+|---|---|---|
+| `cost_usd_estimate` | T2 (transcript parse, authoritative) | USD cost per session |
+| `total_tokens` | T2 | Aggregate token load |
+| `parent.tokens` | T2 | Brain-tier cost (Opus/Sonnet) |
+| `subagents[].tokens` per type | T2 | Per-tier cost attribution |
+| `iterations.explore_dispatches` | T2 | Built-in Explore usage |
+| `iterations.planner_replans` | T2 | Plan quality / rejection rate |
+| `iterations.reviewer_fix_cycles` | T2 | Reviewer effectiveness |
+| `outcome` | cleanup + Stop hook | Pass / fix-loop / block / abandoned |
+| `regret_flag` | T2 | True if replans or fix cycles > 0 |
+| `duration_s` | T2 | Wall-clock session time |
+
+T1 hook events (`telemetry-events.jsonl`) capture subagent timing but have `usage=null` — hook payloads do not expose token counts. T2 is authoritative; T1 is timing-only and drives the real-time status-line cost indicator.
+
+### Data quality baseline
+
+Sessions before commit `66c8a43` (2026-04-30) had parser bugs (model ID mismatch, `<synthetic>` model from `/compact`, `cross_check_t1_t2` crash). All pre-fix sessions have been removed from `telemetry.jsonl`. The log starts clean from:
+
+- `20260430T145406Z-1387768` — first production `/brain` run (Opus 4.7, $40.27, 24M tokens, 22 min)
+- `20260430T162017Z-1480179` — /duo smoke test ($0.15)
+- `20260430T165550Z-1501376` — /duo smoke test ($0.27)
+- `20260430T173441Z-1527612` — /brain smoke test ($0.91)
+
+### Minimum sample before drawing conclusions
+
+**N ≥ 20 sessions** for any cost-optimization decision. Fewer than 20 sessions risks acting on outliers (a single Opus session with a long Phase 0 dialogue can skew averages significantly).
+
+### Decision gates — what telemetry should answer
+
+**Gate 1 — Dedicated Researcher agent**
+
+Current behaviour: `/brain` dispatches the built-in `Explore` subagent during Phase 0 research. Explore runs at Sonnet rates. The question is whether a dedicated Haiku-tier researcher would save meaningful cost.
+
+Implement a Researcher agent **only if**:
+- `iterations.explore_dispatches` averages ≥ 2 per `/brain` session across N ≥ 20 sessions, AND
+- Explore's attributed token cost (`subagents[type=Explore].tokens × Sonnet rate`) exceeds **15%** of total session cost on average.
+
+If Explore dispatches are rare or cheap, a Researcher agent adds complexity with negligible savings.
+
+**Gate 2 — Haiku for planning (Planner tier cost)**
+
+The Planner is currently Sonnet 4.6. If `subagents[type=planner].cost / total_cost` consistently < 5%, the Planner tier is not a meaningful cost target and should be left alone.
+
+Revisit Planner model only if `planner_replans` rate is low (< 20% of sessions) AND planner cost fraction exceeds 10%.
+
+**Gate 3 — 1-hour TTL prompt caching**
+
+Collect inter-call timing between same-tier invocations (planner→planner, actor→actor within fix loops). If any tier shows a TTL-miss rate > 33% (cache expired between calls in the same session), 1-hour TTL pays off. See TODO §10.4 for break-even analysis. Requires verifying `claude -p` exposes TTL control.
+
+**Gate 4 — Reviewer skip for low-risk tasks**
+
+Track `reviewer_fix_cycles > 0` rate. If Reviewer rarely finds real issues (< 10% of sessions produce a FIX verdict), the review loop may be skippable for low-blast-radius tasks. This is a quality risk — only consider after ≥ 50 sessions with explicit quality outcome tracking.
+
+**Gate 5 — Opus vs Sonnet for Brain**
+
+Compare `cost_usd_estimate` and `regret_flag` rate across sessions where Brain was Opus 4.7 vs Sonnet 4.6. If Sonnet Brain sessions have equivalent `regret_flag` rate at ~5× lower cost, Sonnet becomes the default recommendation. Currently insufficient data.
+
+### Retention policy
+
+| Artefact | Location | Retention |
+|---|---|---|
+| Per-session dir (PLAN.md, TASKS.json, telemetry.json, etc.) | `${PROJECT}/.claude/orchestra/sessions/` | 30 days (lazy cleanup on next run) |
+| Global trend log | `~/.claude/orchestra/telemetry.jsonl` | Indefinite; prune manually if > 1 MB |
+| T1 event stream | `${SESSION_DIR}/telemetry-events.jsonl` | Same as session dir |
+| Invocations log | `${PROJECT}/.claude/orchestra/invocations.log` | No rotation in v1 — prune manually |
+
+Pricing rates: `config/pricing.yaml` carries `last_updated`. `telemetry-report.sh` warns if > 90 days stale. Verify against https://docs.anthropic.com/en/docs/about-claude/models/all-models before using cost data for decisions.
+
+---
 
 ## §10. Deferred to v2 — stubs and future intent
 
