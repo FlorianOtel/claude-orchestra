@@ -1217,3 +1217,15 @@ Two bugs in `scripts/telemetry-summarize.py`:
 Added `scripts/smoke-test.sh`: a verification script that checks T1 events, T2 telemetry.json, and the global log for the most recent session. Exit 0 if all three checks pass. Used for post-/duo and post-/brain verification. Added `## Telemetry Smoke Tests` procedure to `CLAUDE.md`. (See commit 88f5cd3.)
 
 Also fixed `scripts/telemetry-summarize.py` to skip global-log append if session already present (prevents duplicate entries when T2 is re-run for debugging). `scripts/smoke-test.sh` global-log check uses `tail -1` on the grep output to handle multiple entries gracefully.
+
+### Verification (2026-04-30 session 2)
+
+End-to-end `/duo` smoke test passed after all fixes applied (commit 66c8a43):
+
+- Session `20260430T165550Z-1501376`, `claude-sonnet-4-6`, 65s, outcome=pass.
+- T1: 2 events (actor start + end), usage=null (timing-only — expected).
+- T2: `cost=$0.2744`, `total_tokens=460,098`, `parent_model=claude-sonnet-4-6`, `subagents=['actor']`. Model ID normalization confirmed working (no $0 cost).
+- Global log: ✓ session present.
+- `./scripts/smoke-test.sh`: 3/3 checks passed.
+- T1/T2 delta warning (`T1=0 T2=135,431`) is expected; documented as known behaviour (T1 usage always null).
+- `end | unknown` subagent on the T1 end event: pre-existing limitation (SubagentStop payload does not expose subagent type); not a bug.

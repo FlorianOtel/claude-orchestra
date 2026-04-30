@@ -35,6 +35,9 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - **Timestamp:** 2026-04-28T14:52:58Z
 - **Model:** claude-sonnet-4-6
 - **Reason:** smoke 3 from /brain — via brain pipeline
+- **Timestamp:** 2026-04-30T16:55:50Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** /duo telemetry end-to-end smoke test — session 20260430T165550Z-1501376, cost=$0.2744, 3/3 checks passed (T1 timing-only/usage=null expected; T2 authoritative)
 
 ## Telemetry Smoke Tests
 
