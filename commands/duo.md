@@ -17,13 +17,16 @@ Use `/duo` when the task is simple enough that a plan + execute is sufficient, a
 
 ## Cost note
 
-`/duo` is designed to run from a **Sonnet 4.6 session** for the planning phase. Switch with `/model claude-sonnet-4-5` before invoking if you're currently on Opus. The Actor subagent is pinned to Haiku 4.5 by frontmatter regardless of parent model.
+`/duo` is designed to run from a **Sonnet 4.6 session** for the planning phase. Switch with `/model claude-sonnet-4-6` before invoking if you're currently on Opus. The Actor subagent is pinned to Haiku 4.5 by frontmatter regardless of parent model.
 
 ## Prerequisites
 
 1. **Plan mode is active.** If not, stop and say:
    > "Please enter plan mode first (Shift+Tab), then run `/duo` again."
-2. **Sonnet 4.6 at parent** (recommended, not enforced).
+2. **Model check (advisory):** Read "The exact model ID is…" from your system context.
+   - If on `claude-sonnet-4-6` or higher (including any Opus): proceed silently.
+   - If on any other model, note it to the operator before continuing:
+     > "⚠️ /duo recommends Sonnet 4.6 for planning. You are on [MODEL-ID]. Switch with `/model claude-sonnet-4-6` if desired — proceeding anyway."
 3. **Bypass-flattens-down caveat.** Same as `/brain`: if the operator launched the parent with `--dangerously-skip-permissions`, Actor inherits bypass and the Plan-Then-Execute gate is decorative.
 
 ## Setup — per-invocation artifact directory + housekeeping

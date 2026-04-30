@@ -17,9 +17,18 @@ No separate sessions. No `claude -p` subprocesses. No multi-run registry. If the
 
 ## Prerequisites
 
-1. **Plan mode is active.** Phase 0 and Phase 1 must run with the parent in plan mode. If the operator is not in plan mode, stop and say:
+1. **Model check (ENFORCED — do this before anything else):** Read "The exact model ID is…" from your system context and classify your model:
+
+   - Model ID contains `haiku` **or** is `claude-sonnet-4-5` or an older Sonnet → **STOP immediately.** Do not run any Bash. Output:
+     > "⛔ /brain requires minimum Sonnet 4.6. You are on [MODEL-ID]. Run `/model claude-sonnet-4-6` or `/model claude-opus-4-7` to switch, then re-run `/brain`."
+   - Model ID is `claude-sonnet-4-6*` → emit this advisory then proceed:
+     > "ℹ️ Running /brain on Sonnet 4.6 (minimum met). For hard architectural reasoning, Opus 4.7 is recommended — `/model claude-opus-4-7` to switch if needed."
+   - Model ID is `claude-opus-4-7*` or any newer/higher-capability version → proceed silently.
+   - Model cannot be determined from system context → ask the operator before proceeding:
+     > "⚠️ Could not read model from system context. Please confirm you are on Sonnet 4.6 or higher before I continue."
+
+2. **Plan mode is active.** Phase 0 and Phase 1 must run with the parent in plan mode. If the operator is not in plan mode, stop and say:
    > "Please enter plan mode first (Shift+Tab), then run `/brain` again."
-2. **Model.** Sonnet 4.6 minimum. Opus 4.7 recommended for hard architectural reasoning. The operator picks the model before invoking; you (Brain) inherit it.
 3. **Bypass-flattens-down caveat.** If the operator launched the parent session with `--dangerously-skip-permissions`, all subagent permission frontmatter is silently overridden and Phase 0's read-only posture is not enforced by the framework. Subagents inherit bypass. Document but do not refuse — this is the operator's choice.
 
 ## Setup — per-invocation artifact directory + housekeeping

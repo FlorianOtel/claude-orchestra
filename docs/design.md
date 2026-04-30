@@ -32,7 +32,7 @@ Talk to Brain normally. Brain delegates to Planner/Actor/Reviewer as needed. No 
 
 Start a Sonnet 4.6 session, enter plan mode, chat to refine scope, type `/duo`. Sonnet plans, Haiku executes all steps in one delegation. No Reviewer. Example: "add a docstring to rag_engine/search.py::search_rag" — low risk, no review needed.
 
-Workflow: (1) `claude --model claude-sonnet-4-5`. (2) `Shift+Tab` to enter plan mode. (3) Refine scope interactively. (4) `/duo`. (5) On approval, `Shift+Tab` to bypassPermissions, Actor runs uninterrupted.
+Workflow: (1) `claude --model claude-sonnet-4-6`. (2) `Shift+Tab` to enter plan mode. (3) Refine scope interactively. (4) `/duo`. (5) On approval, `Shift+Tab` to bypassPermissions, Actor runs uninterrupted.
 
 ### /brain — full pipeline (Opus orchestrates, cap-3 review loop)
 
@@ -50,6 +50,15 @@ When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo
 | **Planner** | Sonnet 4.6 | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md |
 | **Actor** | Haiku 4.5 | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
 | **Reviewer** | Sonnet 4.6 | `~/.claude/agents/reviewer.md` | Read, Grep, Glob, TodoWrite (read-only) | Reviews diff against PLAN.md; returns PASS / FIX / BLOCK |
+
+### Model requirements
+
+| Command | Minimum | Recommended | Enforcement |
+|---|---|---|---|
+| `/brain` | Sonnet 4.6 | Opus 4.7 | Hard block — Brain reads model ID from system context and refuses to proceed if below minimum |
+| `/duo` | none | Sonnet 4.6 | Advisory only — Brain warns and continues |
+
+Both checks happen at command startup before any Bash or setup runs. The check is LLM-enforced (Brain reads "The exact model ID is…" injected by Claude Code into every session's system context) — same trust level as the plan-mode gate. See TODO.md for the hook-based upgrade path when `$CLAUDE_MODEL` becomes available.
 
 ### Sequential Phase Architecture & gates
 
