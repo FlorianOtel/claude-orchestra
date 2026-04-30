@@ -64,6 +64,34 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         fi
     fi
 
+    # --- live cost approximation from telemetry-events.jsonl ---
+    # When a /duo or /brain session is in flight, sum tokens recorded by the
+    # T1 hook and multiply by parent-tier rates from pricing.yaml.
+    # Approximate; finalised by T2 at session end.
+    live_cost=""
+    active_session_dir=""
+    if [ "$duo_count" -gt 0 ]; then
+        active_session_dir=$(find "$sessions_root" -maxdepth 2 -name ".duo-inflight" 2>/dev/null \
+                            | head -n 1 | xargs -r dirname)
+    elif [ -n "$orch_title" ] && [ -d "$cwd/.claude/orchestra/sessions" ]; then
+        active_session_dir=$(find "$cwd/.claude/orchestra/sessions" -mindepth 1 -maxdepth 1 -type d \
+                              -printf '%T@ %p\n' 2>/dev/null \
+                            | sort -rn | head -n 1 | cut -d' ' -f2-)
+        [ -f "$active_session_dir/telemetry.json" ] && active_session_dir=""
+    fi
+    if [ -n "$active_session_dir" ] && [ -f "$active_session_dir/telemetry-events.jsonl" ]; then
+        # Sum input + output tokens from any usage objects present.
+        tok_total=$(jq -s '
+            [.[] | .usage // {} | (.input_tokens // 0) + (.output_tokens // 0) +
+             (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0)] | add // 0
+        ' "$active_session_dir/telemetry-events.jsonl" 2>/dev/null || echo 0)
+        # Use Sonnet rates as a parent-tier approximation ($3 input + $15 output blend ~= $9 / 1M).
+        # Coarse on purpose; T2 supersedes at session end.
+        if [ "${tok_total:-0}" -gt 0 ]; then
+            live_cost=$(awk -v t="$tok_total" 'BEGIN { printf "~$%.2f", t * 9 / 1000000 }')
+        fi
+    fi
+
     # --- badge rendering (priority: duo > brain > plain subagent) ---
     if [ "$duo_count" -gt 0 ]; then
         if [ "$duo_count" -eq 1 ]; then
@@ -72,19 +100,19 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
             duo_badge="duo #${duo_count}"
         fi
         if [ -n "$active_indicator" ]; then
-            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET} %s" "$duo_badge" "$active_indicator")
+            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET} %s%s" "$duo_badge" "$active_indicator" "${live_cost:+ $live_cost}")
         else
-            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET}" "$duo_badge")
+            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET}%s" "$duo_badge" "${live_cost:+ $live_cost}")
         fi
     elif [ -n "$orch_title" ]; then
         badge="${orch_mode} ${orch_title}"
         if [ -n "$active_indicator" ]; then
-            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET} %s" "$badge" "$active_indicator")
+            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET} %s%s" "$badge" "$active_indicator" "${live_cost:+ $live_cost}")
         else
-            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET}" "$badge")
+            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET}%s" "$badge" "${live_cost:+ $live_cost}")
         fi
     elif [ -n "$active_indicator" ]; then
-        status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ orchestra${RESET} %s" "$active_indicator")
+        status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ orchestra${RESET} %s%s" "$active_indicator" "${live_cost:+ $live_cost}")
     fi
 
     # Subagent context-overflow warning: Brain context >180K risks truncation

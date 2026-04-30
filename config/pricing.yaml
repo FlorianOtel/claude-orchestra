@@ -1,0 +1,22 @@
+last_updated: 2026-04-30
+source: https://docs.anthropic.com/en/docs/about-claude/models/all-models
+notes: |
+  Rates are USD per 1M tokens. cache_creation here = 5-minute TTL (1.25x input);
+  long-cache (1h TTL, 2x input) is not yet tracked separately. Verify against
+  the source URL above on every bump and update last_updated.
+models:
+  claude-opus-4-7:
+    input: 15.00
+    output: 75.00
+    cache_creation: 18.75
+    cache_read: 1.50
+  claude-sonnet-4-6:
+    input: 3.00
+    output: 15.00
+    cache_creation: 3.75
+    cache_read: 0.30
+  claude-haiku-4-5:
+    input: 1.00
+    output: 5.00
+    cache_creation: 1.25
+    cache_read: 0.10

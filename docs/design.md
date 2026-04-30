@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 date: 2026-04-24
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Haiku 4.5)
-updated_on: 2026-04-28
+updated_on: 2026-04-30
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -175,6 +175,18 @@ Deliberate deviations:
 Hooks fire at tool-call boundaries only. They capture *what the subagent is doing* (Edit/Write/Bash calls) but **not** *why* (thinking blocks) or *what it sees* (tool results). Full live feed would require a Claude Code streaming hook (not available in v1) or subagents running as separate `claude -p` processes (Option A, rejected in favor of simplicity).
 
 See design-history.md §13.3 for three potential approaches to close the gap.
+
+### Per-session telemetry
+
+Every `/brain` and `/duo` run is instrumented post-hoc by `scripts/telemetry-summarize.{sh,py}`, invoked from each command's cleanup block. The parser walks the Claude Code transcript JSONL, attributes tokens to parent vs. each subagent (via `isSidechain` flag and Task tool_use back-tracing), applies USD rates from `config/pricing.yaml`, and writes:
+
+- `${SESSION_DIR}/telemetry.json` — rich per-session record (parent + subagents tokens, cost, iterations, blast_radius, outcome).
+- `~/.claude/orchestra/telemetry.jsonl` — global append-only trend log (flat summary).
+- `${SESSION_DIR}/telemetry-events.jsonl` — live event stream emitted by the T1 hook (`orchestra-hook.sh start|end` modes); used for the status-line `~$X.YZ` running-cost indicator and as a T1↔T2 cross-check.
+
+Pricing maintenance: `pricing.yaml` carries a `last_updated` field. `scripts/telemetry-report.sh` warns if rates are >90 days stale; bump manually after verifying against https://docs.anthropic.com/en/docs/about-claude/models/all-models.
+
+Safety net: the Claude Code `Stop` hook (`orchestra-hook.sh stop`) runs the summariser on any unfinalised session_dirs at session end, covering the case where the operator quits without a clean cleanup.
 
 ## See also
 

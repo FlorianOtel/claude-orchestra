@@ -82,12 +82,16 @@ done
 
 # ── 5. Hook script ────────────────────────────────────────────────────────────
 echo "Scripts:"
-for s in orchestra-hook.sh; do
+for s in orchestra-hook.sh telemetry-summarize.sh telemetry-report.sh; do
     if [ -f "$REPO/scripts/$s" ]; then
         copy_file "$REPO/scripts/$s" "$CLAUDE/scripts/$s"
         $DRY_RUN || chmod +x "$CLAUDE/scripts/$s"
     fi
 done
+# Python parser — no chmod
+if [ -f "$REPO/scripts/telemetry-summarize.py" ]; then
+    copy_file "$REPO/scripts/telemetry-summarize.py" "$CLAUDE/scripts/telemetry-summarize.py"
+fi
 
 # Clean up artifacts deleted in the headless→subagents revert (idempotent).
 # Per-category orphan removal — only delete specific known-deleted files,
@@ -125,6 +129,7 @@ fi
 # ── 6. Orchestra config ───────────────────────────────────────────────────────
 echo "Config:"
 copy_file "$REPO/config/config.yaml" "$CLAUDE/orchestra/config.yaml"
+copy_file "$REPO/config/pricing.yaml" "$CLAUDE/orchestra/pricing.yaml"
 
 # ── 7. Merge orchestra hooks into settings.json ───────────────────────────────
 echo "Settings:"
@@ -139,7 +144,7 @@ FRAGMENT="$REPO/config/settings-hooks.json"
 EXPECTED_MATCHERS="$(jq -r '[.hooks.PreToolUse[].matcher] | sort | join(",")' "$FRAGMENT")"
 CURRENT_MATCHERS="$(jq -r '([.hooks.PreToolUse // [] | .[]] | map(select(.hooks[].command | contains("orchestra-hook.sh"))) | map(.matcher) | sort | join(","))' "$SETTINGS" 2>/dev/null || echo "")"
 
-if [ "$CURRENT_MATCHERS" = "$EXPECTED_MATCHERS" ] && jq -e '.hooks.SubagentStop' "$SETTINGS" >/dev/null 2>&1; then
+if [ "$CURRENT_MATCHERS" = "$EXPECTED_MATCHERS" ] && jq -e '.hooks.SubagentStop' "$SETTINGS" >/dev/null 2>&1 && jq -e '.hooks.Stop' "$SETTINGS" >/dev/null 2>&1; then
     ok "unchanged: settings.json (hooks already present)"
 else
     if $DRY_RUN; then
@@ -160,6 +165,7 @@ else
             | .hooks.PreToolUse  = ($non_orchestra_ptu + $new_ptu)
             | .hooks.SubagentStop = ($new_hooks.SubagentStop // [])
             | .hooks.PreCompact  = ($new_hooks.PreCompact // [])
+            | .hooks.Stop = ($new_hooks.Stop // [])
         ' "$SETTINGS" "$FRAGMENT" > "$TMPFILE"
 
         mv -f "$TMPFILE" "$SETTINGS"

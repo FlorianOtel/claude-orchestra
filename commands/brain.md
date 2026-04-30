@@ -247,6 +247,21 @@ Verdict semantics (Reviewer states verdict in its return text):
 
 ## Cleanup
 
+### Telemetry finalisation
+
+Before clearing the pipeline badge, write the outcome marker and trigger the T2 telemetry pass. Use the outcome from Reviewer's verdict (`pass | fix-loop | block | abandoned`):
+
+```bash
+printf '%s' "<outcome>" > "${CLAUDE_ORCHESTRA_SESSION_DIR}/.outcome"
+~/.claude/scripts/telemetry-summarize.sh \
+    "${CLAUDE_ORCHESTRA_SESSION_DIR}" brain "<outcome>" "${CLAUDE_SESSION_ID:-}" 2>&1 \
+    | tail -n 1
+```
+
+The summariser writes `${CLAUDE_ORCHESTRA_SESSION_DIR}/telemetry.json` (full record) and appends one line to `~/.claude/orchestra/telemetry.jsonl` (global trend log).
+
+### Clear the pipeline badge
+
 Clear the pipeline badge from state.env:
 
 ```bash

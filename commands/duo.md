@@ -144,6 +144,21 @@ Actor returns when:
 
 ## Phase 4 — Done
 
+### Telemetry finalisation (per-session)
+
+Before the final summary, write the outcome marker and trigger the T2 telemetry pass:
+
+```bash
+printf '%s' "<outcome: pass | block | partial>" > "${CLAUDE_ORCHESTRA_SESSION_DIR}/.outcome"
+~/.claude/scripts/telemetry-summarize.sh \
+    "${CLAUDE_ORCHESTRA_SESSION_DIR}" duo "<outcome>" "${CLAUDE_SESSION_ID:-}" 2>&1 \
+    | tail -n 1
+```
+
+The summariser writes `${CLAUDE_ORCHESTRA_SESSION_DIR}/telemetry.json` (full record) and appends one line to `~/.claude/orchestra/telemetry.jsonl` (global trend log). Errors are logged to `parser_warnings[]` in the JSON; the script never fails the pipeline.
+
+---
+
 Short summary to the operator:
 
 - Session dir path.

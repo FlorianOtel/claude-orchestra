@@ -45,6 +45,24 @@ stamp_fields() {
     "$STAMP_HOST" "$STAMP_PID" "$STAMP_SESSION" "$STAMP_TS"
 }
 
+# Find the most recent orchestra session_dir without a telemetry.json
+# (i.e., still active or unfinalised). Prefer one with .duo-inflight or
+# an in-flight ORCHESTRA_TITLE in state.env. Echoes the path or empty.
+find_active_session_dir() {
+  local sessions_root="${ORCHESTRA_DIR}/sessions"
+  [ -d "$sessions_root" ] || return 0
+  # Pick the most recently modified subdir that lacks telemetry.json
+  find "$sessions_root" -mindepth 1 -maxdepth 1 -type d \
+       -printf '%T@ %p\n' 2>/dev/null \
+    | sort -rn \
+    | while read -r _ts dir; do
+        if [ ! -f "$dir/telemetry.json" ]; then
+          echo "$dir"
+          break
+        fi
+      done
+}
+
 stage_for_subagent() {
   case "$1" in
     planner)         echo "plan" ;;
@@ -91,6 +109,17 @@ case "$MODE" in
     printf '{"event":"start","stage":"%s","subagent":"%s","logfile":"%s",%s}\n' \
       "$STAGE" "$SUBAGENT" "$LOGFILE" "$(stamp_fields)" \
       >> "$INVOCATIONS_LOG" 2>/dev/null || true
+
+    # T1 telemetry: append start-event to active session's telemetry-events.jsonl
+    ACTIVE_SESSION_DIR="$(find_active_session_dir)"
+    if [ -n "$ACTIVE_SESSION_DIR" ]; then
+      USAGE_JSON="$(printf '%s' "$INPUT_JSON" \
+        | jq -c '.tool_input.usage // .params.usage // null' 2>/dev/null \
+        || echo "null")"
+      printf '{"event":"start","subagent":"%s","stage":"%s","usage":%s,%s}\n' \
+        "$SUBAGENT" "$STAGE" "$USAGE_JSON" "$(stamp_fields)" \
+        >> "${ACTIVE_SESSION_DIR}/telemetry-events.jsonl" 2>/dev/null || true
+    fi
     ;;
 
   end)
@@ -116,6 +145,17 @@ case "$MODE" in
     printf '{"event":"end","stage":"%s","subagent":"%s","logfile":"%s",%s}\n' \
       "$STAGE" "$SUBAGENT" "$LOGFILE" "$(stamp_fields)" \
       >> "$INVOCATIONS_LOG" 2>/dev/null || true
+
+    # T1 telemetry: append end-event to active session's telemetry-events.jsonl
+    ACTIVE_SESSION_DIR="$(find_active_session_dir)"
+    if [ -n "$ACTIVE_SESSION_DIR" ]; then
+      USAGE_JSON="$(printf '%s' "$INPUT_JSON" \
+        | jq -c '.usage // .tool_input.usage // .params.usage // null' 2>/dev/null \
+        || echo "null")"
+      printf '{"event":"end","subagent":"%s","stage":"%s","usage":%s,%s}\n' \
+        "$SUBAGENT" "$STAGE" "$USAGE_JSON" "$(stamp_fields)" \
+        >> "${ACTIVE_SESSION_DIR}/telemetry-events.jsonl" 2>/dev/null || true
+    fi
     ;;
 
   compact)
@@ -168,6 +208,29 @@ case "$MODE" in
 
     printf '{"event":"compact","brain_state":"%s",%s}\n' \
       "$BRAIN_STATE" "$(stamp_fields)" \
+      >> "$INVOCATIONS_LOG" 2>/dev/null || true
+    ;;
+
+  stop)
+    # Claude Code session ending. Finalise any orchestra session_dirs that
+    # don't have telemetry.json yet. Best-effort; never blocks Claude.
+    SESSIONS_ROOT="${ORCHESTRA_DIR}/sessions"
+    if [ -d "$SESSIONS_ROOT" ]; then
+      find "$SESSIONS_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+        | while read -r dir; do
+            if [ ! -f "$dir/telemetry.json" ] && [ -f "$dir/PLAN.md" ]; then
+              # Determine command from presence of .duo-inflight (legacy) or RESEARCH.md (brain).
+              CMD="brain"
+              [ -f "$dir/.duo-inflight" ] && CMD="duo"
+              # Determine outcome marker
+              OUTCOME="$(cat "$dir/.outcome" 2>/dev/null || echo "abandoned")"
+              # Invoke summariser; pass empty transcript-id to let it self-discover.
+              SUMMARISER="${HOME}/.claude/scripts/telemetry-summarize.sh"
+              [ -x "$SUMMARISER" ] && "$SUMMARISER" "$dir" "$CMD" "$OUTCOME" "" 2>/dev/null || true
+            fi
+          done
+    fi
+    printf '{"event":"stop",%s}\n' "$(stamp_fields)" \
       >> "$INVOCATIONS_LOG" 2>/dev/null || true
     ;;
 
