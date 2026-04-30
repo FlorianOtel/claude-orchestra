@@ -1229,3 +1229,39 @@ End-to-end `/duo` smoke test passed after all fixes applied (commit 66c8a43):
 - `./scripts/smoke-test.sh`: 3/3 checks passed.
 - T1/T2 delta warning (`T1=0 T2=135,431`) is expected; documented as known behaviour (T1 usage always null).
 - `end | unknown` subagent on the T1 end event: pre-existing limitation (SubagentStop payload does not expose subagent type); not a bug.
+
+---
+
+## Amendment 2026-04-30 (session 3) — /brain smoke test + additional fixes
+
+**Context:** /brain smoke test revealed three issues; two fixed in this session.
+
+### Cost not shown during actor/reviewer phases
+
+`tokens_used` in the status-line script is derived from `used_percentage` in Claude Code's status-line input JSON. Claude Code reports `used_percentage=0` while a subagent is running (the parent context isn't the active turn), so `tokens_used=0` and the live cost gate `[ "${tokens_used:-0}" -gt 0 ]` fails — cost blanked out during actor/reviewer execution despite being visible during Phase 0/1.
+
+**Fix:** Added a `.live-cost-cache` file in the session dir. When `tokens_used>0`, the computed cost is written there. When `tokens_used=0` but the session is active, the cached value is read back. Result: cost persists through subagent execution showing the last known value from the parent's most recent turn.
+
+### Global log stale outcome (stop hook vs cleanup race)
+
+The `Stop` hook fires when the Claude Code session ends (including mid-session interruptions at approval prompts). If it fires before Brain's cleanup, it writes `outcome=abandoned` to `telemetry.jsonl`. Brain's cleanup then runs T2 with the correct outcome but the old duplicate guard skipped the append, leaving the stale entry.
+
+**Fix:** Global log append now replaces the existing line (atomic rename) rather than skipping. The last T2 run for a session is authoritative.
+
+### T1 events missing for actor/reviewer (one-off, not fixed)
+
+In the previous smoke test session, a Stop hook fire between Phase 1 and Phase 2 wrote `telemetry.json` with `outcome=abandoned`. `find_active_session_dir()` skips dirs with `telemetry.json`, so subsequent actor/reviewer PreToolUse events weren't captured in T1. This was a one-off from the CLAUDE_PROJECT_DIR recovery session. In a normal session the Stop hook only fires at true session end.
+
+### /brain smoke test verified (session 20260430T173441Z-1527612)
+
+- T1: 6 events (planner start/end + actor start/end + reviewer start/end) ✓
+- T2: `cost=$0.9107`, `total_tokens=1,929,950`, `subagents=['actor','planner','reviewer']`, `outcome=pass` ✓
+- Global log: `outcome=pass` ✓
+- `./scripts/smoke-test.sh`: 3/3 ✓
+- Cost displayed throughout all stages including during actor/reviewer execution ✓
+
+**Known cosmetic issue:** `subagents[]` in T2 output is ordered alphabetically by transcript filename hash, not by execution order. Costs and tokens are attributed correctly; display order only.
+
+### Root cause: CLAUDE_PROJECT_DIR unset in Bash subprocesses
+
+Fixed in commit eb0dd0c: `CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"` added as first line of every bash block in `brain.md` and `duo.md` that uses this variable. Without this, all session dir creation and badge writes silently failed.

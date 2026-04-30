@@ -38,6 +38,9 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - **Timestamp:** 2026-04-30T16:55:50Z
 - **Model:** claude-sonnet-4-6
 - **Reason:** /duo telemetry end-to-end smoke test — session 20260430T165550Z-1501376, cost=$0.2744, 3/3 checks passed (T1 timing-only/usage=null expected; T2 authoritative)
+- **Timestamp:** 2026-04-30T17:34:41Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** /brain telemetry end-to-end smoke test — session 20260430T173441Z-1527612, cost=$0.9107, 6 T1 events, 3/3 checks passed. Cost persisted through all subagent phases.
 
 ## Telemetry Smoke Tests
 
