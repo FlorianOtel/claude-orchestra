@@ -66,7 +66,7 @@ After creating the session directory, write the pipeline mode and task title to 
 ```bash
 ORCH_DIR="${CLAUDE_PROJECT_DIR}/.claude/orchestra"
 mkdir -p "$ORCH_DIR"
-printf 'ORCHESTRA_MODE=orchestra exploring\nORCHESTRA_TITLE=%s\n' \
+printf 'ORCHESTRA_MODE=brain\nORCHESTRA_TITLE=%s\n' \
   "<task title, ≤30 chars, no single-quotes>" >> "${ORCH_DIR}/state.env"
 ```
 

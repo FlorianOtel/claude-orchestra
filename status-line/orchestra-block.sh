@@ -54,12 +54,7 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
             )
             last_end_ts=$(echo "$last_end_line" | jq -r '.ts // ""')
             if [ -n "$last_start_ts" ] && [ "$last_start_ts" \> "${last_end_ts:-}" ]; then
-                case "$active_subagent" in
-                    planner|reviewer) tier="Sonnet" ;;
-                    actor)            tier="Haiku"  ;;
-                    *)                tier="agent"  ;;
-                esac
-                active_indicator=$(printf "${ACTIVE_COLOR}▶ %s:%s${RESET}" "$tier" "$active_stage")
+                active_indicator=$(printf "${ACTIVE_COLOR}▶ %s${RESET}" "$active_stage")
             fi
         fi
     fi
@@ -95,9 +90,9 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     # --- badge rendering (priority: duo > brain > plain subagent) ---
     if [ "$duo_count" -gt 0 ]; then
         if [ "$duo_count" -eq 1 ]; then
-            duo_badge="duo ${duo_title}"
+            duo_badge="orchestra -> plan ${duo_title}"
         else
-            duo_badge="duo #${duo_count}"
+            duo_badge="orchestra -> plan #${duo_count}"
         fi
         if [ -n "$active_indicator" ]; then
             status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET} %s%s" "$duo_badge" "$active_indicator" "${live_cost:+ $live_cost}")
@@ -105,7 +100,7 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
             status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET}%s" "$duo_badge" "${live_cost:+ $live_cost}")
         fi
     elif [ -n "$orch_title" ]; then
-        badge="${orch_mode} ${orch_title}"
+        badge="orchestra -> brain ${orch_title}"
         if [ -n "$active_indicator" ]; then
             status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET} %s%s" "$badge" "$active_indicator" "${live_cost:+ $live_cost}")
         else

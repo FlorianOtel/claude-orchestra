@@ -2,7 +2,7 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 date: 2026-04-24
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Opus 4.7)
+updated_by: Claude Code (Claude Sonnet 4.6)
 updated_on: 2026-04-30
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
@@ -85,13 +85,44 @@ Four hook types in `~/.claude/settings.json`, dispatching to `~/.claude/scripts/
 3. **PreCompact** — `compact` mode. Saves `brain-state.md` (plan/task/decision snapshot for resumption post-`/clear`).
 4. (No tool-call hooks; subagent tool dispatch is opaque by design.)
 
-### tmux vs VSCode
+### Status line
 
-Hooks are environment-aware:
+The Claude Code status line is extended by `status-line/orchestra-block.sh`, injected into `~/.claude/scripts/status-line.sh` at deploy time via the `# ORCHESTRA_BLOCK_START` / `# ORCHESTRA_BLOCK_END` sentinels.
 
-- **In tmux** (interactive terminal): hook detects `$TMUX`, spawns stage-named window (`plan`, `implement`, `review`, …), tails per-invocation logfile, auto-closes 120 s after completion.
-- **In VSCode** (no tmux): hook writes to logfile; user can `tail -f ~/.claude/orchestra/live.log` in VSCode terminal.
-- **Disable tmux spawning**: set `CLAUDE_ORCHESTRA_DISABLE_TMUX=1` in shell before launching Claude Code.
+#### What it displays
+
+The block renders one of the following badge formats, in descending priority:
+
+| Condition | Badge |
+|---|---|
+| `/duo` session active (one) | `♪ orchestra -> plan <title>  [▶ stage]  [~$X.YZ]` |
+| `/duo` sessions active (many) | `♪ orchestra -> plan #N` |
+| `/brain` session active | `♪ orchestra -> brain <title>  [▶ stage]  [~$X.YZ]` |
+| Subagent running (no /brain or /duo context) | `♪ orchestra  ▶ stage` |
+| No orchestra activity | *(nothing — orchestra block is silent)* |
+
+Plus a context-overflow warning appended to any badge: `⚠ >200K` when the parent's `tokens_used` exceeds 180 000 (truncation risk threshold).
+
+`[▶ stage]` shows the current active subagent stage (`plan`, `implement`, `review`, `research`). It appears while the subagent is running and disappears once it completes.
+
+`[~$X.YZ]` is the live running cost from `telemetry-events.jsonl` (T1 approximation; finalised by T2 at session end).
+
+#### When it updates
+
+The status line script is called by Claude Code on each render tick — after every model turn and when tool calls are shown in the UI. **The active-subagent indicator (`▶ stage`) appears in real-time**: the `PreToolUse(Agent)` hook writes the `start` event to `invocations.log` *before* the Task tool executes, so the indicator is already present by the time the subagent begins running.
+
+#### Data sources
+
+| Signal | Source | Written by |
+|---|---|---|
+| `/duo` title and inflight state | `${SESSION_DIR}/.duo-inflight` | `/duo` command setup |
+| `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
+| Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
+| Live cost | `${SESSION_DIR}/telemetry-events.jsonl` (token sums × Sonnet blend rate) | `orchestra-hook.sh start/end` (T1) |
+
+#### Deploy / portability
+
+`status-line/orchestra-block.sh` is a **portable standalone snippet** — it defines its own color variables so it can be dropped into any host status-line script. `deploy.sh` strips the old block and re-injects the current source whenever the two diverge, making status-line updates idempotent.
 
 ### NFS / cross-machine
 
@@ -121,10 +152,15 @@ orchestra/
 sessions/
   <UTC-ts>-<PID>/
     PLAN.md, TASKS.json, review-comments.md
+    .duo-inflight          (present during /duo planning phase only)
+    .outcome               (pass | block | partial | abandoned)
+    telemetry-events.jsonl (T1 live hook stream)
+    telemetry.json         (T2 final record, written at cleanup)
     logs/
       <stage>-<UTC-ts>-<HOST>-<PID>.log
-live.log -> (symlink to last run's log)
-state.env (mode badge, append-only)
+state.env          (ORCHESTRA_MODE + ORCHESTRA_TITLE, append-only)
+invocations.log    (subagent start/end events, append-only)
+brain-state.md     (pre-compact snapshot)
 ```
 
 ### Cost model
@@ -140,8 +176,6 @@ Rule of thumb: use `/brain` for tasks where the review loop actually earns the B
 
 ### Disabling and troubleshooting
 
-**Per-project disable**: set `CLAUDE_ORCHESTRA_DISABLE_TMUX=1` in shell. (No per-project opt-out marker; orchestra is globally on when installed.)
-
 **Global disable**: `mv ~/.claude/scripts/orchestra-hook.sh{,.bak}` (intentionally loud; next `claude` invocation will fail visibly).
 
 **Full uninstall**: `rm -rf ~/.claude/agents/{planner,actor,reviewer}.md ~/.claude/commands/{brain,duo}.md ~/.claude/scripts/orchestra-hook.sh ~/.claude/orchestra/`, then edit `~/.claude/settings.json` to remove hook entries.
@@ -150,10 +184,11 @@ Quick-ref troubleshooting:
 
 | Symptom | Likely cause | Check |
 |---|---|---|
-| No tmux window spawns in tmux | `$TMUX` unset or hook not executable | `echo $TMUX`; `ls -la ~/.claude/scripts/orchestra-hook.sh` |
+| Status-line badge doesn't appear | `config.yaml` missing or `cwd` unset in status-line input | `ls ~/.claude/orchestra/config.yaml`; run `status-line.sh` manually with test JSON |
 | `PLAN.md` garbled | Atomic-rename not used — direct write instead | Inspect for `.tmp` sibling; check Planner prompt |
 | `/brain` command unrecognised | `~/.claude/commands/brain.md` missing or malformed | `/help` lists commands; inspect file frontmatter |
 | Logs growing unbounded | No rotation policy | v1 does not rotate. Manually `rm` or add logrotate. |
+| `~$X.YZ` cost never appears | T1 hook not writing to `telemetry-events.jsonl` | Check `orchestra-hook.sh` is executable and wired in `settings.json` |
 
 ### Deviations from canonical Claude Code
 
