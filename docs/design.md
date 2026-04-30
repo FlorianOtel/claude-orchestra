@@ -2,7 +2,7 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 date: 2026-04-24
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Haiku 4.5)
+updated_by: Claude Code (Claude Opus 4.7)
 updated_on: 2026-04-30
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
@@ -178,7 +178,7 @@ See design-history.md §13.3 for three potential approaches to close the gap.
 
 ### Per-session telemetry
 
-Every `/brain` and `/duo` run is instrumented post-hoc by `scripts/telemetry-summarize.{sh,py}`, invoked from each command's cleanup block. The parser walks the Claude Code transcript JSONL, attributes tokens to parent vs. each subagent (via `isSidechain` flag and Task tool_use back-tracing), applies USD rates from `config/pricing.yaml`, and writes:
+Every `/brain` and `/duo` run is instrumented post-hoc by `scripts/telemetry-summarize.{sh,py}`, invoked from each command's cleanup block. The parser walks the parent's JSONL for parent tokens, then walks `<parent-uuid>/subagents/agent-*.jsonl` (each subagent's own transcript) attributed via the matching `agent-*.meta.json` sidecar (`{"agentType": "…"}`). It applies USD rates from `config/pricing.yaml` and writes:
 
 - `${SESSION_DIR}/telemetry.json` — rich per-session record (parent + subagents tokens, cost, iterations, blast_radius, outcome).
 - `~/.claude/orchestra/telemetry.jsonl` — global append-only trend log (flat summary).

@@ -1100,3 +1100,73 @@ Subagent `permissionMode` frontmatter **replaces** session-level Shift+Tab toggl
 
 (Actual frontmatter format TBD by operator once Claude Code 2.1 subagent guide is fully consulted; these are the intent levels.)
 - D2 config file location (§6d)
+
+### Amendment — 2026-04-30: per-session telemetry (T1+T2 hybrid) + critical transcript-format finding
+
+**Context:** Investigation into cost optimization opened with the operator seeing `"agent: research"` in the status-line during `/duo` runs and asking whether a cheaper Haiku "researcher" agent should replace those dispatches. Phase 0 dialogue (in this session, `claude-orchestra-telemetry`) established:
+
+- The "research" label is a hook artefact: `orchestra-hook.sh`'s `stage_for_subagent` maps the built-in `Explore` agent type → `"research"`. Sonnet (the `/duo` parent) autonomously dispatches `Explore` subagents during Phase 1 planning based on Claude Code's harness-level guidance ("for broad codebase exploration, spawn Agent with subagent_type=Explore"). Not a designed phase; not an orchestra-defined agent.
+- Haiku is the wrong tier for code reasoning. The workload is "understand existing patterns" not "find symbol by name".
+- Cost is projected, not observed. No measurement existed to justify any optimization.
+- A `researcher.md` agent was already on the deferred list (`docs/TODO.md`) with an explicit gate: "only if Brain/Explore proves inadequate for G1." That gate had never been crossed.
+
+Decision: no researcher agent. Instead, instrument per-session telemetry so future cost/quality decisions are data-driven.
+
+**What was built (commit `ae0b797`):**
+
+*4 net-new files:*
+- `config/pricing.yaml` — per-model USD rate table (Opus 4.7 / Sonnet 4.6 / Haiku 4.5), `last_updated` field, 90-day staleness warning via report script.
+- `scripts/telemetry-summarize.py` — Python 3 parser: walks parent + subagent transcripts, attributes tokens per tier, computes cost, writes `${SESSION_DIR}/telemetry.json` + appends to global `telemetry.jsonl`.
+- `scripts/telemetry-summarize.sh` — bash wrapper sourcing the project venv.
+- `scripts/telemetry-report.sh` — on-demand tabular summary + staleness warning.
+
+*7 modifications:*
+- `scripts/orchestra-hook.sh` — T1 live event emission to `${SESSION_DIR}/telemetry-events.jsonl` in `start`/`end` modes; new `stop` mode (Claude Code Stop hook safety-net finaliser).
+- `config/settings-hooks.json` — wires the `Stop` hook.
+- `deploy.sh` — deploys new scripts + `pricing.yaml`; extends jq hook merge for `Stop`.
+- `status-line/orchestra-block.sh` — live `~$X.YZ` running-cost indicator from T1 events during in-flight sessions (approximate; T2 supersedes at session end).
+- `commands/{duo,brain}.md` — cleanup blocks write `.outcome` marker and invoke `telemetry-summarize.sh`.
+- `docs/design.md` — Per-session telemetry subsection added.
+
+**Real numbers from the implementation session itself** (parser dogfooded on its own session):
+
+| Tier | Model | Tokens | Duration |
+|---|---|---|---|
+| Brain (parent) | Opus 4.7 | 17.1M cache_read + 132K output | ~22 min total |
+| Wave 1 Actor | Haiku 4.5 | 4.3M cache_read + 14.5K output | 180s |
+| Wave 2 Actor | Haiku 4.5 | 635K cache_read + 10.3K output | 97s |
+| Reviewer | Sonnet 4.5* | 1.6M cache_read + 6.4K output | 204s |
+
+Total: $40.27, 1318s. ~64% of cost is the Opus parent re-reading its own cached context — exactly the kind of signal measurement was designed to surface.
+
+*Note: Reviewer ran on Sonnet 4.5, not 4.6. `agents/reviewer.md` model frontmatter should be verified.*
+
+**Critical architectural finding — Claude Code subagent transcript format:**
+
+The plan's T2 attribution model was based on an incorrect observation about transcript structure. The correct format, empirically verified against this session's transcripts:
+
+*What PLAN.md assumed (wrong):*
+> Subagent tokens appear as `isSidechain: true` assistant messages inline in the parent's JSONL transcript, attributable via a `Task` `tool_use` back-trace in the parent stream.
+
+*Observed reality:*
+> Each subagent dispatch creates a **separate JSONL file** at:
+> `~/.claude/projects/<mangled>/<parent-session-uuid>/subagents/agent-<hash>.jsonl`
+> with a sidecar:
+> `~/.claude/projects/<mangled>/<parent-session-uuid>/subagents/agent-<hash>.meta.json`
+> containing `{"agentType": "actor|reviewer|Explore|…", "description": "…"}`.
+>
+> The parent's JSONL (`<parent-uuid>.jsonl`) contains **only parent-stream messages**. There are **no `isSidechain` records** in it. The parent JSONL and the subagent JSONLs are sibling files in the project transcript directory; the subagent files are grouped under a `<parent-uuid>/subagents/` subdirectory named after the parent session UUID.
+
+The earlier observation that triggered the sidechain assumption came from a different, older session's transcript (selected by mtime at the time of the initial `grep` check) which happened to have those fields. That session was likely a different invocation pattern or an older Claude Code version.
+
+The parser (`scripts/telemetry-summarize.py`) was rewritten during the implementation to use the correct format: it walks `<parent-uuid>/subagents/agent-*.{meta.json,jsonl}` pairs. `docs/design.md` (the telemetry subsection) and `PLAN.md` still mention the wrong format; see correction note in the session PLAN.md.
+
+**Three post-review bugs caught by dogfood testing (not by Reviewer):**
+
+1. `datetime.utcnow()`/`utcfromtimestamp()` deprecation warnings → replaced with `datetime.now(timezone.utc)` / `datetime.fromtimestamp(…, timezone.utc)`.
+2. YAML `last_updated: 2026-04-30` was loaded as a Python `date` object, not JSON-serialisable → coerced to `str(…)` at the `pricing_snapshot_date` field.
+3. `session_dir.stat().st_ctime` — Linux `st_ctime` is metadata-change time, not creation time; drifts as files are added to the session_dir → derive `started_at` from the session_dir basename (`<YYYYMMDDTHHMMSSZ>-<PID>` format).
+
+**Reviewer limitation observed:** Reviewer returned PASS on flawed code. All three bugs above required runtime execution to surface; Reviewer's read-only static inspection missed them. This is expected behaviour (Reviewer cannot run code) but confirms that the plan's §Verification "run the parser" step is load-bearing, not ceremonial.
+
+**Actor scope-creep incident:** Wave 2 Actor introduced ~56 lines of out-of-scope "model enforcement" feature across `commands/{brain,duo}.md`, `docs/design.md`, and `docs/TODO.md` — a parallel feature about reading the model ID from Claude Code's system context and refusing/warning. Brain reverted all of it before invoking Reviewer. The feature itself may be worth implementing (see `docs/TODO.md` "Hook-based model enforcement via `$CLAUDE_MODEL`") but was not in the approved plan.
