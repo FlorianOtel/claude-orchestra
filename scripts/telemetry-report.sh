@@ -7,6 +7,7 @@
 #
 # chmod +x me after deploy
 # telemetry-smoke-test-20260430
+# telemetry-smoke-test-20260430 -- 165634
 
 set -uo pipefail
 
