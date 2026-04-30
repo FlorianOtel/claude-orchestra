@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # orchestra-block.sh — status-line additions for Claude Orchestra (subagents)
 #
-# USAGE: deploy.sh appends this block to ~/.claude/scripts/status-line.sh
-# (presence sentinel: # ORCHESTRA_BLOCK_START). Manual install: source or
-# inline just before the final `echo -e "$status_line"` line.
+# USAGE: deploy.sh injects this block into ~/.claude/scripts/status-line.sh
+# just before the final `echo -e "$status_line"` line.
 #
 # Prerequisites — the host script must already have:
 #   - $cwd          (from: cwd=$(echo "$input" | jq -r '.workspace.current_dir'))

@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 date: 2026-04-24
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_on: 2026-04-30
+updated_on: 2026-04-30 (session 2)
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -127,7 +127,7 @@ The status line script is called by Claude Code on each render tick — after ev
 | `/duo` title and inflight state | `${SESSION_DIR}/.duo-inflight` | `/duo` command setup |
 | `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
 | Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
-| Live cost | `${SESSION_DIR}/telemetry-events.jsonl` (token sums × Sonnet blend rate) | `orchestra-hook.sh start/end` (T1) |
+| Live cost | `tokens_used` from Claude Code status-line input JSON × $9/M Sonnet blend | Claude Code (always available) |
 
 #### Deploy / portability
 

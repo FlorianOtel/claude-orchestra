@@ -1170,3 +1170,50 @@ The parser (`scripts/telemetry-summarize.py`) was rewritten during the implement
 **Reviewer limitation observed:** Reviewer returned PASS on flawed code. All three bugs above required runtime execution to surface; Reviewer's read-only static inspection missed them. This is expected behaviour (Reviewer cannot run code) but confirms that the plan's §Verification "run the parser" step is load-bearing, not ceremonial.
 
 **Actor scope-creep incident:** Wave 2 Actor introduced ~56 lines of out-of-scope "model enforcement" feature across `commands/{brain,duo}.md`, `docs/design.md`, and `docs/TODO.md` — a parallel feature about reading the model ID from Claude Code's system context and refusing/warning. Brain reverted all of it before invoking Reviewer. The feature itself may be worth implementing (see `docs/TODO.md` "Hook-based model enforcement via `$CLAUDE_MODEL`") but was not in the approved plan.
+
+---
+
+## Amendment 2026-04-30 (session 2) — status-line fixes, telemetry bug fixes, smoke test tooling
+
+**Context:** Post-telemetry smoke-test session. Ran the first real `/duo` invocation to verify T1+T2 telemetry. Found three categories of bugs, all fixed in the same session.
+
+### Status-line: `.duo-inflight` never written (badge regression)
+
+**Root cause:** `commands/duo.md` had two separate Bash code blocks for setup. Block 1 created the session dir and did `export CLAUDE_ORCHESTRA_SESSION_DIR=...`. Block 2 wrote `.duo-inflight` using `${CLAUDE_ORCHESTRA_SESSION_DIR}` — but env exports do NOT persist across Bash tool calls (each tool call is a separate subprocess). The variable was empty; the write silently failed. Result: `duo_count=0` throughout planning → no `♪ orchestra -> plan <title>` badge.
+
+**Fix:** Merged both blocks into a single Bash call that uses the local `SESSION_DIR` shell variable for both `mkdir` and the `.duo-inflight` write. Also clarified that all subsequent Bash calls (Phase 2, Phase 4) must use the captured literal path, not `${CLAUDE_ORCHESTRA_SESSION_DIR}`.
+
+**Secondary fix:** Moved `.duo-inflight` removal from Phase 2 (before ExitPlanMode) to Phase 4 (cleanup after Actor). This keeps the badge alive through actor execution — previously the badge and cost indicator disappeared the moment planning ended.
+
+**Test:** Badge now confirmed working via manual simulation: inject a `.duo-inflight` under the sessions root and run the status-line script with a matching `workspace.current_dir` JSON input → `♪ orchestra -> plan <title> ~$X.YZ` shows correctly.
+
+### Status-line: live cost display never appeared
+
+**Root cause:** Live cost is gated on `active_session_dir` being non-empty. `active_session_dir` is only set when `duo_count > 0` (`.duo-inflight` found) or `orch_title` non-empty (brain session active). Since `.duo-inflight` was never written (see above), `duo_count` was always 0 for /duo → `active_session_dir` empty → `live_cost` never computed.
+
+**Root cause 2 (also fixed):** The earlier live-cost implementation read token counts from `telemetry-events.jsonl` (T1 hook events). Those events always have `usage=null` because Claude Code's `PreToolUse(Agent)` / `SubagentStop` hook payloads don't expose token counts. Fixed: switched to using `$tokens_used` from the Claude Code status-line input JSON (always available, already parsed by the host script).
+
+### T2 cost always $0.00
+
+Two bugs in `scripts/telemetry-summarize.py`:
+
+1. **`<synthetic>` model**: Claude Code's `/compact` command writes a summary message with `"model": "<synthetic>"` to the parent JSONL transcript. The T2 parser was picking this up as the parent model. `<synthetic>` is not in `pricing.yaml` → parent tokens (potentially millions of cache reads) priced at $0. **Fix:** `_walk_jsonl_for_tokens()` now skips `<synthetic>` for model attribution; the last real model seen is used instead.
+
+2. **Versioned model ID mismatch**: Claude Code's JSONL uses full versioned IDs (`claude-haiku-4-5-20251001`, `claude-sonnet-4-5-20250929`) but `pricing.yaml` uses base names (`claude-haiku-4-5`, `claude-sonnet-4-6`). Exact-string lookup always missed → all subagent costs $0. **Fix:** Added `_normalize_model_id()` helper that strips trailing `-YYYYMMDD` date suffix before pricing table lookup.
+
+3. **`cross_check_t1_t2()` crash on null usage**: `usage` field in T1 events is JSON `null`; the function called `.values()` on it → `AttributeError`. **Fix:** `usage = event.get("usage") or {}`. Also fixed field name: T1 events use `"subagent"` key, not `"subagent_type"`.
+
+### Deploy junk accumulation
+
+`status-line/orchestra-block.sh` header had a comment containing `# ORCHESTRA_BLOCK_START` as a substring (`# (presence sentinel: # ORCHESTRA_BLOCK_START). Manual install: source or`). The deploy awk strip anchors on `^# ORCHESTRA_BLOCK_START` (correct), so this comment line was left behind each deploy and re-added by the new inject → 22 copies after repeated deploys.
+
+**Fix:**
+- Removed the "presence sentinel" comment lines from `orchestra-block.sh` header.
+- Extended deploy.sh awk strip to also skip lines containing `ORCHESTRA_BLOCK_START` that don't start with it (accumulated junk from prior deploys).
+- Re-ran `./deploy.sh` which cleaned all 22 copies in the deployed `status-line.sh`.
+
+### Smoke test tooling
+
+Added `scripts/smoke-test.sh`: a verification script that checks T1 events, T2 telemetry.json, and the global log for the most recent session. Exit 0 if all three checks pass. Used for post-/duo and post-/brain verification. Added `## Telemetry Smoke Tests` procedure to `CLAUDE.md`. (See commit 88f5cd3.)
+
+Also fixed `scripts/telemetry-summarize.py` to skip global-log append if session already present (prevents duplicate entries when T2 is re-run for debugging). `scripts/smoke-test.sh` global-log check uses `tail -1` on the grep output to handle multiple entries gracefully.

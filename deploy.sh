@@ -199,6 +199,8 @@ else
             awk '
                 /^# ORCHESTRA_BLOCK_START/ { in_block=1; next }
                 in_block && /^# Output the status line/ { in_block=0 }
+                !in_block && /ORCHESTRA_BLOCK_START/ { next }
+                !in_block && /inline just before the final/ { next }
                 !in_block { print }
             ' "$STATUS_LINE" > "$TMPFILE.stripped"
             # Now append fresh block via the same awk-insert logic

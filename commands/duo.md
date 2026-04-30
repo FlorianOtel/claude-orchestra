@@ -31,7 +31,12 @@ Use `/duo` when the task is simple enough that a plan + execute is sufficient, a
 
 ## Setup — per-invocation artifact directory + housekeeping
 
-Same idiom as `/brain`: create a fresh subdir, export it for the Actor subagent, lazily clean up old subdirs.
+Create a fresh subdir and write the `.duo-inflight` marker in **one Bash call** so the
+status-line badge appears immediately. (Env exports do not persist across Bash tool
+calls, so session dir creation and inflight write must share the same shell.)
+
+Replace `<task title, ≤30 chars, no single-quotes>` with the first 30 printable
+characters of the operator's task description, stripping any single-quote characters.
 
 Run via `Bash`:
 
@@ -60,23 +65,18 @@ fi
 SESSION_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 SESSION_DIR="${SESSIONS_ROOT}/${SESSION_ID}"
 mkdir -p "${SESSION_DIR}"
-export CLAUDE_ORCHESTRA_SESSION_DIR="${SESSION_DIR}"
+# Write inflight marker in the same shell so SESSION_DIR is available.
+# Stays live through actor execution; removed in Phase 4 cleanup.
+printf '%s' "<task title, ≤30 chars, no single-quotes>" \
+  > "${SESSION_DIR}/.duo-inflight.tmp"
+mv -f "${SESSION_DIR}/.duo-inflight.tmp" "${SESSION_DIR}/.duo-inflight"
 echo "session_dir=${SESSION_DIR}"
 echo "retention_days=${RETENTION_DAYS}"
 ```
 
-After creating the session directory, write a `.duo-inflight` marker containing the task title. The title is the operator's invocation text (the args after `/duo`), truncated to 30 printable characters, with single-quotes replaced by spaces. Run via `Bash`:
-
-```bash
-printf '%s' "<task title, ≤30 chars, no single-quotes>" \
-  > "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight.tmp"
-mv -f "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight.tmp" \
-      "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight"
-```
-
-Replace `<task title, ≤30 chars, no single-quotes>` with the first 30 printable characters of the operator's task description, stripping any single-quote characters.
-
-Print the session_dir so the operator can locate `PLAN.md` and `TASKS.json` later.
+Capture the `session_dir=...` value from the output — you will use this literal path
+in all subsequent Bash calls (Phase 2, Phase 3 prompt, Phase 4). Do not rely on
+`${CLAUDE_ORCHESTRA_SESSION_DIR}`; it is not set in later bash subprocesses.
 
 ---
 
@@ -108,22 +108,15 @@ mv -f "${CLAUDE_ORCHESTRA_SESSION_DIR}/PLAN.md.tmp" "${CLAUDE_ORCHESTRA_SESSION_
 
 ## Phase 2 — Plan approval gate
 
-Before calling `ExitPlanMode`, remove the in-flight marker so the status line clears as soon as planning ends:
+Call `ExitPlanMode` with the full plan content. Do not remove `.duo-inflight` here —
+it stays alive through actor execution so the status-line badge persists. It is
+removed in Phase 4 cleanup.
 
-```bash
-rm -f "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight"
-```
+The operator will see Claude Code's standard "auto-edit / manually approve / cancel"
+prompt at the parent layer. Their choice sets the permission posture for Phase 3.
 
-Then call `ExitPlanMode` with the full plan content. You are the only caller — do not call it before the plan is fully agreed.
-
-The operator will see Claude Code's standard "auto-edit / manually approve / cancel" prompt at the parent layer. Their choice sets the permission posture for Phase 3.
-
-On rejection: stay in plan mode, re-create the marker and refine the plan, repeat Phase 1:
-
-```bash
-printf '%s' "<task title>" > "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight.tmp"
-mv -f "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight.tmp" "${CLAUDE_ORCHESTRA_SESSION_DIR}/.duo-inflight"
-```
+On rejection: stay in plan mode and refine the plan, then repeat Phase 1. The
+`.duo-inflight` marker is already present; no need to recreate it.
 
 ---
 
@@ -149,12 +142,15 @@ Actor returns when:
 
 ### Telemetry finalisation (per-session)
 
-Before the final summary, write the outcome marker and trigger the T2 telemetry pass:
+Before the final summary, remove the inflight marker, write the outcome, and trigger
+the T2 telemetry pass. Use the literal session dir path captured from the setup step
+(substitute `<SESSION_DIR>` with that value):
 
 ```bash
-printf '%s' "<outcome: pass | block | partial>" > "${CLAUDE_ORCHESTRA_SESSION_DIR}/.outcome"
+rm -f "<SESSION_DIR>/.duo-inflight"
+printf '%s' "<outcome: pass | block | partial>" > "<SESSION_DIR>/.outcome"
 ~/.claude/scripts/telemetry-summarize.sh \
-    "${CLAUDE_ORCHESTRA_SESSION_DIR}" duo "<outcome>" "${CLAUDE_SESSION_ID:-}" 2>&1 \
+    "<SESSION_DIR>" duo "<outcome>" "${CLAUDE_SESSION_ID:-}" 2>&1 \
     | tail -n 1
 ```
 

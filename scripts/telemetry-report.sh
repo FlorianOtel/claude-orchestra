@@ -6,6 +6,7 @@
 # and aggregates. Checks pricing.yaml staleness and warns if > 90 days old.
 #
 # chmod +x me after deploy
+# telemetry-smoke-test-20260430
 
 set -uo pipefail
 
