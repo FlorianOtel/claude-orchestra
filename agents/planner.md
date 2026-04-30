@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Decomposes a task into a numbered, actionable implementation plan. Use when the work is large enough to warrant a plan before any code changes. Returns plan text inline; Brain (the parent) persists it.
-model: claude-sonnet-4-5
+model: claude-sonnet-4-6
 tools: Read, Grep, Glob, WebFetch, TodoWrite
 ---
 
