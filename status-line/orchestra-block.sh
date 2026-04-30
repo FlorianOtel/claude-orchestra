@@ -19,7 +19,7 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     ACTIVE_COLOR="\033[38;2;215;153;33m"      # dark yellow   #D79921
     WARNING_COLOR="\033[38;2;254;128;25m"     # bright_orange #FE8019
 
-    # --- /explore badge: read mode+title from state.env ---
+    # --- /brain badge: read mode+title from state.env ---
     state_env="$cwd/.claude/orchestra/state.env"
     orch_mode="orchestra"
     orch_title=""
@@ -64,7 +64,7 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         fi
     fi
 
-    # --- badge rendering (priority: duo > explore > plain subagent) ---
+    # --- badge rendering (priority: duo > brain > plain subagent) ---
     if [ "$duo_count" -gt 0 ]; then
         if [ "$duo_count" -eq 1 ]; then
             duo_badge="duo ${duo_title}"
