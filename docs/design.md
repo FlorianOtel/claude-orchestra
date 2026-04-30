@@ -250,55 +250,52 @@ Safety net: the Claude Code `Stop` hook runs the T2 summariser on any unfinalise
 
 #### Monitoring costs per tier
 
-**Session totals (quick view):**
+Two commands cover all reporting needs:
+
 ```bash
+# Session totals — quick tabular summary of recent sessions
 ~/.claude/scripts/telemetry-report.sh --last 10
+
+# Per-tier breakdown + cumulative totals (run from project dir)
+~/.claude/scripts/telemetry-report.sh --last 20 --tier
 ```
 
-**Per-tier breakdown for any session** (substitute the session dir path):
-```bash
-SESSION_DIR="/path/to/.claude/orchestra/sessions/<session-id>"
-~/Gin-AI/.Gin-AI-python-3.12/bin/python3 - "$SESSION_DIR/telemetry.json" << 'EOF'
-import json, yaml, re, sys
-from pathlib import Path
-t = json.load(open(sys.argv[1]))
-rates = yaml.safe_load((Path.home()/".claude/orchestra/pricing.yaml").read_text())["models"]
-def norm(m): return re.sub(r"-\d{8}$", "", m or "")
-def cost(tok, model):
-    r = rates.get(norm(model), {})
-    return sum(tok.get(k,0)*r.get(k,0)
-               for k in ["input","output","cache_creation","cache_read"]) / 1e6 if r else 0.0
-tiers = [("brain", t["parent"]["model"], t["parent"]["tokens"])]
-for s in t.get("subagents", []):
-    tiers.append((s["type"], s.get("model","?"), s["tokens"]))
-tiers.sort(key=lambda x: {"brain":0,"planner":1,"actor":2,"reviewer":3}.get(x[0],4))
-grand_tok = sum(sum(tok.values()) for _,_,tok in tiers)
-grand_cost = sum(cost(tok,m) for _,m,tok in tiers)
-print(f"{'Tier':<12} {'Model':<22} {'Tokens':>10} {'%tok':>5}  {'Cost':>8}  {'%cost':>6}")
-print("-"*68)
-for tier, model, tok in tiers:
-    t_ = sum(tok.values()); c = cost(tok, model)
-    print(f"{tier:<12} {norm(model):<22} {t_:>10,} {t_/grand_tok*100:>4.1f}%  ${c:>7.4f}  {c/grand_cost*100:>5.1f}%")
-print("-"*68)
-print(f"{'TOTAL':<12} {'':<22} {grand_tok:>10,}         ${grand_cost:>7.4f}")
-EOF
+**`--tier` rationale:** The global `telemetry.jsonl` stores only session totals — sufficient for trend queries but opaque about *which tier* drove a cost spike. Per-tier attribution lives in the richer per-session `telemetry.json` files under `${PROJECT}/.claude/orchestra/sessions/`. `--tier` bridges the two: it reads the global log to enumerate sessions, looks up each session's per-tier breakdown, prints a per-session table, then appends a **cumulative totals table** across all sessions — the primary tool for answering "which tier is driving my costs overall?"
+
+**`--tier` requirements:** must run from the project directory (or with `CLAUDE_PROJECT_DIR` set). Sessions whose dirs have been cleaned up (30-day retention) appear with log totals only and are excluded from the cumulative.
+
+**Sample `--tier` output:**
+
+```
+  2026-04-30  brain   560s  outcome=pass  total=$1.30
+    Tier         Model                  Tokens   %tok      Cost   %cost
+    brain        claude-sonnet-4-6  1,322,163  68.5%  $0.8100   66.3%
+    planner      claude-sonnet-4-6     92,598   4.8%  $0.1563   12.8%
+    actor        claude-haiku-4-5     425,531  22.0%  $0.1007    8.2%
+    reviewer     claude-sonnet-4-6     89,658   4.6%  $0.1549   12.7%
+    TOTAL                           1,929,950          $1.2219
+
+--- Cumulative totals (3 session(s)) ---
+  brain        claude-sonnet-4-6  2,009,402  69.3%  $1.2079   69.9%
+  planner      claude-sonnet-4-5     92,598   3.2%  $0.1563    9.0%
+  actor        claude-haiku-4-5     709,827  24.5%  $0.2081   12.0%
+  reviewer     claude-sonnet-4-5     89,658   3.1%  $0.1549    9.0%
+  TOTAL                           2,901,485          $1.7271
 ```
 
-**Typical tier proportions (from smoke tests):**
+**Typical tier proportions:**
 
-| Session type | Brain tier | Planner (Sonnet) | Actor (Haiku) | Reviewer (Sonnet) |
+| Session type | Brain | Planner (Sonnet) | Actor (Haiku) | Reviewer (Sonnet) |
 |---|---|---|---|---|
-| `/brain` with Sonnet Brain | ~66% cost | ~13% | ~8% | ~13% |
-| `/brain` with Opus Brain | ~95% cost | — | ~2% | ~3% |
-| `/duo` (no Planner/Reviewer) | ~60% cost | — | ~40% | — |
+| `/brain` — Sonnet Brain | ~66% | ~13% | ~8% | ~13% |
+| `/brain` — Opus Brain | ~95% | ~2% | ~1% | ~2% |
+| `/duo` | ~60% | — | ~40% | — |
 
-Key insight: **Brain (parent tier) dominates in every scenario.** With Sonnet Brain, Planner and Reviewer together account for ~26% — more than Actor. With Opus Brain, Brain alone is 95% of cost; all subagents combined are noise.
-
-The Brain tier's cost is driven almost entirely by **cache reads** of the accumulated conversation context — not by output tokens. Each status-line render, each Brain turn re-reads the full session history. This grows with session length and is where the majority of tokens (and cost) accumulates.
+**Key insight:** Brain dominates in every scenario because its cost is driven by **cache reads** of accumulated conversation context — not output tokens. Each Brain turn re-reads the full session history; this grows with session length. With Opus Brain the effect is extreme (95% of cost). With Sonnet Brain it is still 66%, and Planner + Reviewer together exceed Actor's cost.
 
 **Caveats:**
-- `telemetry.json` per-session is authoritative (T2). `telemetry.jsonl` global log stores only total cost, not per-tier. Re-running T2 on sessions completed more than ~30 minutes ago produces unreliable results (the time window expands to "now" and captures unrelated transcript activity).
-- Planner and Reviewer use `claude-sonnet-4-6` (corrected in agents from `claude-sonnet-4-5` as of 2026-04-30). Old sessions referencing `claude-sonnet-4-5` are priced at the same rate in `pricing.yaml`.
+- Per-session `telemetry.json` is the authoritative source (T2). The global `telemetry.jsonl` stores totals only. Re-running T2 on sessions completed > ~30 minutes ago produces unreliable results — the time window expands to "now" and captures unrelated transcript activity.
+- `pricing.yaml` carries a `last_updated` field; `telemetry-report.sh` warns when rates are > 90 days stale.
 
 #### What the data is intended for
 
