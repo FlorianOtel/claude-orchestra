@@ -89,3 +89,4 @@ jq -s '
 }
 ' "$TELEMETRY_JSONL" 2>/dev/null | jq '.' || echo "Failed to compute aggregates"
 # telemetry-smoke-test-260430-191859
+# telemetry-smoke-test-260430-193931
