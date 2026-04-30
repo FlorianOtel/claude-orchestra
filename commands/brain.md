@@ -38,6 +38,8 @@ Before Phase 0 begins, create a fresh per-invocation subdirectory under `.claude
 Run via `Bash`:
 
 ```bash
+# CLAUDE_PROJECT_DIR may be unset in Bash subprocesses — resolve it first.
+CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 # 1. Read retention window from config (default 30 if not set / not parseable).
 SESSIONS_ROOT="${CLAUDE_PROJECT_DIR}/.claude/orchestra/sessions"
 _parse_retention() {
@@ -73,6 +75,7 @@ echo "retention_days=${RETENTION_DAYS}"
 After creating the session directory, write the pipeline mode and task title to the orchestra badge. The title is the operator's invocation text (the args after `/brain`), truncated to 30 printable characters, with single-quotes replaced by spaces. Run via `Bash`:
 
 ```bash
+CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 ORCH_DIR="${CLAUDE_PROJECT_DIR}/.claude/orchestra"
 mkdir -p "$ORCH_DIR"
 printf 'ORCHESTRA_MODE=brain\nORCHESTRA_TITLE=%s\n' \
@@ -274,6 +277,7 @@ The summariser writes `${CLAUDE_ORCHESTRA_SESSION_DIR}/telemetry.json` (full rec
 Clear the pipeline badge from state.env:
 
 ```bash
+CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 printf 'ORCHESTRA_MODE=default\nORCHESTRA_TITLE=\n' \
   >> "${CLAUDE_PROJECT_DIR}/.claude/orchestra/state.env"
 ```
