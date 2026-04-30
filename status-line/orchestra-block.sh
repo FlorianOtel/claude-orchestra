@@ -59,10 +59,11 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         fi
     fi
 
-    # --- live cost approximation from telemetry-events.jsonl ---
-    # When a /duo or /brain session is in flight, sum tokens recorded by the
-    # T1 hook and multiply by parent-tier rates from pricing.yaml.
-    # Approximate; finalised by T2 at session end.
+    # --- live cost approximation from parent session tokens_used ---
+    # $tokens_used is parsed from Claude Code's status-line input JSON by the host script.
+    # T1 hook events (telemetry-events.jsonl) always have usage=null — hook payloads don't
+    # expose token counts — so we use the parent context directly instead.
+    # Shown only while a /duo or /brain session is active. $9/M Sonnet blend; T2 supersedes.
     live_cost=""
     active_session_dir=""
     if [ "$duo_count" -gt 0 ]; then
@@ -74,17 +75,8 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
                             | sort -rn | head -n 1 | cut -d' ' -f2-)
         [ -f "$active_session_dir/telemetry.json" ] && active_session_dir=""
     fi
-    if [ -n "$active_session_dir" ] && [ -f "$active_session_dir/telemetry-events.jsonl" ]; then
-        # Sum input + output tokens from any usage objects present.
-        tok_total=$(jq -s '
-            [.[] | .usage // {} | (.input_tokens // 0) + (.output_tokens // 0) +
-             (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0)] | add // 0
-        ' "$active_session_dir/telemetry-events.jsonl" 2>/dev/null || echo 0)
-        # Use Sonnet rates as a parent-tier approximation ($3 input + $15 output blend ~= $9 / 1M).
-        # Coarse on purpose; T2 supersedes at session end.
-        if [ "${tok_total:-0}" -gt 0 ]; then
-            live_cost=$(awk -v t="$tok_total" 'BEGIN { printf "~$%.2f", t * 9 / 1000000 }')
-        fi
+    if [ -n "$active_session_dir" ] && [ "${tokens_used:-0}" -gt 0 ]; then
+        live_cost=$(awk -v t="${tokens_used}" 'BEGIN { printf "~$%.2f", t * 9 / 1000000 }')
     fi
 
     # --- badge rendering (priority: duo > brain > plain subagent) ---

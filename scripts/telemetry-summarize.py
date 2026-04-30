@@ -33,6 +33,18 @@ except ImportError:
     yaml = None
 
 
+def _normalize_model_id(model: str) -> str:
+    """Strip trailing -YYYYMMDD snapshot suffix from model IDs.
+
+    Claude Code records versioned IDs (e.g. claude-haiku-4-5-20251001) while
+    pricing.yaml uses base names (claude-haiku-4-5). Strip the suffix so the
+    lookup succeeds.
+    """
+    if not model:
+        return model
+    return re.sub(r"-\d{8}$", "", model)
+
+
 def get_transcript_path(transcript_session_id: str) -> Optional[Path]:
     """Locate transcript at ~/.claude/projects/-mnt-nfs-Florian-Gin-AI-projects-claude-orchestra/<id>.jsonl"""
     if not transcript_session_id:
@@ -142,8 +154,9 @@ def _walk_jsonl_for_tokens(
             ts = parse_iso8601(record.get("timestamp", ""))
             if ts < started_at_unix or ts > ended_at_unix:
                 continue
-            if model is None:
-                model = msg.get("model")
+            msg_model = msg.get("model")
+            if model is None and msg_model and msg_model != "<synthetic>":
+                model = msg_model
             tokens["input"] += usage.get("input_tokens", 0) or 0
             tokens["output"] += usage.get("output_tokens", 0) or 0
             tokens["cache_creation"] += usage.get("cache_creation_input_tokens", 0) or 0
@@ -226,8 +239,9 @@ def compute_cost(parent: Dict, subagents: List[Dict], pricing_data: Dict, warnin
     total_cost = 0.0
 
     # Parent cost
-    if parent["model"] and parent["model"] in models_rates:
-        rates = models_rates[parent["model"]]
+    parent_model_key = _normalize_model_id(parent["model"] or "")
+    if parent_model_key and parent_model_key in models_rates:
+        rates = models_rates[parent_model_key]
         for tier_key, tier_name in [("input", "input"), ("output", "output"), ("cache_creation", "cache_creation"), ("cache_read", "cache_read")]:
             tokens = parent["tokens"].get(tier_key, 0)
             rate = rates.get(tier_name, 0.0)
@@ -235,8 +249,9 @@ def compute_cost(parent: Dict, subagents: List[Dict], pricing_data: Dict, warnin
 
     # Subagent costs
     for subagent in subagents:
-        if subagent["model"] and subagent["model"] in models_rates:
-            rates = models_rates[subagent["model"]]
+        sub_model_key = _normalize_model_id(subagent["model"] or "")
+        if sub_model_key and sub_model_key in models_rates:
+            rates = models_rates[sub_model_key]
             for tier_key, tier_name in [("input", "input"), ("output", "output"), ("cache_creation", "cache_creation"), ("cache_read", "cache_read")]:
                 tokens = subagent["tokens"].get(tier_key, 0)
                 rate = rates.get(tier_name, 0.0)
@@ -279,10 +294,10 @@ def cross_check_t1_t2(session_dir: Path, subagents: List[Dict], warnings: List[s
 
     t1_tokens: Dict[str, int] = {}
     for event in events:
-        subagent_type = event.get("subagent_type", "unknown")
+        subagent_type = event.get("subagent", event.get("subagent_type", "unknown"))
         if subagent_type not in t1_tokens:
             t1_tokens[subagent_type] = 0
-        usage = event.get("usage", {})
+        usage = event.get("usage") or {}
         t1_tokens[subagent_type] += sum(usage.values())
 
     # Compare with T2 subagents by type
@@ -405,6 +420,16 @@ def main():
         "regret_flag": regret_flag,
         "pricing_snapshot_date": telemetry["pricing_snapshot_date"],
     }
+
+    # Skip append if this session_id is already in the global log (T2 re-run guard).
+    if telemetry_jsonl.exists():
+        try:
+            with open(telemetry_jsonl) as f:
+                if any(session_dir.name in line for line in f):
+                    print(f"telemetry: cost=${cost_usd:.4f} tokens={total_tokens} outcome={telemetry['outcome']} session={session_dir.name} (global log already has this session, skipping append)", flush=True)
+                    return
+        except Exception:
+            pass
 
     try:
         with open(telemetry_jsonl, "a") as f:
