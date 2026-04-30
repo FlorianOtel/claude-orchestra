@@ -74,8 +74,14 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
                             | sort -rn | head -n 1 | cut -d' ' -f2-)
         [ -f "$active_session_dir/telemetry.json" ] && active_session_dir=""
     fi
+    # Claude Code reports used_percentage=0 while a subagent is running (parent context
+    # is not the active turn). Cache the last known cost so it persists through subagent
+    # execution rather than blanking out.
     if [ -n "$active_session_dir" ] && [ "${tokens_used:-0}" -gt 0 ]; then
         live_cost=$(awk -v t="${tokens_used}" 'BEGIN { printf "~$%.2f", t * 9 / 1000000 }')
+        printf '%s' "$live_cost" > "${active_session_dir}/.live-cost-cache" 2>/dev/null || true
+    elif [ -n "$active_session_dir" ] && [ -f "${active_session_dir}/.live-cost-cache" ]; then
+        live_cost=$(cat "${active_session_dir}/.live-cost-cache" 2>/dev/null || true)
     fi
 
     # --- badge rendering (priority: duo > brain > plain subagent) ---

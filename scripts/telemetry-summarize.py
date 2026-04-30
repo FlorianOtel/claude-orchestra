@@ -421,19 +421,26 @@ def main():
         "pricing_snapshot_date": telemetry["pricing_snapshot_date"],
     }
 
-    # Skip append if this session_id is already in the global log (T2 re-run guard).
+    # If session already in global log, replace the line (stop-hook may have written an
+    # earlier stale outcome=abandoned; Brain's cleanup is authoritative).
+    new_line = json.dumps(global_line) + "\n"
     if telemetry_jsonl.exists():
         try:
             with open(telemetry_jsonl) as f:
-                if any(session_dir.name in line for line in f):
-                    print(f"telemetry: cost=${cost_usd:.4f} tokens={total_tokens} outcome={telemetry['outcome']} session={session_dir.name} (global log already has this session, skipping append)", flush=True)
-                    return
+                lines = f.readlines()
+            updated = [new_line if session_dir.name in line else line for line in lines]
+            if updated != lines:
+                with open(str(telemetry_jsonl) + ".tmp", "w") as f:
+                    f.writelines(updated)
+                os.replace(str(telemetry_jsonl) + ".tmp", str(telemetry_jsonl))
+                print(f"telemetry: cost=${cost_usd:.4f} tokens={total_tokens} outcome={telemetry['outcome']} session={session_dir.name} (updated global log)", flush=True)
+                return
         except Exception:
             pass
 
     try:
         with open(telemetry_jsonl, "a") as f:
-            f.write(json.dumps(global_line) + "\n")
+            f.write(new_line)
     except Exception as e:
         print(f"telemetry-summarize.py: failed to append to telemetry.jsonl: {e}", file=sys.stderr)
         # Don't exit; the session record was written
