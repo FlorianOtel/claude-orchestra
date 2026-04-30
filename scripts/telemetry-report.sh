@@ -88,3 +88,4 @@ jq -s '
   by_command: (group_by(.command) | map({command: .[0].command, count: length, cost: (map(.cost_usd_estimate) | add // 0)}) | sort_by(.command))
 }
 ' "$TELEMETRY_JSONL" 2>/dev/null | jq '.' || echo "Failed to compute aggregates"
+# telemetry-smoke-test-260430-191859
