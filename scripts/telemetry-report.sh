@@ -66,9 +66,10 @@ if $SHOW_TIER; then
     echo "Sessions root: ${SESSIONS_ROOT}"
     echo ""
 
-    # Write the tier-analysis Python script to a temp file once
+    # Write Python scripts to temp files
     TIER_PY=$(mktemp /tmp/telemetry-tier-XXXXXX.py)
-    trap 'rm -f "$TIER_PY"' EXIT
+    CUMUL_PY=$(mktemp /tmp/telemetry-cumul-XXXXXX.py)
+    trap 'rm -f "$TIER_PY" "$CUMUL_PY"' EXIT
 
     cat > "$TIER_PY" << 'PYEOF'
 import json, yaml, re, sys
@@ -118,20 +119,80 @@ if abs(grand_cost - reported) > 0.001:
 print()
 PYEOF
 
-    # Process each session
-    tail -n "$LAST_N" "$TELEMETRY_JSONL" | while IFS= read -r line; do
+    # Cumulative analysis: aggregate tokens+cost by (tier, model) across all sessions.
+    # argv: pricing_file tf1 tf2 ...
+    cat > "$CUMUL_PY" << 'PYEOF'
+import json, yaml, re, sys
+from pathlib import Path
+from collections import defaultdict
+
+pricing_file = Path(sys.argv[1]) if len(sys.argv) > 1 else None
+tf_paths = sys.argv[2:]
+rates = yaml.safe_load(pricing_file.read_text())["models"] if pricing_file and pricing_file.exists() else {}
+
+def norm(m): return re.sub(r"-\d{8}$", "", m or "")
+def cost(tok, model):
+    r = rates.get(norm(model), {})
+    return sum(tok.get(k,0)*r.get(k,0)
+               for k in ["input","output","cache_creation","cache_read"]) / 1e6 if r else 0.0
+
+accum = defaultdict(lambda: {"tokens": defaultdict(int), "cost": 0.0})
+n = 0
+for tf_path in tf_paths:
+    try:
+        t = json.load(open(tf_path))
+    except Exception:
+        continue
+    n += 1
+    key = ("brain", norm(t["parent"]["model"]))
+    for k, v in t["parent"]["tokens"].items():
+        accum[key]["tokens"][k] += v
+    accum[key]["cost"] += cost(t["parent"]["tokens"], t["parent"]["model"])
+    for s in t.get("subagents", []):
+        key = (s["type"], norm(s.get("model", "?")))
+        for k, v in s["tokens"].items():
+            accum[key]["tokens"][k] += v
+        accum[key]["cost"] += cost(s["tokens"], s.get("model", "?"))
+
+if n == 0:
+    sys.exit(0)
+
+ORDER = {"brain": 0, "planner": 1, "actor": 2, "reviewer": 3}
+items = sorted(accum.items(), key=lambda x: ORDER.get(x[0][0], 4))
+grand_tok  = sum(sum(v["tokens"].values()) for _, v in items)
+grand_cost = sum(v["cost"]                 for _, v in items)
+
+print(f"--- Cumulative totals ({n} session(s)) ---")
+print(f"  {'Tier':<12} {'Model':<22} {'Tokens':>12}  {'%tok':>5}  {'Cost':>9}  {'%cost':>6}")
+print(f"  {'-'*68}")
+for (tier, model), v in items:
+    t_ = sum(v["tokens"].values()); c = v["cost"]
+    print(f"  {tier:<12} {model:<22} {t_:>12,}  {t_/grand_tok*100:>4.1f}%  ${c:>8.4f}  {c/grand_cost*100:>5.1f}%")
+print(f"  {'-'*68}")
+print(f"  {'TOTAL':<12} {'':<22} {grand_tok:>12,}          ${grand_cost:>8.4f}")
+PYEOF
+
+    # Process each session (process substitution keeps VALID_TFS in scope)
+    VALID_TFS=()
+    while IFS= read -r line; do
         SID=$(printf '%s' "$line" | jq -r '.session_id')
         TF="${SESSIONS_ROOT}/${SID}/telemetry.json"
         if [ ! -f "$TF" ]; then
             DATE=$(printf '%s' "$line" | jq -r '.started_at | split("T")[0]')
             CMD=$(printf '%s' "$line" | jq -r '.command')
             COST=$(printf '%s' "$line" | jq -r '.cost_usd_estimate')
-            echo "  $DATE  $CMD  total=\$$COST  (no session dir at $SESSIONS_ROOT/$SID)"
+            echo "  $DATE  $CMD  total=\$$COST  (no session dir — log total only)"
             echo ""
         else
+            VALID_TFS+=("$TF")
             "${PYTHON3}" "$TIER_PY" "$TF" "$PRICING_FILE"
         fi
-    done
+    done < <(tail -n "$LAST_N" "$TELEMETRY_JSONL")
+
+    # Cumulative summary across all sessions that had session dirs
+    if [ ${#VALID_TFS[@]} -gt 0 ]; then
+        "${PYTHON3}" "$CUMUL_PY" "$PRICING_FILE" "${VALID_TFS[@]}"
+    fi
 
 # =============================================================================
 # default mode: tabular session summary
