@@ -1,9 +1,9 @@
 ---
 title: "Claude Orchestra — v2 Deferred & TODO items"
-date: 2026-04-28
+created_at: 20260428-000000
 created_by: Claude Code (Claude Haiku 4.5)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_on: 2026-04-30 (session 3)
+updated_at: 20260430-195438
 context: >
   Extract from the design.md reference document, capturing all deferred
   features, v2 architectural stubs, optimization opportunities, and open

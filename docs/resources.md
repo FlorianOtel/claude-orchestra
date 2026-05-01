@@ -1,6 +1,6 @@
 ---
 title: "Claude Orchestra — Resources consulted & disregarded references"
-date: 2026-04-28
+created_at: 20260428-191142
 created_by: Claude Code (Claude Haiku 4.5)
 context: >
   Extract from the design.md reference document, capturing the resources and

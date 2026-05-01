@@ -1,6 +1,6 @@
 ---
 title: "Headless → Subagents revert — research note"
-date: 2026-04-28
+created_at: 20260428-170059
 run_id: subagents-vs-headless-revisited-20260428
 branch: subagents
 status: implemented

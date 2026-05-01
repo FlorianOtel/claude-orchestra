@@ -1,9 +1,9 @@
 ---
 title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design notes & open questions"
-date: 2026-04-24
+created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Haiku 4.5)
-updated_on: 2026-04-28
+updated_by: Claude Code (Claude Opus 4.7)
+updated_at: 20260501-035713
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1137,7 +1137,7 @@ Decision: no researcher agent. Instead, instrument per-session telemetry so futu
 | Wave 2 Actor | Haiku 4.5 | 635K cache_read + 10.3K output | 97s |
 | Reviewer | Sonnet 4.5* | 1.6M cache_read + 6.4K output | 204s |
 
-Total: $40.27, 1318s. ~64% of cost is the Opus parent re-reading its own cached context — exactly the kind of signal measurement was designed to surface.
+Total: $40.27, 1318s. ~64% of cost is the Opus parent's cache-read line on accumulated context — the cheap path (cache_read at $1.50/MTok, ~10% of full input rate). Without caching this line would have been ~$257 and the session ~$262; the dominance is what's left after the discount. Exactly the kind of signal measurement was designed to surface — and the reason "shrink Brain's context or downgrade the Brain model" is the actionable lever, not "fix caching" (caching is already working).
 
 *Note: Reviewer ran on Sonnet 4.5, not 4.6. `agents/reviewer.md` model frontmatter should be verified.*
 

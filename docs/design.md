@@ -1,9 +1,9 @@
 ---
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
-date: 2026-04-24
+created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Sonnet 4.6)
-updated_on: 2026-04-30 (session 2)
+updated_by: Claude Code (Claude Opus 4.7)
+updated_at: 20260501-035710
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -224,7 +224,7 @@ See design-history.md §13.3 for three potential approaches to close the gap.
 
 #### Why it exists
 
-Multi-tier orchestration has non-obvious cost structure. Brain (Opus or Sonnet) dominates by token volume — it re-reads its full context on every turn and receives all subagent returns. Planner and Reviewer (Sonnet) are single-call-per-phase. Actor (Haiku) is cheap per token but may iterate. Without measurement, cost/quality trade-offs (which tier to change? which phase to skip?) are guesses. Telemetry makes them data-driven.
+Multi-tier orchestration has non-obvious cost structure. Brain (Opus or Sonnet) dominates by token volume — it re-sends its full context every turn (cached after the first hit, but still billed at the cache-read rate of the most expensive model in the system) and receives all subagent returns. Planner and Reviewer (Sonnet) are single-call-per-phase. Actor (Haiku) is cheap per token but may iterate. Without measurement, cost/quality trade-offs (which tier to change? which phase to skip?) are guesses. Telemetry makes them data-driven.
 
 The original motivation was a specific question: does the built-in `Explore` subagent (dispatched during `/duo` Phase 0 and `/brain` Phase 0 research) justify a dedicated cheaper Researcher agent? Telemetry answered it: measure first, then decide. See `TODO.md §0` for the full decision-gate framework.
 
@@ -291,7 +291,7 @@ Two commands cover all reporting needs:
 | `/brain` — Opus Brain | ~95% | ~2% | ~1% | ~2% |
 | `/duo` | ~60% | — | ~40% | — |
 
-**Key insight:** Brain dominates in every scenario because its cost is driven by **cache reads** of accumulated conversation context — not output tokens. Each Brain turn re-reads the full session history; this grows with session length. With Opus Brain the effect is extreme (95% of cost). With Sonnet Brain it is still 66%, and Planner + Reviewer together exceed Actor's cost.
+**Key insight:** Brain's tier dominance (95% Opus / 66% Sonnet) is what's left **after** prompt caching has already taken ~86% off Brain's bill — the proportions in the table are post-cache. Without caching, Brain's line would be roughly 10× larger and the session-total ratio more lopsided still. Three multipliers stack to keep Brain on top: **model rate** (Opus cache-read $1.50/MTok ≈ 15× Haiku cache-read $0.10/MTok), **context size** (Brain re-sends the whole session every turn; subagents get a fresh, scoped prompt), and **turn count** (Brain runs every user message + every dispatch round-trip; subagents are one-shot). Caching only attacks the first multiplier — the other two are structural to Brain's role as orchestrator. To shift the proportions further you must trim context (`/compact`, smaller inlined artifacts) or downgrade the Brain model — caching is already doing all it can.
 
 **Caveats:**
 - Per-session `telemetry.json` is the authoritative source (T2). The global `telemetry.jsonl` stores totals only. Re-running T2 on sessions completed > ~30 minutes ago produces unreliable results — the time window expands to "now" and captures unrelated transcript activity.
