@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-04--21-30
+updated_at: 2026-05-04--21-50
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -233,7 +233,7 @@ The original motivation was a specific question: does the built-in `Explore` sub
 Every `/brain` and `/duo` run is instrumented post-hoc by `scripts/telemetry-summarize.{sh,py}`, invoked from each command's cleanup block. The parser walks the parent's JSONL for parent tokens, then walks `<parent-uuid>/subagents/agent-*.jsonl` (each subagent's own transcript) attributed via the matching `agent-*.meta.json` sidecar (`{"agentType": "…"}`). It applies USD rates from `config/pricing.yaml` and writes:
 
 - `${SESSION_DIR}/telemetry.json` — rich per-session record (parent + subagent tokens per tier, USD cost, iteration counts, outcome, blast_radius).
-- `~/.claude/orchestra/telemetry.jsonl` — global append-only trend log (flat summary; one line per session).
+- `~/.claude/orchestra/telemetry.jsonl` — global append-only trend log; one line per session. Each entry includes `session_dir` (absolute path) so sessions can be located across any project directory without running from a specific project.
 - `${SESSION_DIR}/telemetry-events.jsonl` — live T1 hook event stream (timing-only; `usage=null` since hook payloads don't expose token counts); drives the real-time `~$X.YZ` status-line indicator.
 
 On-demand report: `~/.claude/scripts/telemetry-report.sh --last N`. Per-session verification: `./scripts/smoke-test.sh`.
@@ -260,9 +260,9 @@ Two commands cover all reporting needs:
 ~/.claude/scripts/telemetry-report.sh --last 20 --tier
 ```
 
-**`--tier` rationale:** The global `telemetry.jsonl` stores only session totals — sufficient for trend queries but opaque about *which tier* drove a cost spike. Per-tier attribution lives in the richer per-session `telemetry.json` files under `${PROJECT}/.claude/orchestra/sessions/`. `--tier` bridges the two: it reads the global log to enumerate sessions, looks up each session's per-tier breakdown, prints a per-session table, then appends a **cumulative totals table** across all sessions — the primary tool for answering "which tier is driving my costs overall?"
+**`--tier` rationale:** The global `telemetry.jsonl` stores only session totals — sufficient for trend queries but opaque about *which tier* drove a cost spike. Per-tier attribution lives in the richer per-session `telemetry.json` files, located via the `session_dir` field in each log entry. `--tier` bridges the two: it reads the global log to enumerate sessions, looks up each session's per-tier breakdown, prints a per-session table, then appends a **cumulative totals table** across all sessions — the primary tool for answering "which tier is driving my costs overall?"
 
-**`--tier` requirements:** must run from the project directory (or with `CLAUDE_PROJECT_DIR` set). Sessions whose dirs have been cleaned up (30-day retention) appear with log totals only and are excluded from the cumulative.
+**`--tier` requirements:** can be run from any directory — session dirs are resolved via the `session_dir` field in the global log. Sessions whose dirs have been cleaned up (30-day retention) appear with log totals only and are excluded from the cumulative.
 
 **Sample `--tier` output:**
 

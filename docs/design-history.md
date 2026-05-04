@@ -3,7 +3,7 @@ title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design not
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-04--21-30
+updated_at: 2026-05-04--21-50
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1336,3 +1336,17 @@ Fix: normalize all three places that compute a project path with `realpath` befo
 - `commands/brain.md` setup block: `CLAUDE_PROJECT_DIR`
 
 `realpath` resolves symlinks to the physical path. Since all machines share the same NFS mount point, `realpath` of either path form converges to the same NFS physical path, ensuring the mangled dir name always matches what Claude Code used for JSONL storage. The `2>/dev/null || echo ...` fallback preserves behaviour when `realpath` is unavailable.
+
+---
+
+## Amendment 2026-05-04 — session_dir in global log; --tier simplification (commit 1c6c062)
+
+**Problem:** `~/.claude/orchestra/telemetry.jsonl` stored only `session_id` (basename), not the filesystem path. The `--tier` flag in `telemetry-report.sh` reconstructed the session dir from `SESSIONS_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}/.claude/orchestra/sessions"`, which only found sessions created in the current project. Sessions from SoHoAI, Gin-AI parent, or any other project were silently skipped with "(no session dir — log total only)".
+
+**Fix:**
+
+- `telemetry-summarize.py`: added `"session_dir": str(session_dir)` to every global log entry.
+- `telemetry-report.sh --tier`: removed `SESSIONS_ROOT`; reads `session_dir` directly from the log entry via `jq`. Removed the "run from project directory" requirement from usage docs and code.
+- Retroactively patched all 8 existing log entries with their `session_dir` paths via a one-time `find` scan.
+
+`--tier` now works from any directory and finds sessions across all projects.
