@@ -78,7 +78,10 @@ _TRANSCRIPTS="${HOME}/.claude/projects/${_MANGLED}"
 _TRANSCRIPT_UUID=""
 if [ -d "$_TRANSCRIPTS" ]; then
   _LATEST="$(ls -t "$_TRANSCRIPTS"/*.jsonl 2>/dev/null | head -1)"
-  [ -n "$_LATEST" ] && _TRANSCRIPT_UUID="$(basename "$_LATEST" .jsonl)"
+  if [ -n "$_LATEST" ]; then
+    _TRANSCRIPT_UUID="$(basename "$_LATEST" .jsonl)"
+    printf '%s\n' "$_LATEST" > "${SESSION_DIR}/.transcript-path" 2>/dev/null || true
+  fi
 fi
 printf '%s\n' "${_TRANSCRIPT_UUID}" > "${SESSION_DIR}/.transcript-uuid" 2>/dev/null || true
 echo "session_dir=${SESSION_DIR}"

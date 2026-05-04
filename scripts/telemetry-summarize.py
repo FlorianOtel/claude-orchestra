@@ -352,9 +352,16 @@ def main():
             pass
     ended_at_unix = time.time()
 
-    # Transcript
-    transcript_path = get_transcript_path(args.transcript_session_id)
-    transcript_session_id = args.transcript_session_id if args.transcript_session_id else (transcript_path.stem if transcript_path else "unknown")
+    # Transcript — priority: .transcript-path (full path stored at session start) >
+    # explicit UUID arg > CLAUDE_PROJECT_DIR-based lookup > legacy hardcoded fallback
+    stored_path_file = session_dir / ".transcript-path"
+    stored_path_str = stored_path_file.read_text().strip() if stored_path_file.exists() else ""
+    if stored_path_str and Path(stored_path_str).exists():
+        transcript_path = Path(stored_path_str)
+        transcript_session_id = args.transcript_session_id or transcript_path.stem
+    else:
+        transcript_path = get_transcript_path(args.transcript_session_id)
+        transcript_session_id = args.transcript_session_id if args.transcript_session_id else (transcript_path.stem if transcript_path else "unknown")
 
     # Warnings list
     warnings: List[str] = []

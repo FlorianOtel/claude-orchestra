@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# telemetry-smoke-test-2026-05-04
 # telemetry-report.sh — on-demand summary of recent telemetry sessions.
 #
 # Usage:
