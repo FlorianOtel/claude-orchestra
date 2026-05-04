@@ -119,6 +119,20 @@ case "$MODE" in
       printf '{"event":"start","subagent":"%s","stage":"%s","usage":%s,%s}\n' \
         "$SUBAGENT" "$STAGE" "$USAGE_JSON" "$(stamp_fields)" \
         >> "${ACTIVE_SESSION_DIR}/telemetry-events.jsonl" 2>/dev/null || true
+      # Capture transcript path using CLAUDE_PROJECT_DIR (reliable in hook env)
+      if [ ! -f "${ACTIVE_SESSION_DIR}/.transcript-path" ]; then
+        _HOOK_MANGLED="$(printf '%s' "${PROJECT_DIR}" | tr '/' '-')"
+        _HOOK_TRANSCRIPTS="${HOME}/.claude/projects/${_HOOK_MANGLED}"
+        if [ -d "$_HOOK_TRANSCRIPTS" ]; then
+          _HOOK_LATEST="$(ls -t "$_HOOK_TRANSCRIPTS"/*.jsonl 2>/dev/null | head -1)"
+          if [ -n "$_HOOK_LATEST" ]; then
+            printf '%s\n' "$_HOOK_LATEST" \
+              > "${ACTIVE_SESSION_DIR}/.transcript-path" 2>/dev/null || true
+            printf '%s\n' "$(basename "$_HOOK_LATEST" .jsonl)" \
+              > "${ACTIVE_SESSION_DIR}/.transcript-uuid" 2>/dev/null || true
+          fi
+        fi
+      fi
     fi
     ;;
 

@@ -46,27 +46,31 @@ def _normalize_model_id(model: str) -> str:
 
 
 def get_transcript_path(transcript_session_id: str) -> Optional[Path]:
-    """Locate transcript at ~/.claude/projects/<mangled-project-dir>/<id>.jsonl.
-    Uses CLAUDE_PROJECT_DIR env var to determine the correct project; falls back
-    to the orchestra project path for legacy invocations."""
-    project_dir = os.environ.get("CLAUDE_PROJECT_DIR", "")
-    if project_dir:
-        mangled = project_dir.replace("/", "-")  # /mnt/nfs/Foo → -mnt-nfs-Foo
-        transcripts_dir = Path.home() / ".claude" / "projects" / mangled
-    else:
-        # Legacy fallback: only works when invoked from the orchestra project
-        transcripts_dir = Path.home() / ".claude" / "projects" / "-mnt-nfs-Florian-Gin-AI-projects-claude-orchestra"
-
-    if not transcript_session_id:
-        if transcripts_dir.exists():
-            jsonl_files = list(transcripts_dir.glob("*.jsonl"))
-            if jsonl_files:
-                jsonl_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-                return jsonl_files[0]
+    """Locate transcript JSONL by scanning all ~/.claude/projects/*/ dirs.
+    Works regardless of which path form (NFS vs local) Claude Code used to store it."""
+    projects_root = Path.home() / ".claude" / "projects"
+    if transcript_session_id:
+        # Exact lookup: search every project dir for the specific UUID
+        try:
+            for proj_dir in sorted(projects_root.iterdir()):
+                if not proj_dir.is_dir():
+                    continue
+                path = proj_dir / f"{transcript_session_id}.jsonl"
+                if path.exists():
+                    return path
+        except Exception:
+            pass
         return None
     else:
-        path = transcripts_dir / f"{transcript_session_id}.jsonl"
-        return path if path.exists() else None
+        # No UUID: return most recently modified JSONL across all projects
+        try:
+            all_jsonls = list(projects_root.glob("*/*.jsonl"))
+            if all_jsonls:
+                all_jsonls.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                return all_jsonls[0]
+        except Exception:
+            pass
+        return None
 
 
 def parse_iso8601(timestamp_str: str) -> float:
