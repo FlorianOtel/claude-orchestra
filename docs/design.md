@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-04--13-58
+updated_at: 2026-05-04--21-30
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -244,7 +244,7 @@ Two complementary layers:
 
 - **T1 (hook-based, real-time)**: `orchestra-hook.sh start/end` appends one JSON event per subagent dispatch/completion to `telemetry-events.jsonl`. Captures timing and stage identity; `usage` is always `null` (hook payloads don't expose token counts). Drives the live `~$X.YZ` status-line badge via a cached last-known value — the cost persists through subagent execution even though the parent's reported `used_percentage` drops to 0 while a subagent runs.
 
-- **T2 (transcript parsing, authoritative)**: runs once at cleanup. Reads the actual JSONL transcripts for real token counts and model attribution. Normalises versioned model IDs (strips `-YYYYMMDD` suffix for pricing lookup) and skips `<synthetic>` messages (written by `/compact`). T2 supersedes T1 for all cost figures. Transcript discovery priority: (1) `.transcript-path` in the session dir — full JSONL path written at session-dir creation time before any subagents run; (2) explicit UUID argument + `CLAUDE_PROJECT_DIR`-derived directory; (3) legacy hardcoded orchestra project path. This ensures telemetry works correctly when `/duo` or `/brain` is invoked from any project, not only from the orchestra project.
+- **T2 (transcript parsing, authoritative)**: runs once at cleanup. Reads the actual JSONL transcripts for real token counts and model attribution. Normalises versioned model IDs (strips `-YYYYMMDD` suffix for pricing lookup) and skips `<synthetic>` messages (written by `/compact`). T2 supersedes T1 for all cost figures. Transcript discovery priority: (1) `.transcript-path` in the session dir — full JSONL path written at session-dir creation time (setup block) and reinforced by the PreToolUse hook on first subagent dispatch (where `CLAUDE_PROJECT_DIR` is reliably set); (2) global scan of all `~/.claude/projects/*/` subdirectories — exact UUID match when a UUID is known, most-recently-modified JSONL otherwise. This ensures telemetry works correctly when `/duo` or `/brain` is invoked from any project on any machine, regardless of path form (NFS mount path vs local symlink path).
 
 Safety net: the Claude Code `Stop` hook runs the T2 summariser on any unfinalised session dirs at session end.
 
@@ -295,7 +295,7 @@ Two commands cover all reporting needs:
 
 **Caveats:**
 - Per-session `telemetry.json` is the authoritative source (T2). The global `telemetry.jsonl` stores totals only. Re-running T2 on sessions completed > ~30 minutes ago produces unreliable results — the time window expands to "now" and captures unrelated transcript activity.
-- `CLAUDE_SESSION_ID` is not set by Claude Code in subprocess environments (all hook invocations show `session: "unknown"`). `CLAUDE_PROJECT_DIR` is set in hook subprocesses but **not** in Bash tool call subprocesses. T2 transcript discovery therefore relies on `.transcript-path` (full path written at session start) as the primary mechanism; `CLAUDE_PROJECT_DIR` is secondary, hardcoded legacy path is last resort.
+- `CLAUDE_SESSION_ID` is not set by Claude Code in subprocess environments (all hook invocations show `session: "unknown"`). `CLAUDE_PROJECT_DIR` is set in hook subprocesses but **not** in Bash tool call subprocesses. All three places that compute a project path (`orchestra-hook.sh`, `duo.md`, `brain.md`) normalize with `realpath` to resolve symlinks to the physical NFS path before use. T2 transcript discovery uses `.transcript-path` (primary) and a global `~/.claude/projects/*/` scan (secondary); no hardcoded path remains.
 - `pricing.yaml` carries a `last_updated` field; `telemetry-report.sh` warns when rates are > 90 days stale.
 
 #### What the data is intended for

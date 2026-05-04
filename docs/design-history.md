@@ -3,7 +3,7 @@ title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design not
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-04--14-25
+updated_at: 2026-05-04--21-30
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1312,3 +1312,27 @@ During smoke-test validation a second gap was found: the UUID captured in `.tran
 **Why this works for cross-project sessions:** when a session is opened from an NFS path (e.g. `/mnt/nfs/Florian/Gin-AI/projects/SoHoAI`), `$(pwd)` in the Bash tool returns that same NFS path, the mangled dir `-mnt-nfs-Florian-Gin-AI-projects-SoHoAI` exists in `~/.claude/projects/`, and the full JSONL path is stored. The summarizer reads it directly at cleanup — no env-var propagation needed.
 
 **Smoke test (commit e1cd45e):** `/duo` session `20260504T121034Z-467037` — 3/3 checks passed, `cost=$0.4975`, `parent_model=claude-sonnet-4-6`, `subagents=['actor']`.
+
+### Hook-based capture + global project scan — commit 35c4887
+
+A third session (`20260504T162149Z-614723`, SoHoAI project, host `um690`) reported `$0.0` despite the previous fix. Investigation: `.transcript-path` and `.transcript-uuid` were **absent** from the session dir (not just empty), meaning the `printf` writes in the setup block silently failed. The `get_transcript_path()` fallback then picked `721bd06d-...` (wrong JSONL) via the hardcoded legacy path.
+
+Two further fixes:
+
+1. **`orchestra-hook.sh` `start` handler** — on first subagent dispatch, write `.transcript-path` and `.transcript-uuid` to the active session dir using `PROJECT_DIR` (derived from `CLAUDE_PROJECT_DIR` in the hook environment, where it is reliably set). Guard: only writes if `.transcript-path` is not already present. This captures the correct transcript even when the setup block's write fails.
+
+2. **`telemetry-summarize.py` `get_transcript_path()`** — replaced the single-dir lookup (CLAUDE_PROJECT_DIR env var + hardcoded fallback) with a scan of **all** `~/.claude/projects/*/` subdirectories. When a UUID is given, returns the first match across all project dirs (exact, path-form-agnostic). When no UUID is given, returns the most-recently-modified JSONL across all projects. Hardcoded path removed entirely.
+
+**Smoke test (commit 35c4887):** SoHoAI session `20260504T190717Z-718012` on `um690` — `.transcript-path` written by the hook with correct NFS-path form, `cost=$1.0682`, 3/3 checks passed.
+
+### realpath normalization — commit 0b5a307
+
+Root cause of the setup-block write failures: `$(pwd)` gives the logical path (e.g. `/home/florian/Gin-AI/projects/SoHoAI` via a local symlink) while Claude Code stores JSONLs under the physical NFS path (e.g. `/mnt/nfs/Florian/Gin-AI/projects/SoHoAI`). The mangled dir from the logical path does not exist in `~/.claude/projects/`, so `ls -t` returns nothing, `_LATEST` is empty, and the `printf` inside the `if [ -n "$_LATEST" ]` guard is never reached. The unconditional `.transcript-uuid` write also silently fails when `SESSION_DIR` resolves to an NFS path that is inaccessible under the logical form on that machine.
+
+Fix: normalize all three places that compute a project path with `realpath` before use:
+
+- `scripts/orchestra-hook.sh` line 35: `PROJECT_DIR`
+- `commands/duo.md` setup block: `CLAUDE_PROJECT_DIR`
+- `commands/brain.md` setup block: `CLAUDE_PROJECT_DIR`
+
+`realpath` resolves symlinks to the physical path. Since all machines share the same NFS mount point, `realpath` of either path form converges to the same NFS physical path, ensuring the mangled dir name always matches what Claude Code used for JSONL storage. The `2>/dev/null || echo ...` fallback preserves behaviour when `realpath` is unavailable.
