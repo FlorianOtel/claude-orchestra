@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-04--21-50
+updated_at: 2026-05-04--22-00
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -162,11 +162,12 @@ sessions/
   <UTC-ts>-<PID>/
     PLAN.md, TASKS.json, review-comments.md
     .duo-inflight          (present during /duo planning phase only)
+    .last-logfile          (sidecar: hook start writes logfile path; end reads+deletes)
     .outcome               (pass | block | partial | abandoned)
     telemetry-events.jsonl (T1 live hook stream)
     telemetry.json         (T2 final record, written at cleanup)
     logs/
-      <stage>-<UTC-ts>-<HOST>-<PID>.log
+      <stage>-<UTC-ts>-<HOST>-<PID>.log  (auto-deleted after 30 days)
 state.env          (ORCHESTRA_MODE + ORCHESTRA_TITLE, append-only)
 invocations.log    (subagent start/end events, append-only)
 brain-state.md     (pre-compact snapshot)
@@ -196,7 +197,8 @@ Quick-ref troubleshooting:
 | Status-line badge doesn't appear | `config.yaml` missing or `cwd` unset in status-line input | `ls ~/.claude/orchestra/config.yaml`; run `status-line.sh` manually with test JSON |
 | `PLAN.md` garbled | Atomic-rename not used — direct write instead | Inspect for `.tmp` sibling; check Planner prompt |
 | `/brain` command unrecognised | `~/.claude/commands/brain.md` missing or malformed | `/help` lists commands; inspect file frontmatter |
-| Logs growing unbounded | No rotation policy | v1 does not rotate. Manually `rm` or add logrotate. |
+| `.last-logfile.*` files accumulating in `orchestra/` | Old bug: sidecar used PID of hook process so `end` could never find and delete `start`'s file | Fixed: sidecar now lives in session dir (shared path for start and end); stale files auto-cleaned after 120 min at hook startup |
+| `logs/*.log` growing unbounded | No rotation | Auto-rotated at hook startup: files older than 30 days deleted |
 | `~$X.YZ` cost never appears | T1 hook not writing to `telemetry-events.jsonl` | Check `orchestra-hook.sh` is executable and wired in `settings.json` |
 
 ### Deviations from canonical Claude Code

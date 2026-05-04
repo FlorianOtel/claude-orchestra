@@ -39,6 +39,8 @@ LOGS_DIR="${ORCHESTRA_DIR}/logs"
 
 mkdir -p "${LOGS_DIR}" 2>/dev/null || true
 touch "${INVOCATIONS_LOG}" 2>/dev/null || true
+find "${ORCHESTRA_DIR}" -maxdepth 1 -name ".last-logfile.*" -mmin +120 -delete 2>/dev/null || true
+find "${LOGS_DIR}" -maxdepth 1 -name "*.log" -mtime +30 -delete 2>/dev/null || true
 
 stamp_fields() {
   printf '"host":"%s","pid":"%s","session":"%s","ts":"%s"' \
@@ -75,8 +77,15 @@ stage_for_subagent() {
   esac
 }
 
-# Stable per-PID logfile name so `end` can find what `start` created.
-LAST_LOGFILE_REF="${ORCHESTRA_DIR}/.last-logfile.${STAMP_PID}"
+# Sidecar so `end` can find what `start` created.
+# Prefer session-relative path (shared by start and end); fall back to PID-named
+# file when no active session dir exists yet.
+_EARLY_SESSION_DIR="$(find_active_session_dir)"
+if [ -n "$_EARLY_SESSION_DIR" ]; then
+    LAST_LOGFILE_REF="${_EARLY_SESSION_DIR}/.last-logfile"
+else
+    LAST_LOGFILE_REF="${ORCHESTRA_DIR}/.last-logfile.${STAMP_PID}"
+fi
 
 case "$MODE" in
 
