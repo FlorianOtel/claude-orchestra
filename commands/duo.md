@@ -42,7 +42,7 @@ Run via `Bash`:
 
 ```bash
 # CLAUDE_PROJECT_DIR may be unset in Bash subprocesses — resolve it first.
-CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+CLAUDE_PROJECT_DIR="$(realpath "${CLAUDE_PROJECT_DIR:-$(pwd)}" 2>/dev/null || echo "${CLAUDE_PROJECT_DIR:-$(pwd)}")"
 SESSIONS_ROOT="${CLAUDE_PROJECT_DIR}/.claude/orchestra/sessions"
 _parse_retention() {
   awk '
