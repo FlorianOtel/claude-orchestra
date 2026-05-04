@@ -3,7 +3,7 @@ title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design not
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-04--13-58
+updated_at: 2026-05-04--14-25
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1300,3 +1300,15 @@ Re-ran `telemetry-summarize.sh` for both broken sessions with the correct `CLAUD
 - 2026-05-04: `$0.0 → $3.90` (99 messages in window; parent Sonnet + actor Haiku)
 
 Note: retroactive re-runs set `ended_at = time.time()` (the re-run time), so `duration_s` is inflated for those two entries in the global log.
+
+### Follow-up fix — commit e1cd45e
+
+During smoke-test validation a second gap was found: the UUID captured in `.transcript-uuid` was passed to `get_transcript_path(uuid)`, which still resolved the JSONL path against the hardcoded legacy transcripts directory. UUID correct + wrong directory = file not found, so cross-project sessions would still report `$0.0`.
+
+**Root cause of the gap:** `CLAUDE_PROJECT_DIR` is set by Claude Code when hooks run (confirmed by correct `ORCHESTRA_DIR` in logfile paths) but is **not** inherited by Bash tool call subprocesses (confirmed: `echo $CLAUDE_PROJECT_DIR` in a Bash tool call returns empty). The `CLAUDE_PROJECT_DIR`-based lookup in `get_transcript_path()` therefore never fires. The `$(pwd)` fallback in the setup block gives the local path (`/home/florian/Gin-AI/projects/…`), which has no corresponding entry in `~/.claude/projects/`, so `.transcript-uuid` capture also fails for sessions opened via the local-path representation of an NFS project.
+
+**Fix:** store the **full JSONL path** (not just the UUID) in `${SESSION_DIR}/.transcript-path` at session-dir creation time. The path is obtained from `ls -t ${_TRANSCRIPTS}/*.jsonl | head -1` — the same `ls` call that was already finding the UUID — so it costs nothing extra. `telemetry-summarize.py` now checks `.transcript-path` first; if the stored path exists on disk it is used directly, bypassing all directory-lookup logic. The UUID/`CLAUDE_PROJECT_DIR`/legacy chain is retained as a fallback for the `stop`-hook path and any session dir that pre-dates this change.
+
+**Why this works for cross-project sessions:** when a session is opened from an NFS path (e.g. `/mnt/nfs/Florian/Gin-AI/projects/SoHoAI`), `$(pwd)` in the Bash tool returns that same NFS path, the mangled dir `-mnt-nfs-Florian-Gin-AI-projects-SoHoAI` exists in `~/.claude/projects/`, and the full JSONL path is stored. The summarizer reads it directly at cleanup — no env-var propagation needed.
+
+**Smoke test (commit e1cd45e):** `/duo` session `20260504T121034Z-467037` — 3/3 checks passed, `cost=$0.4975`, `parent_model=claude-sonnet-4-6`, `subagents=['actor']`.
