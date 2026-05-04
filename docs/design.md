@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Opus 4.7)
-updated_at: 20260501-035710
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-04--13-58
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -26,7 +26,7 @@ Use it when you want code changes reviewed before landing, or when you want to i
 
 ### Interactive conversation (default)
 
-Talk to Brain normally. Brain delegates to Planner/Actor/Reviewer as needed. No forced pipeline. Example: "explain the HomeAI routing architecture" — Brain reads files and answers directly.
+Talk to Brain normally. Brain delegates to Planner/Actor/Reviewer as needed. No forced pipeline. Example: "explain the SoHoAI routing architecture" — Brain reads files and answers directly.
 
 ### /duo — lightweight (Sonnet plans, Haiku acts)
 
@@ -36,7 +36,7 @@ Workflow: (1) `claude --model claude-sonnet-4-6`. (2) `Shift+Tab` to enter plan 
 
 ### /brain — full pipeline (Opus orchestrates, cap-3 review loop)
 
-Enter plan mode, type `/brain <task>`. Opus runs Phase 0 (RESEARCH, inline — interrogates you), then Phase 1 (PLAN via Planner), Phase 2 (IMPLEMENT via Actor, one step at a time), Phase 3 (REVIEW via Reviewer, loop up to 3 times). Example: "refactor the HomeAI LiteLLM routing to support a new provider" — high-risk, multi-step, needs review loop.
+Enter plan mode, type `/brain <task>`. Opus runs Phase 0 (RESEARCH, inline — interrogates you), then Phase 1 (PLAN via Planner), Phase 2 (IMPLEMENT via Actor, one step at a time), Phase 3 (REVIEW via Reviewer, loop up to 3 times). Example: "refactor the SoHoAI LiteLLM routing to support a new provider" — high-risk, multi-step, needs review loop.
 
 When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo instead.
 
@@ -244,7 +244,7 @@ Two complementary layers:
 
 - **T1 (hook-based, real-time)**: `orchestra-hook.sh start/end` appends one JSON event per subagent dispatch/completion to `telemetry-events.jsonl`. Captures timing and stage identity; `usage` is always `null` (hook payloads don't expose token counts). Drives the live `~$X.YZ` status-line badge via a cached last-known value — the cost persists through subagent execution even though the parent's reported `used_percentage` drops to 0 while a subagent runs.
 
-- **T2 (transcript parsing, authoritative)**: runs once at cleanup. Reads the actual JSONL transcripts for real token counts and model attribution. Normalises versioned model IDs (strips `-YYYYMMDD` suffix for pricing lookup) and skips `<synthetic>` messages (written by `/compact`). T2 supersedes T1 for all cost figures.
+- **T2 (transcript parsing, authoritative)**: runs once at cleanup. Reads the actual JSONL transcripts for real token counts and model attribution. Normalises versioned model IDs (strips `-YYYYMMDD` suffix for pricing lookup) and skips `<synthetic>` messages (written by `/compact`). T2 supersedes T1 for all cost figures. The transcript directory is resolved dynamically from `CLAUDE_PROJECT_DIR` (set by Claude Code) so telemetry works correctly when `/duo` or `/brain` is invoked from any project — not only from the orchestra project itself.
 
 Safety net: the Claude Code `Stop` hook runs the T2 summariser on any unfinalised session dirs at session end.
 
@@ -295,6 +295,7 @@ Two commands cover all reporting needs:
 
 **Caveats:**
 - Per-session `telemetry.json` is the authoritative source (T2). The global `telemetry.jsonl` stores totals only. Re-running T2 on sessions completed > ~30 minutes ago produces unreliable results — the time window expands to "now" and captures unrelated transcript activity.
+- `CLAUDE_SESSION_ID` is not set by Claude Code in subprocess environments (all hook invocations show `session: "unknown"`). T2 transcript discovery relies on `CLAUDE_PROJECT_DIR` (reliably set) rather than the session UUID.
 - `pricing.yaml` carries a `last_updated` field; `telemetry-report.sh` warns when rates are > 90 days stale.
 
 #### What the data is intended for

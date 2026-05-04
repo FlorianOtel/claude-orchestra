@@ -68,6 +68,15 @@ SESSION_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 SESSION_DIR="${SESSIONS_ROOT}/${SESSION_ID}"
 mkdir -p "${SESSION_DIR}"
 export CLAUDE_ORCHESTRA_SESSION_DIR="${SESSION_DIR}"
+# Capture current session transcript UUID before subagents create new JSONLs
+_MANGLED="$(printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}" | tr '/' '-')"
+_TRANSCRIPTS="${HOME}/.claude/projects/${_MANGLED}"
+_TRANSCRIPT_UUID=""
+if [ -d "$_TRANSCRIPTS" ]; then
+  _LATEST="$(ls -t "$_TRANSCRIPTS"/*.jsonl 2>/dev/null | head -1)"
+  [ -n "$_LATEST" ] && _TRANSCRIPT_UUID="$(basename "$_LATEST" .jsonl)"
+fi
+printf '%s\n' "${_TRANSCRIPT_UUID}" > "${SESSION_DIR}/.transcript-uuid" 2>/dev/null || true
 echo "session_dir=${SESSION_DIR}"
 echo "retention_days=${RETENTION_DAYS}"
 ```
@@ -266,7 +275,7 @@ Before clearing the pipeline badge, write the outcome marker and trigger the T2 
 ```bash
 printf '%s' "<outcome>" > "${CLAUDE_ORCHESTRA_SESSION_DIR}/.outcome"
 ~/.claude/scripts/telemetry-summarize.sh \
-    "${CLAUDE_ORCHESTRA_SESSION_DIR}" brain "<outcome>" "${CLAUDE_SESSION_ID:-}" 2>&1 \
+    "${CLAUDE_ORCHESTRA_SESSION_DIR}" brain "<outcome>" "$(cat \"${CLAUDE_ORCHESTRA_SESSION_DIR}/.transcript-uuid\" 2>/dev/null || echo \"${CLAUDE_SESSION_ID:-}\")" 2>&1 \
     | tail -n 1
 ```
 

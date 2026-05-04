@@ -46,10 +46,18 @@ def _normalize_model_id(model: str) -> str:
 
 
 def get_transcript_path(transcript_session_id: str) -> Optional[Path]:
-    """Locate transcript at ~/.claude/projects/-mnt-nfs-Florian-Gin-AI-projects-claude-orchestra/<id>.jsonl"""
-    if not transcript_session_id:
-        # Try to find the most recently modified .jsonl in the transcripts dir
+    """Locate transcript at ~/.claude/projects/<mangled-project-dir>/<id>.jsonl.
+    Uses CLAUDE_PROJECT_DIR env var to determine the correct project; falls back
+    to the orchestra project path for legacy invocations."""
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR", "")
+    if project_dir:
+        mangled = project_dir.replace("/", "-")  # /mnt/nfs/Foo → -mnt-nfs-Foo
+        transcripts_dir = Path.home() / ".claude" / "projects" / mangled
+    else:
+        # Legacy fallback: only works when invoked from the orchestra project
         transcripts_dir = Path.home() / ".claude" / "projects" / "-mnt-nfs-Florian-Gin-AI-projects-claude-orchestra"
+
+    if not transcript_session_id:
         if transcripts_dir.exists():
             jsonl_files = list(transcripts_dir.glob("*.jsonl"))
             if jsonl_files:
@@ -57,7 +65,7 @@ def get_transcript_path(transcript_session_id: str) -> Optional[Path]:
                 return jsonl_files[0]
         return None
     else:
-        path = Path.home() / ".claude" / "projects" / "-mnt-nfs-Florian-Gin-AI-projects-claude-orchestra" / f"{transcript_session_id}.jsonl"
+        path = transcripts_dir / f"{transcript_session_id}.jsonl"
         return path if path.exists() else None
 
 

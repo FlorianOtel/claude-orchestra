@@ -26,4 +26,9 @@ fi
 # Pass through CLAUDE_SESSION_ID if not explicitly given as 4th arg
 TRANSCRIPT_ID="${4:-${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}}"
 
+# Belt-and-suspenders: fall back to UUID captured at session creation
+if [ -z "$TRANSCRIPT_ID" ] && [ -n "${1:-}" ] && [ -f "$1/.transcript-uuid" ]; then
+    TRANSCRIPT_ID="$(cat "$1/.transcript-uuid" 2>/dev/null || true)"
+fi
+
 "${VENV}/bin/python3" "$PY_SCRIPT" "$1" "$2" "$3" "$TRANSCRIPT_ID"

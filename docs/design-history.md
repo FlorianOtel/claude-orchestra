@@ -2,8 +2,8 @@
 title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design notes & open questions"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Opus 4.7)
-updated_at: 20260501-035713
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-04--13-58
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -13,7 +13,7 @@ context: >
   /var/tmp/gemini-chat.md; (2) the "Longform Guide" at
   https://github.com/affaan-m/everything-claude-code/blob/main/the-longform-guide.md;
   (3) the local Claude Code usage report at
-  /mnt/nfs/Florian/Gin-AI/.claude/usage-data/report.html; (4) HomeAI repo
+  /mnt/nfs/Florian/Gin-AI/.claude/usage-data/report.html; (4) SoHoAI repo
   context (CLAUDE.md, memory/ directory, source tree).
   User's literal ask was a dedicated tmux session with three windows running
   Opus 4.7 / Sonnet 4.6 / Haiku 4.5 in parallel. Three architectural options
@@ -744,7 +744,7 @@ If the orchestra misbehaves and you need to disable it quickly:
 
 Next steps (user-facing):
 
-1. **Smoke test in HomeAI** — opt it in (step 1 of "Interaction notes"), then run a small `/brain` pipeline on a trivial task to verify the windows spawn and the gate fires. Good first task: "Add a docstring to `rag_engine/search.py::search_rag`" — small, reviewable, low-risk.
+1. **Smoke test in SoHoAI** — opt it in (step 1 of "Interaction notes"), then run a small `/brain` pipeline on a trivial task to verify the windows spawn and the gate fires. Good first task: "Add a docstring to `rag_engine/search.py::search_rag`" — small, reviewable, low-risk.
 2. **Tune Actor deny rules** — once a few `/brain` runs expose any overreach patterns, add explicit `permissions.deny` entries in `~/.claude/settings.json` rather than relying solely on system-prompt discipline.
 3. **Build v2 when appetite arrives** — `orchestra_mode: auto`, CROSS-CHECK, branch isolation, checkpoint commits, test gate, halt-and-resume. All documented in §10.2 of design.md.
 
@@ -1265,3 +1265,38 @@ In the previous smoke test session, a Stop hook fire between Phase 1 and Phase 2
 ### Root cause: CLAUDE_PROJECT_DIR unset in Bash subprocesses
 
 Fixed in commit eb0dd0c: `CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"` added as first line of every bash block in `brain.md` and `duo.md` that uses this variable. Without this, all session dir creation and badge writes silently failed.
+
+---
+
+## Amendment 2026-05-04 — Cross-project telemetry fix (zero-cost bug)
+
+**Context:** Two consecutive `/duo` sessions (2026-05-01 and 2026-05-04) reported `$0.0` cost and 0 tokens in `telemetry-report.sh --last 5` despite real work. Investigation session `troubleshoot-telemetry-2026-05-04--13-37`.
+
+### Root cause
+
+Orchestra is deployed globally (`~/.claude/`) so `/duo` and `/brain` can be invoked from **any** project. When invoked from a non-orchestra project, the session JSONL is stored in a different `~/.claude/projects/<mangled-path>/` directory:
+
+- 2026-05-01 session: invoked from `/mnt/nfs/Florian/Gin-AI` → transcript at `~/.claude/projects/-mnt-nfs-Florian-Gin-AI/6fca7323-...jsonl`
+- 2026-05-04 session: invoked from `SoHoAI` project → transcript at `~/.claude/projects/-mnt-nfs-Florian-Gin-AI-projects-SoHoAI/581129aa-...jsonl`
+
+`telemetry-summarize.py`'s `get_transcript_path()` had the orchestra project path (`-mnt-nfs-Florian-Gin-AI-projects-claude-orchestra`) hardcoded as the only search location. When no transcript was found there, it fell back to the most-recently-modified JSONL in that directory — which had zero messages within the session's time window — yielding `$0.0` and 0 tokens.
+
+Confirming evidence: T1 events in both sessions show `"session":"unknown"`, confirming that `CLAUDE_SESSION_ID` is not set by Claude Code in subprocess environments (consistent with design-history note from 2026-04-30). `CLAUDE_PROJECT_DIR` **is** reliably set (proven by correct `ORCHESTRA_DIR` paths in `invocations.log` logfile entries).
+
+### Fix
+
+Three changes:
+
+1. **`scripts/telemetry-summarize.py`** — `get_transcript_path()` now computes the transcripts directory dynamically from `os.environ.get("CLAUDE_PROJECT_DIR")`, mangling the path the same way Claude Code does (`/` → `-`). The hardcoded orchestra path is kept as a legacy fallback when `CLAUDE_PROJECT_DIR` is unset.
+
+2. **`commands/duo.md` + `commands/brain.md`** — Phase 0 setup block now captures the most-recently-modified JSONL UUID immediately after `mkdir -p "${SESSION_DIR}"` and stores it in `${SESSION_DIR}/.transcript-uuid`. Phase 4 cleanup reads this UUID and passes it to `telemetry-summarize.sh` instead of relying on `${CLAUDE_SESSION_ID:-}` (which is always empty). This belt-and-suspenders measure guards against the "most recently modified" heuristic picking the wrong file when multiple sessions are active concurrently.
+
+3. **`scripts/telemetry-summarize.sh`** — Added a fallback that reads `.transcript-uuid` from the session dir if the 4th argument is empty and `CLAUDE_SESSION_ID` is unset.
+
+### Retroactive fix
+
+Re-ran `telemetry-summarize.sh` for both broken sessions with the correct `CLAUDE_PROJECT_DIR` and transcript UUIDs:
+- 2026-05-01: `$0.0 → $3.64` (136 messages in window; parent Sonnet + Explore + actor Haiku)
+- 2026-05-04: `$0.0 → $3.90` (99 messages in window; parent Sonnet + actor Haiku)
+
+Note: retroactive re-runs set `ended_at = time.time()` (the re-run time), so `duration_s` is inflated for those two entries in the global log.
