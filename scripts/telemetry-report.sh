@@ -7,10 +7,7 @@
 #
 #   --last N   Show the last N sessions (default 20).
 #   --tier     Show per-tier cost breakdown (Brain / Planner / Actor / Reviewer).
-#              Reads per-session telemetry.json from:
-#                ${CLAUDE_PROJECT_DIR}/.claude/orchestra/sessions/   (if set)
-#                $(pwd)/.claude/orchestra/sessions/                   (fallback)
-#              Run from your project directory when using --tier.
+#              Reads per-session telemetry.json via session_dir field in global log.
 #
 # chmod +x me after deploy
 
@@ -29,7 +26,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 TELEMETRY_JSONL="${HOME}/.claude/orchestra/telemetry.jsonl"
-SESSIONS_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}/.claude/orchestra/sessions"
 PYTHON3="${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3"
 PRICING_FILE="${HOME}/.claude/orchestra/pricing.yaml"
 
@@ -64,7 +60,6 @@ fi
 # =============================================================================
 if $SHOW_TIER; then
     echo "Per-tier cost breakdown"
-    echo "Sessions root: ${SESSIONS_ROOT}"
     echo ""
 
     # Write Python scripts to temp files
@@ -176,8 +171,7 @@ PYEOF
     # Process each session (process substitution keeps VALID_TFS in scope)
     VALID_TFS=()
     while IFS= read -r line; do
-        SID=$(printf '%s' "$line" | jq -r '.session_id')
-        TF="${SESSIONS_ROOT}/${SID}/telemetry.json"
+        TF=$(printf '%s' "$line" | jq -r 'if .session_dir then .session_dir + "/telemetry.json" else "" end')
         if [ ! -f "$TF" ]; then
             DATE=$(printf '%s' "$line" | jq -r '.started_at | split("T")[0]')
             CMD=$(printf '%s' "$line" | jq -r '.command')

@@ -430,6 +430,7 @@ def main():
 
     global_line = {
         "session_id": session_dir.name,
+        "session_dir": str(session_dir),
         "command": args.command,
         "started_at": to_iso8601(started_at_unix),
         "duration_s": int(ended_at_unix - started_at_unix),
