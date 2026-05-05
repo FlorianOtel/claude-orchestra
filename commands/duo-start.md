@@ -1,10 +1,10 @@
 ---
-description: Open a /duo planning session — sets up artifacts, drafts initial PLAN.md, and yields back for multi-turn refinement. Run /duo-stop to commit and execute, or /duo-abandon to cancel.
+description: Open a /duo planning session — sets up artifacts, drafts initial PLAN.md, and yields back for multi-turn refinement. Run /duo-end to commit and execute, or /duo-abandon to cancel.
 ---
 
 # /duo-start — open a planning session
 
-You are running the **duo** pipeline. `/duo-start` opens a multi-turn planning session: it does setup, drafts an initial `PLAN.md`, and **yields control back** to the operator for refinement. ExitPlanMode is **not** called here; refinement happens across subsequent normal plan-mode turns until the operator runs `/duo-stop` (commit + execute) or `/duo-abandon` (cancel).
+You are running the **duo** pipeline. `/duo-start` opens a multi-turn planning session: it does setup, drafts an initial `PLAN.md`, and **yields control back** to the operator for refinement. ExitPlanMode is **not** called here; refinement happens across subsequent normal plan-mode turns until the operator runs `/duo-end` (commit + execute) or `/duo-abandon` (cancel).
 
 There is no Phase 0 RESEARCH (use `/brain` if you need formal interrogation). There is no Reviewer.
 
@@ -51,7 +51,7 @@ if [ -n "$EXISTING" ]; then
   ACTIVE_DIR="$(dirname "$EXISTING")"
   echo "REFUSE: an active /duo session already exists at:"
   echo "  ${ACTIVE_DIR}"
-  echo "Run /duo-stop to commit it, or /duo-abandon to cancel, before /duo-start."
+  echo "Run /duo-end to commit it, or /duo-abandon to cancel, before /duo-start."
   exit 0
 fi
 ```
@@ -97,7 +97,7 @@ SESSION_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 SESSION_DIR="${SESSIONS_ROOT}/${SESSION_ID}"
 mkdir -p "${SESSION_DIR}"
 # Write inflight marker in the same shell so SESSION_DIR is available.
-# Stays live through refinement and actor execution; removed by /duo-stop or /duo-abandon.
+# Stays live through refinement and actor execution; removed by /duo-end or /duo-abandon.
 printf '%s' "<task title, ≤30 chars, no single-quotes>" \
   > "${SESSION_DIR}/.duo-inflight.tmp"
 mv -f "${SESSION_DIR}/.duo-inflight.tmp" "${SESSION_DIR}/.duo-inflight"
@@ -159,28 +159,28 @@ After persisting the initial `PLAN.md`, **do not** call `ExitPlanMode`. End the 
 >
 > Refine the plan across subsequent turns — give me feedback and I'll iterate on `PLAN.md` in place. When you're ready:
 >
-> - Run `/duo-stop` to commit the plan, exit plan mode, and dispatch Actor.
+> - Run `/duo-end` to commit the plan, exit plan mode, and dispatch Actor.
 > - Run `/duo-abandon` to cancel this session and clear the badge.
 
-Stop here. The next operator turn will be either a refinement message, `/duo-stop`, or `/duo-abandon`.
+Stop here. The next operator turn will be either a refinement message, `/duo-end`, or `/duo-abandon`.
 
 ---
 
 ## Refinement turns (no slash command)
 
-These happen between `/duo-start` and `/duo-stop`/`/duo-abandon`. The operator types feedback; you re-read `${SESSION_DIR}/PLAN.md`, integrate the feedback, and rewrite it via the same atomic-rename pattern. This is exactly Claude Code's native plan-mode iteration — the slash command does not need to drive it.
+These happen between `/duo-start` and `/duo-end`/`/duo-abandon`. The operator types feedback; you re-read `${SESSION_DIR}/PLAN.md`, integrate the feedback, and rewrite it via the same atomic-rename pattern. This is exactly Claude Code's native plan-mode iteration — the slash command does not need to drive it.
 
-Locate the active `${SESSION_DIR}` on each refinement turn the same way `/duo-stop` and `/duo-abandon` do (find the `.duo-inflight` under the project's sessions root). One active session per project; if there's none, tell the operator to run `/duo-start` first.
+Locate the active `${SESSION_DIR}` on each refinement turn the same way `/duo-end` and `/duo-abandon` do (find the `.duo-inflight` under the project's sessions root). One active session per project; if there's none, tell the operator to run `/duo-start` first.
 
-Do **not** call `ExitPlanMode` during refinement. That's `/duo-stop`'s job.
+Do **not** call `ExitPlanMode` during refinement. That's `/duo-end`'s job.
 
 ---
 
 ## What this command does NOT do
 
-- ❌ Call `ExitPlanMode` (that's `/duo-stop`).
-- ❌ Dispatch Actor (that's `/duo-stop`).
-- ❌ Write `.outcome` or run telemetry (that's `/duo-stop` or `/duo-abandon`).
+- ❌ Call `ExitPlanMode` (that's `/duo-end`).
+- ❌ Dispatch Actor (that's `/duo-end`).
+- ❌ Write `.outcome` or run telemetry (that's `/duo-end` or `/duo-abandon`).
 - ❌ Spawn `claude -p` subprocesses or use `run-tier.sh`.
 - ❌ Have a Phase 0 RESEARCH stage (use `/brain`).
 - ❌ Have a Reviewer (use `/brain`).

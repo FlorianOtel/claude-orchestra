@@ -112,10 +112,11 @@ if ! $DRY_RUN; then
     fi
 
     # 7c. Obsolete commands (Step 6 of the revert plan, plus the duo session-bracketing redesign).
-    # duo.md was replaced by duo-start.md / duo-stop.md / duo-abandon.md.
+    # duo.md was replaced by duo-start.md / duo-end.md / duo-abandon.md.
+    # duo-stop.md was renamed to duo-end.md (2026-05-05).
     # brain-abandon.md was previously deferred but is now shipped as the explicit
     # /brain cancel command (paired with the new .brain-inflight marker).
-    for orphan in explore.md brain-resume.md brain-status.md orchestra-mode.md duo.md; do
+    for orphan in explore.md brain-resume.md brain-status.md orchestra-mode.md duo.md duo-stop.md; do
         if [ -f "$CLAUDE/commands/$orphan" ]; then
             rm -f "$CLAUDE/commands/$orphan"
             ok "cleaned orphan: $CLAUDE/commands/$orphan"
@@ -317,7 +318,7 @@ echo "    1. In Claude Code: Shift+Tab to enter plan mode"
 echo "    2. Type /brain <task>          — full pipeline (Planner → Actor → Reviewer)"
 echo "       Type /brain-abandon         — cancel the active /brain session"
 echo "    3. Type /duo-start <task>      — open a /duo planning session (multi-turn refinement)"
-echo "       Type /duo-stop              — commit the plan and execute Actor"
+echo "       Type /duo-end               — commit the plan and execute Actor"
 echo "       Type /duo-abandon           — cancel the active /duo session"
 echo "    4. See docs/design.md for full reference"
 echo ""

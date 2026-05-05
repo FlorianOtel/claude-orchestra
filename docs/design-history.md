@@ -1371,4 +1371,14 @@ Fix: normalize all three places that compute a project path with `realpath` befo
 
 **Verification.** Mechanical T2 test: synthetic session_dir with `.outcome` written 5s before invoking the parser; assertion `ended_at_unix == .outcome.mtime` (and `!= time.time()`) — PASSED. Deploy verified all artefacts in place; orphan `~/.claude/commands/duo.md` removed. End-to-end interactive smoke test (`/duo-start → refine → /duo-stop → execute → cleanup`) is documented in `CLAUDE.md` and requires the operator running slash commands in plan mode.
 
-**Key design decisions.** Lean on Claude Code's native plan-mode iteration; don't add a "we are in /duo mode" CLAUDE.md instruction or memory flag. Marker file (`.duo-inflight`) is for badge + telemetry only, not for re-injecting Brain's behaviour. One active /duo session per project. No auto-detection of "approval-like" phrases — `/duo-stop` is the only commit signal. /brain Phase 0 already provides multi-turn refinement via natural-language signal; splitting it would add ceremony without value (a follow-up plan addresses /brain's narrower rejection-cleanup bug separately).
+**Key design decisions.** Lean on Claude Code's native plan-mode iteration; don't add a "we are in /duo mode" CLAUDE.md instruction or memory flag. Marker file (`.duo-inflight`) is for badge + telemetry only, not for re-injecting Brain's behaviour. One active /duo session per project. No auto-detection of "approval-like" phrases — `/duo-end` is the only commit signal. /brain Phase 0 already provides multi-turn refinement via natural-language signal; splitting it would add ceremony without value (a follow-up plan addresses /brain's narrower rejection-cleanup bug separately).
+
+---
+
+## Amendment 2026-05-05 — rename /duo-stop → /duo-end
+
+**Motivation.** "Stop" implies halting the workflow; the command actually *ends the planning phase* and transitions into execution. `/duo-end` signals the end of the planning phase, not the termination of the pipeline.
+
+**Change.** `commands/duo-stop.md` renamed to `commands/duo-end.md`. All references updated.
+
+**Files.** Renamed: `commands/duo-stop.md` → `commands/duo-end.md`. Modified: `commands/duo-start.md`, `scripts/telemetry-summarize.sh`, `scripts/telemetry-report.sh`, `scripts/smoke-test.sh`, `scripts/telemetry-summarize.py`, `deploy.sh` (orphan-cleanup adds `duo-stop.md`), `collect.sh`, `docs/design.md`, `CLAUDE.md`, `README.md`, `docs/design-history.md` (this note). No functional changes — pure rename.

@@ -2,16 +2,16 @@
 description: Commit the active /duo plan and execute. Calls ExitPlanMode, dispatches Actor (Haiku), and runs cleanup + telemetry. Refuses if no active /duo session.
 ---
 
-# /duo-stop — commit the active /duo plan and execute
+# /duo-end — commit the active /duo plan and execute
 
-You are running the **duo** pipeline's commit-and-execute step. `/duo-stop` finalises the active /duo planning session: it presents the current `PLAN.md`, calls `ExitPlanMode`, dispatches the Actor (Haiku) subagent, then runs cleanup + telemetry.
+You are running the **duo** pipeline's commit-and-execute step. `/duo-end` finalises the active /duo planning session: it presents the current `PLAN.md`, calls `ExitPlanMode`, dispatches the Actor (Haiku) subagent, then runs cleanup + telemetry.
 
 If no /duo session is active (no `.duo-inflight` in any session subdir), refuse and tell the operator to run `/duo-start` first.
 
 ## Prerequisites
 
-1. **Plan mode is active.** `/duo-stop` calls `ExitPlanMode`, which only fires from plan mode. If not, stop and say:
-   > "Please enter plan mode first (Shift+Tab), then run `/duo-stop`."
+1. **Plan mode is active.** `/duo-end` calls `ExitPlanMode`, which only fires from plan mode. If not, stop and say:
+   > "Please enter plan mode first (Shift+Tab), then run `/duo-end`."
 2. **An active /duo session exists.** Verified below.
 
 ## Locate the active session
@@ -57,7 +57,7 @@ Call `ExitPlanMode` with the full text of `<SESSION_DIR>/PLAN.md`. The operator
 will see Claude Code's standard "auto-edit / manually approve / cancel" prompt.
 
 - **Approved (auto-edit or manually approve):** the parent exits plan mode and Phase 3 below proceeds. The permission posture set here applies to Actor's tool calls.
-- **Rejected (cancel):** the assistant's turn pauses. The session **stays open** — `.duo-inflight` is preserved. The operator can refine more and run `/duo-stop` again, or run `/duo-abandon` to give up. Do not run any cleanup on rejection.
+- **Rejected (cancel):** the assistant's turn pauses. The session **stays open** — `.duo-inflight` is preserved. The operator can refine more and run `/duo-end` again, or run `/duo-abandon` to give up. Do not run any cleanup on rejection.
 
 ---
 

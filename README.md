@@ -25,19 +25,19 @@ Planner (Sonnet) drafts a numbered plan; Brain surfaces it for your approval via
 
 Use for: multi-file refactors, architecture changes, anything where a review loop matters.
 
-### `/duo-start` / `/duo-stop` / `/duo-abandon` — lightweight, session-bracketed
+### `/duo-start` / `/duo-end` / `/duo-abandon` — lightweight, session-bracketed
 
 ```
-/duo-start <task>  →  refinement turns (multi-turn plan-mode iteration)  →  /duo-stop
+/duo-start <task>  →  refinement turns (multi-turn plan-mode iteration)  →  /duo-end
                                                                            ├→ [G2 approval]
                                                                            └→ Execute all steps (Haiku, auto)
                                                                            or
                                                                            /duo-abandon → cancel cleanly
 ```
 
-`/duo-start` opens a planning session (sets up artifacts, drafts the initial `PLAN.md`, then yields back). You and Sonnet refine the plan across as many turns as needed using Claude Code's native plan-mode iteration. `/duo-stop` calls `ExitPlanMode`, dispatches Haiku to execute all approved steps in a single Actor invocation, then runs cleanup + telemetry. `/duo-abandon` cancels the session cleanly (writes `.outcome=abandoned`, runs T2, clears the badge). No review tier, no loop.
+`/duo-start` opens a planning session (sets up artifacts, drafts the initial `PLAN.md`, then yields back). You and Sonnet refine the plan across as many turns as needed using Claude Code's native plan-mode iteration. `/duo-end` calls `ExitPlanMode`, dispatches Haiku to execute all approved steps in a single Actor invocation, then runs cleanup + telemetry. `/duo-abandon` cancels the session cleanly (writes `.outcome=abandoned`, runs T2, clears the badge). No review tier, no loop.
 
-Splitting plan-approval into an explicit `/duo-stop` (rather than barrelling through `ExitPlanMode` in one response) makes mid-plan refinement first-class and keeps telemetry attribution correct.
+Splitting plan-approval into an explicit `/duo-end` (rather than barrelling through `ExitPlanMode` in one response) makes mid-plan refinement first-class and keeps telemetry attribution correct.
 
 Use for: simple, well-scoped tasks (≤ 10 steps) where the plan is clear enough to trust unreviewed execution.
 
@@ -107,7 +107,7 @@ Shift+Tab   (or /plan-mode in Claude Code)
 # 2. Choose a pipeline
 /brain        implement the X feature       — full pipeline
 /duo-start    add a docstring to function Y — open a lightweight session (multi-turn refinement)
-/duo-stop                                   — commit the plan and execute (after refining)
+/duo-end                                   — commit the plan and execute (after refining)
 /duo-abandon                                — cancel the active session
 ```
 
@@ -125,7 +125,7 @@ Status line shows (when orchestra is installed):
                                                           orchestra badge
 
 ♪ orchestra -> plan <title>       — /duo-start session active, planning in progress
-♪ orchestra -> plan <title> ▶ implement   — /duo-stop has dispatched Haiku Actor
+♪ orchestra -> plan <title> ▶ implement   — /duo-end has dispatched Haiku Actor
 ♪ orchestra -> brain <title> ⚠ >200K       — Brain context too large to delegate safely
 ```
 
@@ -166,7 +166,7 @@ claude-orchestra/
 ├── commands/
 │   ├── brain.md           /brain slash command           — full pipeline (Phase 0 inline + Planner/Actor/Reviewer subagents)
 │   ├── duo-start.md       /duo-start slash command       — open a /duo planning session (multi-turn refinement)
-│   ├── duo-stop.md        /duo-stop slash command        — commit the plan, ExitPlanMode, dispatch Actor (Haiku), cleanup
+│   ├── duo-end.md        /duo-end slash command        — commit the plan, ExitPlanMode, dispatch Actor (Haiku), cleanup
 │   └── duo-abandon.md     /duo-abandon slash command     — cancel the active /duo session, run cleanup + telemetry
 ├── scripts/
 │   └── orchestra-hook.sh      PreToolUse / SubagentStop / PreCompact hook dispatcher

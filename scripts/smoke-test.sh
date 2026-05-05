@@ -22,7 +22,7 @@ fi
 
 if [ -z "${SESSION_DIR:-}" ] || [ ! -d "${SESSION_DIR}" ]; then
     echo "ERROR: No session dir found under ${SESSIONS_ROOT}"
-    echo "  Run /duo-start (then /duo-stop) or /brain first, or pass the session dir as an argument."
+    echo "  Run /duo-start (then /duo-end) or /brain first, or pass the session dir as an argument."
     exit 1
 fi
 

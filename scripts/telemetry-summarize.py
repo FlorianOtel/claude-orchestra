@@ -366,7 +366,7 @@ def main():
         except Exception:
             pass
     # ended_at_unix: prefer .outcome mtime when present so the time window is
-    # bounded by an explicit session terminator (set by /duo-stop, /duo-abandon,
+    # bounded by an explicit session terminator (set by /duo-end, /duo-abandon,
     # or the Stop-hook safety net) rather than by "now". This excludes any
     # post-cleanup parent-transcript activity from cost attribution and makes
     # re-runs of the summariser idempotent.

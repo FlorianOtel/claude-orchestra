@@ -59,7 +59,7 @@ echo "Commands:"
 collect_file "$CLAUDE/commands/brain.md"         "$REPO/commands/brain.md"
 collect_file "$CLAUDE/commands/brain-abandon.md" "$REPO/commands/brain-abandon.md"
 collect_file "$CLAUDE/commands/duo-start.md"     "$REPO/commands/duo-start.md"
-collect_file "$CLAUDE/commands/duo-stop.md"      "$REPO/commands/duo-stop.md"
+collect_file "$CLAUDE/commands/duo-end.md"       "$REPO/commands/duo-end.md"
 collect_file "$CLAUDE/commands/duo-abandon.md"   "$REPO/commands/duo-abandon.md"
 
 echo "Scripts:"
