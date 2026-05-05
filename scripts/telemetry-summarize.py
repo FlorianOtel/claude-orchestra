@@ -187,56 +187,67 @@ def process_transcript(
     warnings: List[str],
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """
-    Walk parent JSONL for parent tokens, then walk sibling
-    `<parent-uuid>/subagents/agent-*.jsonl` for each subagent.
+    Walk ALL JSONLs in the project's transcripts directory whose records
+    fall in the [started_at_unix, ended_at_unix] window. Captures content
+    split across multiple JSONLs by --fork-session or /clear rotation.
     Subagent type is read from the matching `agent-*.meta.json` sidecar.
     """
     parent: Dict[str, Any] = {
         "model": None,
         "tokens": {"input": 0, "output": 0, "cache_creation": 0, "cache_read": 0},
+        "transcripts": [],   # NEW: list of UUIDs that contributed (forensics)
     }
     subagents: List[Dict[str, Any]] = []
 
-    if not transcript_path.exists():
-        warnings.append(f"Transcript not found at {transcript_path}")
-        return parent, subagents
-
-    parent_model, parent_tokens, _, _ = _walk_jsonl_for_tokens(
-        transcript_path, started_at_unix, ended_at_unix
-    )
-    parent["model"] = parent_model
-    parent["tokens"] = parent_tokens
-
-    # Subagent transcripts live alongside the parent JSONL in
-    # <parent_jsonl_stem>/subagents/agent-<hash>.{jsonl,meta.json}.
-    subagents_dir = transcript_path.with_suffix("") / "subagents"
-    if not subagents_dir.is_dir():
+    # Walk ALL JSONLs in the project's transcripts directory whose records
+    # fall in the [started_at_unix, ended_at_unix] window. Captures content
+    # split across multiple JSONLs by --fork-session or /clear rotation.
+    project_transcripts_dir = transcript_path.parent
+    if not project_transcripts_dir.is_dir():
+        warnings.append(f"Project transcripts dir not found at {project_transcripts_dir}")
         return parent, subagents
 
     iteration_counts: Dict[str, int] = {}
-    for meta_path in sorted(subagents_dir.glob("agent-*.meta.json")):
-        try:
-            meta = json.loads(meta_path.read_text())
-        except Exception as e:
-            warnings.append(f"Could not read {meta_path.name}: {e}")
-            continue
-        subagent_type = meta.get("agentType", "unknown")
-        jsonl_path = meta_path.with_suffix("").with_suffix(".jsonl")
-        sub_model, sub_tokens, sub_first, sub_last = _walk_jsonl_for_tokens(
+    for jsonl_path in sorted(project_transcripts_dir.glob("*.jsonl")):
+        p_model, p_tokens, p_first, _ = _walk_jsonl_for_tokens(
             jsonl_path, started_at_unix, ended_at_unix
         )
-        # Skip subagents with no in-window activity (e.g. earlier sessions).
-        if sub_first is None:
+        if p_first is None:
+            continue  # no in-window content; skip
+
+        # Accumulate parent tokens; first-encountered model wins
+        for k, v in p_tokens.items():
+            parent["tokens"][k] += v
+        if parent["model"] is None and p_model:
+            parent["model"] = p_model
+        parent["transcripts"].append(jsonl_path.stem)
+
+        # Walk subagents for THIS parent-UUID
+        subagents_dir = jsonl_path.with_suffix("") / "subagents"
+        if not subagents_dir.is_dir():
             continue
-        iteration_counts[subagent_type] = iteration_counts.get(subagent_type, 0) + 1
-        subagents.append({
-            "type": subagent_type,
-            "model": sub_model,
-            "tokens": sub_tokens,
-            "duration_s": int((sub_last or sub_first) - sub_first),
-            "iteration": iteration_counts[subagent_type],
-            "description": meta.get("description", ""),
-        })
+        for meta_path in sorted(subagents_dir.glob("agent-*.meta.json")):
+            try:
+                meta = json.loads(meta_path.read_text())
+            except Exception as e:
+                warnings.append(f"Could not read {meta_path.name}: {e}")
+                continue
+            subagent_type = meta.get("agentType", "unknown")
+            sub_jsonl = meta_path.with_suffix("").with_suffix(".jsonl")
+            sub_model, sub_tokens, sub_first, sub_last = _walk_jsonl_for_tokens(
+                sub_jsonl, started_at_unix, ended_at_unix
+            )
+            if sub_first is None:
+                continue
+            iteration_counts[subagent_type] = iteration_counts.get(subagent_type, 0) + 1
+            subagents.append({
+                "type": subagent_type,
+                "model": sub_model,
+                "tokens": sub_tokens,
+                "duration_s": int((sub_last or sub_first) - sub_first),
+                "iteration": iteration_counts[subagent_type],
+                "description": meta.get("description", ""),
+            })
 
     return parent, subagents
 
