@@ -236,7 +236,64 @@ else
     fi
 fi
 
-# ── 9. Global gitignore ───────────────────────────────────────────────────────
+# ── 9. Inject orchestra-guard block into ~/.claude/CLAUDE.md ──────────────────
+# The guard fires every turn (CLAUDE.md is loaded into the system prompt prefix
+# by the harness on every turn), giving us per-turn reinforcement of the
+# orchestra-pipeline rules — matching plan-mode's reminder cadence. Without
+# this, /brain reliably skips Planner/Actor dispatches in long Phase 0 sessions
+# because /brain.md's instructions get buried by repeated plan-mode reminders.
+# Skip-with-warning if the user's global CLAUDE.md is absent.
+echo "CLAUDE.md guard:"
+GLOBAL_CLAUDE_MD="$HOME/.claude/CLAUDE.md"
+GUARD_SOURCE="$REPO/claude-md-block/orchestra-guard.md"
+if [ ! -f "$GLOBAL_CLAUDE_MD" ]; then
+    warn "~/.claude/CLAUDE.md not found — skipping orchestra-guard injection (Component A reinforcement in /brain.md still active; see plans/adaptive-exploring-bunny.md)"
+elif [ ! -f "$GUARD_SOURCE" ]; then
+    warn "claude-md-block/orchestra-guard.md not found in repo — skipping injection"
+else
+    GUARD_PRESENT=false
+    grep -q "ORCHESTRA_GUARD_START" "$GLOBAL_CLAUDE_MD" 2>/dev/null && GUARD_PRESENT=true
+
+    if $GUARD_PRESENT; then
+        # Extract deployed block (between markers, exclusive of the markers themselves)
+        DEPLOYED_GUARD="$(awk '/^<!-- ORCHESTRA_GUARD_START -->/{flag=1;next} /^<!-- ORCHESTRA_GUARD_END -->/{flag=0} flag' "$GLOBAL_CLAUDE_MD")"
+        SOURCE_GUARD="$(cat "$GUARD_SOURCE")"
+        if [ "$DEPLOYED_GUARD" = "$SOURCE_GUARD" ]; then
+            ok "unchanged: ~/.claude/CLAUDE.md (orchestra-guard block matches source)"
+        elif $DRY_RUN; then
+            info "would re-deploy orchestra-guard block in ~/.claude/CLAUDE.md (source has changed)"
+        else
+            TMPFILE="$GLOBAL_CLAUDE_MD.orchestra-deploy.tmp"
+            # Strip old block (markers and content)
+            awk '
+                /^<!-- ORCHESTRA_GUARD_START -->/ { in_block=1; next }
+                /^<!-- ORCHESTRA_GUARD_END -->/ { in_block=0; next }
+                !in_block { print }
+            ' "$GLOBAL_CLAUDE_MD" > "$TMPFILE"
+            # Append fresh block at end
+            {
+                printf '\n<!-- ORCHESTRA_GUARD_START -->\n'
+                cat "$GUARD_SOURCE"
+                printf '<!-- ORCHESTRA_GUARD_END -->\n'
+            } >> "$TMPFILE"
+            mv -f "$TMPFILE" "$GLOBAL_CLAUDE_MD"
+            ok "updated: ~/.claude/CLAUDE.md (orchestra-guard block refreshed)"
+        fi
+    else
+        if $DRY_RUN; then
+            info "would append orchestra-guard block to ~/.claude/CLAUDE.md"
+        else
+            {
+                printf '\n<!-- ORCHESTRA_GUARD_START -->\n'
+                cat "$GUARD_SOURCE"
+                printf '<!-- ORCHESTRA_GUARD_END -->\n'
+            } >> "$GLOBAL_CLAUDE_MD"
+            ok "patched: ~/.claude/CLAUDE.md (orchestra-guard block appended)"
+        fi
+    fi
+fi
+
+# ── 10. Global gitignore ──────────────────────────────────────────────────────
 echo "Gitignore:"
 GLOBAL_GI="${HOME}/.gitignore_global"
 GI_ENTRY=".claude/orchestra/"
