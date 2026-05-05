@@ -238,32 +238,56 @@ case "$MODE" in
     # Claude Code session ending. Finalise any orchestra session_dirs that
     # don't have telemetry.json yet. Best-effort; never blocks Claude.
     SESSIONS_ROOT="${ORCHESTRA_DIR}/sessions"
+    STATE_ENV="${ORCHESTRA_DIR}/state.env"
     if [ -d "$SESSIONS_ROOT" ]; then
       find "$SESSIONS_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
         | while read -r dir; do
-            if [ ! -f "$dir/telemetry.json" ] && [ -f "$dir/PLAN.md" ]; then
-              # Determine command from inflight markers. .brain-inflight and
-              # .duo-inflight are written by /brain and /duo-start setup; default
-              # to brain for legacy session_dirs without either marker.
-              CMD="brain"
-              [ -f "$dir/.brain-inflight" ] && CMD="brain"
-              [ -f "$dir/.duo-inflight" ]   && CMD="duo"
-              # Determine outcome marker. If .outcome doesn't exist, write
-              # "abandoned" to disk before invoking the summariser so its mtime
-              # bounds the T2 ended_at_unix window (else the parser falls back
-              # to time.time() and re-runs would expand the window).
-              if [ -f "$dir/.outcome" ]; then
-                OUTCOME="$(cat "$dir/.outcome" 2>/dev/null || echo "abandoned")"
-              else
-                OUTCOME="abandoned"
-                printf '%s' "$OUTCOME" > "$dir/.outcome.tmp" 2>/dev/null \
-                  && mv -f "$dir/.outcome.tmp" "$dir/.outcome" 2>/dev/null || true
-              fi
-              # Remove stale inflight markers so the badge / session-discovery clears.
-              rm -f "$dir/.duo-inflight" "$dir/.brain-inflight" 2>/dev/null || true
-              # Invoke summariser; pass empty transcript-id to let it self-discover.
-              SUMMARISER="${HOME}/.claude/scripts/telemetry-summarize.sh"
-              [ -x "$SUMMARISER" ] && "$SUMMARISER" "$dir" "$CMD" "$OUTCOME" "" 2>/dev/null || true
+            # Skip already-finalised sessions.
+            [ -f "$dir/telemetry.json" ] && continue
+            # Finalise any session_dir with at least one orchestra-pipeline
+            # artefact. Broadened from the original "PLAN.md only" gate to
+            # also catch Phase-0-only abandonments (no PLAN.md but RESEARCH.md
+            # or telemetry-events.jsonl present) and pre-.brain-inflight
+            # legacy sessions where the dispatch-skip bug prevented PLAN.md
+            # from being written.
+            HAS_ARTEFACT=false
+            for marker in PLAN.md RESEARCH.md .brain-inflight .duo-inflight telemetry-events.jsonl; do
+              if [ -e "$dir/$marker" ]; then HAS_ARTEFACT=true; break; fi
+            done
+            $HAS_ARTEFACT || continue
+            # Determine command from inflight markers. .brain-inflight and
+            # .duo-inflight are written by /brain and /duo-start setup;
+            # default to brain for legacy session_dirs without either marker.
+            CMD="brain"
+            [ -f "$dir/.brain-inflight" ] && CMD="brain"
+            [ -f "$dir/.duo-inflight" ]   && CMD="duo"
+            # Determine outcome marker. If .outcome doesn't exist, write
+            # "abandoned" to disk before invoking the summariser so its mtime
+            # bounds the T2 ended_at_unix window (else the parser falls back
+            # to time.time() and re-runs would expand the window).
+            if [ -f "$dir/.outcome" ]; then
+              OUTCOME="$(cat "$dir/.outcome" 2>/dev/null || echo "abandoned")"
+            else
+              OUTCOME="abandoned"
+              printf '%s' "$OUTCOME" > "$dir/.outcome.tmp" 2>/dev/null \
+                && mv -f "$dir/.outcome.tmp" "$dir/.outcome" 2>/dev/null || true
+            fi
+            # Remove stale inflight markers so the badge / session-discovery clears.
+            rm -f "$dir/.duo-inflight" "$dir/.brain-inflight" 2>/dev/null || true
+            # Invoke summariser; pass empty transcript-id to let it self-discover.
+            SUMMARISER="${HOME}/.claude/scripts/telemetry-summarize.sh"
+            [ -x "$SUMMARISER" ] && "$SUMMARISER" "$dir" "$CMD" "$OUTCOME" "" 2>/dev/null || true
+            # Reset state.env if we just finalised a /brain session. The
+            # /brain command body's cleanup block does this from in-session,
+            # but Phase-0-only abandonments and dispatch-skip bugs can leave
+            # state.env stuck on ORCHESTRA_MODE=brain. /duo's badge keys on
+            # .duo-inflight (not state.env), so this only matters for brain.
+            # Note: in multi-Claude-Code-session concurrency, this can clear
+            # the badge of a still-active /brain in another session — same
+            # flavour as the existing concurrency caveat (E4) in design.md.
+            if [ "$CMD" = "brain" ] && [ -f "$STATE_ENV" ]; then
+              printf 'ORCHESTRA_MODE=default\nORCHESTRA_TITLE=\n' \
+                >> "$STATE_ENV" 2>/dev/null || true
             fi
           done
     fi

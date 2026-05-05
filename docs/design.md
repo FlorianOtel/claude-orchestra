@@ -42,6 +42,8 @@ Enter plan mode, type `/brain <task>`. Opus runs Phase 0 (RESEARCH, inline — i
 
 `/brain-abandon` cancels the active /brain session cleanly at any point — writes `.outcome=abandoned`, removes the inflight marker, runs T2 telemetry, and clears the badge. The cleanup block also runs automatically on Phase 0 abandonment ("never mind", "drop it"), Phase 1 outright rejection at the plan-approval gate, and Phase 3 BLOCK verdict — so every exit path bounds the T2 telemetry window.
 
+**Pipeline-rules guard (2026-05-05):** plan-mode and `/brain` give Brain conflicting instructions about who produces the plan — plan-mode's per-turn "build your plan in `~/.claude/plans/<name>.md` using Write" reminder out-competed `/brain.md`'s loaded-once "dispatch Planner via Task tool" instruction in long Phase 0 sessions, causing Brain to write the plan and execute the implementation directly under Opus 4.7. Hybrid fix: (a) `commands/brain.md` reinforced with an explicit override clause, concrete `Task`-tool dispatch templates at the top of each Phase, a self-check guard, phase-boundary reinforcement, and a negative-examples block; (b) a per-turn guard block at `claude-md-block/orchestra-guard.md` injected by `deploy.sh` into `~/.claude/CLAUDE.md` between sentinels `<!-- ORCHESTRA_GUARD_START -->` / `<!-- ORCHESTRA_GUARD_END -->`. The CLAUDE.md guard is the load-bearing component because it loads on every turn (parallel to plan-mode's reminder cadence), while `/brain.md` reinforcement makes the command body self-coherent. Cost overhead is < 5% of typical /brain session due to prompt caching of stable system-prompt content.
+
 When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo instead.
 
 ## How the workflow works
@@ -91,12 +93,13 @@ No `/orchestra-mode` command in v1 (`auto` is deferred to v2).
 
 ### Hooks
 
-Four hook types in `~/.claude/settings.json`, dispatching to `~/.claude/scripts/orchestra-hook.sh`:
+Five hook types in `~/.claude/settings.json`, dispatching to `~/.claude/scripts/orchestra-hook.sh`:
 
 1. **PreToolUse(Agent)** — `start` mode. Logs subagent invocation to invocations.log.
 2. **SubagentStop** — `end` mode. Logs subagent completion.
 3. **PreCompact** — `compact` mode. Saves `brain-state.md` (plan/task/decision snapshot for resumption post-`/clear`).
-4. (No tool-call hooks; subagent tool dispatch is opaque by design.)
+4. **Stop** — `stop` mode (safety net). Walks unfinalised session_dirs at Claude Code session end. Gate (broadened 2026-05-05): no `telemetry.json` AND any of (`PLAN.md`, `RESEARCH.md`, `.brain-inflight`, `.duo-inflight`, `telemetry-events.jsonl`) — catches Phase-0-only abandonments and dispatch-skip cases. Writes `.outcome=abandoned` to disk before invoking the summariser (so its mtime bounds the T2 window), removes stale `.duo-inflight`/`.brain-inflight`, runs T2, and resets `state.env` (`ORCHESTRA_MODE=default`) when finalising a /brain session so the badge clears.
+5. (No tool-call hooks; subagent tool dispatch is opaque by design.)
 
 ### Status line
 
@@ -160,6 +163,8 @@ scripts/
 orchestra/
   config.yaml
   invocations.log (append-only)
+CLAUDE.md  (sentinel-bracketed orchestra-guard block injected by deploy.sh
+            from claude-md-block/orchestra-guard.md in the repo)
 ```
 
 **Per-project (.claude/orchestra/):**
@@ -257,7 +262,7 @@ Two complementary layers:
 
 T2 time window: `[started_at_unix, ended_at_unix]`. `started_at_unix` is parsed from the session-dir basename (`<YYYYMMDDTHHMMSSZ>-<PID>`). `ended_at_unix` is the mtime of `${SESSION_DIR}/.outcome` when present, falling back to `time.time()` otherwise. `/duo-stop`, `/duo-abandon`, `/brain` cleanup (PASS, FIX-loop final, BLOCK, Phase 0 abandonment, Phase 1 outright rejection), and `/brain-abandon` all write `.outcome` before invoking the summariser; the Stop-hook safety net writes `.outcome=abandoned` to disk before invoking it too. With `.outcome` mtime as the upper bound, post-cleanup parent-transcript activity is excluded from cost attribution and re-runs of the summariser are idempotent (the window does not expand to "now").
 
-Safety net: the Claude Code `Stop` hook runs the T2 summariser on any unfinalised session dirs at session end. The hook writes `.outcome=abandoned` and removes any stale `.duo-inflight` and `.brain-inflight` markers (clearing the badge) before invoking the summariser.
+Safety net: the Claude Code `Stop` hook runs the T2 summariser on any unfinalised session dirs at session end. The hook writes `.outcome=abandoned` and removes any stale `.duo-inflight` and `.brain-inflight` markers (clearing the badge) before invoking the summariser. Gate broadened 2026-05-05: any session_dir with at least one orchestra-pipeline artefact (`PLAN.md`, `RESEARCH.md`, `.brain-inflight`, `.duo-inflight`, or `telemetry-events.jsonl`) is finalised; previously the gate required `PLAN.md` specifically and silently skipped Phase-0-only abandonments and dispatch-skip cases. After finalising a /brain session, the safety net also appends `ORCHESTRA_MODE=default` to `state.env` so the badge clears (multi-Claude-Code-session concurrency caveat: this can clear another session's still-active /brain badge — same flavour as the existing concurrency limitation).
 
 #### Monitoring costs per tier
 
