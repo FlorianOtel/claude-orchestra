@@ -2,8 +2,8 @@
 title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design notes & open questions"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-04--21-50
+updated_by: Claude Code (Claude Opus 4.7, 1M context)
+updated_at: 2026-05-05--20-30
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1350,3 +1350,25 @@ Fix: normalize all three places that compute a project path with `realpath` befo
 - Retroactively patched all 8 existing log entries with their `session_dir` paths via a one-time `find` scan.
 
 `--tier` now works from any directory and finds sessions across all projects.
+
+## Amendment 2026-05-05 — /duo session-bracketing redesign + .outcome-bounded T2 window
+
+**Problem.** `commands/duo.md` collapsed setup, plan draft, `ExitPlanMode`, Actor execution, and cleanup into a single slash-command response. Phase 1 said "interactive" but Brain naturally barrelled through to the approval gate in one turn. If the operator wanted to revise the plan instead of approve, the only built-in moves were accept / manually-approve / cancel — rejecting and chatting informally to refine left three artefacts in stale states:
+
+1. `.duo-inflight` was created at setup and removed only by Phase 4 cleanup. Rejection skipped Phase 4. The status-line badge persisted until the 30-day reaper or Stop hook fired.
+2. T2 cost attribution corruption: `scripts/telemetry-summarize.py` time-windowed the parent transcript between session_dir mtime and `time.time()`. Post-rejection chat in the same Claude Code session fell inside that window and got billed to the orchestra session.
+3. The Stop-hook safety net in `orchestra-hook.sh` read `.outcome` if it existed and defaulted to `"abandoned"` in memory only — it did not write `.outcome` to disk, so re-runs of the summariser would expand the window to "now".
+
+**Fix.** Three coordinated changes:
+
+1. **Replace `commands/duo.md` with three slash commands.** `/duo-start <task>` opens the session (setup + initial `PLAN.md` draft) and yields back without calling `ExitPlanMode`. Refinement happens across natural plan-mode turns on `${SESSION_DIR}/PLAN.md` — Claude Code's native plan-mode iteration drives it; no slash command per turn, no injected "we are in /duo mode" state. `/duo-stop` finds the active `.duo-inflight`, presents the final plan, calls `ExitPlanMode`, dispatches Actor, and runs Phase 4 cleanup. On `ExitPlanMode` rejection (cancel), the session stays open for further refinement. `/duo-abandon` writes `.outcome=abandoned`, removes `.duo-inflight`, runs T2, and clears the badge.
+2. **`.outcome` mtime bounds T2.** `scripts/telemetry-summarize.py` reads `${SESSION_DIR}/.outcome` mtime as `ended_at_unix` when the file exists, falling back to `time.time()` otherwise. `/duo-stop`, `/duo-abandon`, and `/brain` cleanup all write `.outcome` *before* invoking the summariser, so its mtime is the canonical session terminator. T2 windows are now `[session_dir_mtime, .outcome_mtime]` for every code path; post-cleanup parent activity is excluded; re-runs of the summariser are idempotent (the window does not expand).
+3. **Stop-hook safety net writes `.outcome` to disk.** `orchestra-hook.sh` `stop)` mode now writes `.outcome=abandoned` to disk and removes any stale `.duo-inflight` *before* invoking the summariser. Force-quit / crashed sessions get the same bounded-window treatment as cleanly cancelled ones.
+
+**Refusal logic.** `/duo-start` refuses if a `.duo-inflight` already exists under the project's sessions root (one active /duo session per project). `/duo-stop` and `/duo-abandon` refuse if no `.duo-inflight` is present.
+
+**Files.** New: `commands/duo-start.md`, `commands/duo-stop.md`, `commands/duo-abandon.md`. Removed: `commands/duo.md` (added to `deploy.sh` orphan-cleanup list). Modified: `scripts/telemetry-summarize.py`, `scripts/orchestra-hook.sh`, `scripts/{telemetry-summarize,smoke-test,telemetry-report}.sh` hint strings, `collect.sh` (collects three new files), `deploy.sh` (orphan-cleanup + quick-start), `docs/design.md`, `CLAUDE.md`, `README.md`. /brain is unchanged in this amendment (its rejection-path cleanup gap is logged for a follow-up).
+
+**Verification.** Mechanical T2 test: synthetic session_dir with `.outcome` written 5s before invoking the parser; assertion `ended_at_unix == .outcome.mtime` (and `!= time.time()`) — PASSED. Deploy verified all artefacts in place; orphan `~/.claude/commands/duo.md` removed. End-to-end interactive smoke test (`/duo-start → refine → /duo-stop → execute → cleanup`) is documented in `CLAUDE.md` and requires the operator running slash commands in plan mode.
+
+**Key design decisions.** Lean on Claude Code's native plan-mode iteration; don't add a "we are in /duo mode" CLAUDE.md instruction or memory flag. Marker file (`.duo-inflight`) is for badge + telemetry only, not for re-injecting Brain's behaviour. One active /duo session per project. No auto-detection of "approval-like" phrases — `/duo-stop` is the only commit signal. /brain Phase 0 already provides multi-turn refinement via natural-language signal; splitting it would add ceremony without value (a follow-up plan addresses /brain's narrower rejection-cleanup bug separately).

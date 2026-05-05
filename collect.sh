@@ -57,7 +57,9 @@ collect_file "$CLAUDE/agents/reviewer.md"        "$REPO/agents/reviewer.md"
 
 echo "Commands:"
 collect_file "$CLAUDE/commands/brain.md"         "$REPO/commands/brain.md"
-collect_file "$CLAUDE/commands/duo.md"           "$REPO/commands/duo.md"
+collect_file "$CLAUDE/commands/duo-start.md"     "$REPO/commands/duo-start.md"
+collect_file "$CLAUDE/commands/duo-stop.md"      "$REPO/commands/duo-stop.md"
+collect_file "$CLAUDE/commands/duo-abandon.md"   "$REPO/commands/duo-abandon.md"
 
 echo "Scripts:"
 collect_file "$CLAUDE/scripts/orchestra-hook.sh" "$REPO/scripts/orchestra-hook.sh"

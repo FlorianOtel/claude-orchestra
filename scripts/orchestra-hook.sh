@@ -245,8 +245,19 @@ case "$MODE" in
               # Determine command from presence of .duo-inflight (legacy) or RESEARCH.md (brain).
               CMD="brain"
               [ -f "$dir/.duo-inflight" ] && CMD="duo"
-              # Determine outcome marker
-              OUTCOME="$(cat "$dir/.outcome" 2>/dev/null || echo "abandoned")"
+              # Determine outcome marker. If .outcome doesn't exist, write
+              # "abandoned" to disk before invoking the summariser so its mtime
+              # bounds the T2 ended_at_unix window (else the parser falls back
+              # to time.time() and re-runs would expand the window).
+              if [ -f "$dir/.outcome" ]; then
+                OUTCOME="$(cat "$dir/.outcome" 2>/dev/null || echo "abandoned")"
+              else
+                OUTCOME="abandoned"
+                printf '%s' "$OUTCOME" > "$dir/.outcome.tmp" 2>/dev/null \
+                  && mv -f "$dir/.outcome.tmp" "$dir/.outcome" 2>/dev/null || true
+              fi
+              # Remove any stale .duo-inflight so the badge clears.
+              rm -f "$dir/.duo-inflight" 2>/dev/null || true
               # Invoke summariser; pass empty transcript-id to let it self-discover.
               SUMMARISER="${HOME}/.claude/scripts/telemetry-summarize.sh"
               [ -x "$SUMMARISER" ] && "$SUMMARISER" "$dir" "$CMD" "$OUTCOME" "" 2>/dev/null || true

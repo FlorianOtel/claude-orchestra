@@ -354,7 +354,19 @@ def main():
             started_at_unix = dt.timestamp()
         except Exception:
             pass
-    ended_at_unix = time.time()
+    # ended_at_unix: prefer .outcome mtime when present so the time window is
+    # bounded by an explicit session terminator (set by /duo-stop, /duo-abandon,
+    # or the Stop-hook safety net) rather than by "now". This excludes any
+    # post-cleanup parent-transcript activity from cost attribution and makes
+    # re-runs of the summariser idempotent.
+    outcome_path = session_dir / ".outcome"
+    if outcome_path.exists():
+        try:
+            ended_at_unix = outcome_path.stat().st_mtime
+        except Exception:
+            ended_at_unix = time.time()
+    else:
+        ended_at_unix = time.time()
 
     # Transcript — priority: .transcript-path (full path stored at session start) >
     # explicit UUID arg > CLAUDE_PROJECT_DIR-based lookup > legacy hardcoded fallback

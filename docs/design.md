@@ -28,11 +28,13 @@ Use it when you want code changes reviewed before landing, or when you want to i
 
 Talk to Brain normally. Brain delegates to Planner/Actor/Reviewer as needed. No forced pipeline. Example: "explain the SoHoAI routing architecture" — Brain reads files and answers directly.
 
-### /duo — lightweight (Sonnet plans, Haiku acts)
+### /duo — lightweight (Sonnet plans, Haiku acts), session-bracketed
 
-Start a Sonnet 4.6 session, enter plan mode, chat to refine scope, type `/duo`. Sonnet plans, Haiku executes all steps in one delegation. No Reviewer. Example: "add a docstring to rag_engine/search.py::search_rag" — low risk, no review needed.
+`/duo` is a three-command session-bracketed pipeline. `/duo-start <task>` opens a planning session (sets up the session_dir, drafts an initial `PLAN.md`, and yields back). The operator then refines the plan across as many normal plan-mode turns as needed. `/duo-stop` commits the plan, calls `ExitPlanMode`, dispatches Actor (Haiku), and runs cleanup + telemetry. `/duo-abandon` cancels the active session cleanly. No Reviewer. Example: "add a docstring to rag_engine/search.py::search_rag" — low risk, no review needed.
 
-Workflow: (1) `claude --model claude-sonnet-4-6`. (2) `Shift+Tab` to enter plan mode. (3) Refine scope interactively. (4) `/duo`. (5) On approval, `Shift+Tab` to bypassPermissions, Actor runs uninterrupted.
+Workflow: (1) `claude --model claude-sonnet-4-6`. (2) `Shift+Tab` to enter plan mode. (3) `/duo-start <task>`. (4) Refine across turns until the plan is right. (5) `/duo-stop` to execute (or `/duo-abandon` to cancel); on approval, `Shift+Tab` to bypassPermissions if desired, Actor runs uninterrupted.
+
+Splitting the plan-approval gate into an explicit `/duo-stop` (rather than the slash command barrelling through to `ExitPlanMode` in one response) means rejection-or-redirect during planning is now first-class: refinement is a normal multi-turn conversation, not a rejected-plan-and-informally-keep-chatting situation. Telemetry attribution stays correct because `.outcome`-file mtime bounds the T2 time window (see §Per-session telemetry).
 
 ### /brain — full pipeline (Opus orchestrates, cap-3 review loop)
 
@@ -148,7 +150,8 @@ Concurrency safety via hostname + PID + timestamp stamping in log lines; atomic-
 agents/
   planner.md, actor.md, reviewer.md
 commands/
-  brain.md, duo.md
+  brain.md
+  duo-start.md, duo-stop.md, duo-abandon.md
 scripts/
   orchestra-hook.sh
 orchestra/
@@ -248,7 +251,9 @@ Two complementary layers:
 
 - **T2 (transcript parsing, authoritative)**: runs once at cleanup. Reads the actual JSONL transcripts for real token counts and model attribution. Normalises versioned model IDs (strips `-YYYYMMDD` suffix for pricing lookup) and skips `<synthetic>` messages (written by `/compact`). T2 supersedes T1 for all cost figures. Transcript discovery priority: (1) `.transcript-path` in the session dir — full JSONL path written at session-dir creation time (setup block) and reinforced by the PreToolUse hook on first subagent dispatch (where `CLAUDE_PROJECT_DIR` is reliably set); (2) global scan of all `~/.claude/projects/*/` subdirectories — exact UUID match when a UUID is known, most-recently-modified JSONL otherwise. This ensures telemetry works correctly when `/duo` or `/brain` is invoked from any project on any machine, regardless of path form (NFS mount path vs local symlink path).
 
-Safety net: the Claude Code `Stop` hook runs the T2 summariser on any unfinalised session dirs at session end.
+T2 time window: `[started_at_unix, ended_at_unix]`. `started_at_unix` is parsed from the session-dir basename (`<YYYYMMDDTHHMMSSZ>-<PID>`). `ended_at_unix` is the mtime of `${SESSION_DIR}/.outcome` when present, falling back to `time.time()` otherwise. `/duo-stop`, `/duo-abandon`, and `/brain` cleanup all write `.outcome` before invoking the summariser; the Stop-hook safety net writes `.outcome=abandoned` to disk before invoking it too. With `.outcome` mtime as the upper bound, post-cleanup parent-transcript activity is excluded from cost attribution and re-runs of the summariser are idempotent (the window does not expand to "now").
+
+Safety net: the Claude Code `Stop` hook runs the T2 summariser on any unfinalised session dirs at session end. The hook writes `.outcome=abandoned` and removes any stale `.duo-inflight` (clearing the badge) before invoking the summariser.
 
 #### Monitoring costs per tier
 
