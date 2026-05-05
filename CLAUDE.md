@@ -15,7 +15,7 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 ## Layout
 
 - `agents/`   — planner (Sonnet 4.6), actor (Haiku 4.5), reviewer (Sonnet 4.6)
-- `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents); /duo-start, /duo-stop, /duo-abandon (lightweight session-bracketed pipeline: Sonnet plans interactively across multiple turns, Haiku acts after /duo-stop)
+- `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents) + /brain-abandon (explicit cancel); /duo-start, /duo-stop, /duo-abandon (lightweight session-bracketed pipeline: Sonnet plans interactively across multiple turns, Haiku acts after /duo-stop)
 - `scripts/orchestra-hook.sh` — PreToolUse / SubagentStop / PreCompact / Stop dispatcher
 - `config/config.yaml` — global orchestra defaults
 - `docs/design.md`    — full architecture reference

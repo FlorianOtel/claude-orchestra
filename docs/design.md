@@ -38,7 +38,9 @@ Splitting the plan-approval gate into an explicit `/duo-stop` (rather than the s
 
 ### /brain — full pipeline (Opus orchestrates, cap-3 review loop)
 
-Enter plan mode, type `/brain <task>`. Opus runs Phase 0 (RESEARCH, inline — interrogates you), then Phase 1 (PLAN via Planner), Phase 2 (IMPLEMENT via Actor, one step at a time), Phase 3 (REVIEW via Reviewer, loop up to 3 times). Example: "refactor the SoHoAI LiteLLM routing to support a new provider" — high-risk, multi-step, needs review loop.
+Enter plan mode, type `/brain <task>`. Opus runs Phase 0 (RESEARCH, inline — interrogates you across as many turns as needed; the operator's natural-language signal — "proceed", "go ahead" — ends Phase 0), then Phase 1 (PLAN via Planner), Phase 2 (IMPLEMENT via Actor, one step at a time), Phase 3 (REVIEW via Reviewer, loop up to 3 times). Example: "refactor the SoHoAI LiteLLM routing to support a new provider" — high-risk, multi-step, needs review loop.
+
+`/brain-abandon` cancels the active /brain session cleanly at any point — writes `.outcome=abandoned`, removes the inflight marker, runs T2 telemetry, and clears the badge. The cleanup block also runs automatically on Phase 0 abandonment ("never mind", "drop it"), Phase 1 outright rejection at the plan-approval gate, and Phase 3 BLOCK verdict — so every exit path bounds the T2 telemetry window.
 
 When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo instead.
 
@@ -126,8 +128,9 @@ The status line script is called by Claude Code on each render tick — after ev
 
 | Signal | Source | Written by |
 |---|---|---|
-| `/duo` title and inflight state | `${SESSION_DIR}/.duo-inflight` | `/duo` command setup |
+| `/duo` title and inflight state | `${SESSION_DIR}/.duo-inflight` | `/duo-start` command setup |
 | `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
+| `/brain` inflight marker (session-discovery for `/brain-abandon` and explicit CMD-classification by Stop-hook) | `${SESSION_DIR}/.brain-inflight` | `/brain` command setup |
 | Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
 | Live cost | `tokens_used` from Claude Code status-line input JSON × $9/M Sonnet blend | Claude Code (always available) |
 
@@ -150,7 +153,7 @@ Concurrency safety via hostname + PID + timestamp stamping in log lines; atomic-
 agents/
   planner.md, actor.md, reviewer.md
 commands/
-  brain.md
+  brain.md, brain-abandon.md
   duo-start.md, duo-stop.md, duo-abandon.md
 scripts/
   orchestra-hook.sh
@@ -164,7 +167,8 @@ orchestra/
 sessions/
   <UTC-ts>-<PID>/
     PLAN.md, TASKS.json, review-comments.md
-    .duo-inflight          (present during /duo planning phase only)
+    .duo-inflight          (present during /duo planning phase + execution; removed by /duo-stop or /duo-abandon)
+    .brain-inflight        (present throughout /brain Phase 0/1/2/3; removed by cleanup block or /brain-abandon)
     .last-logfile          (sidecar: hook start writes logfile path; end reads+deletes)
     .outcome               (pass | block | partial | abandoned)
     telemetry-events.jsonl (T1 live hook stream)
@@ -251,9 +255,9 @@ Two complementary layers:
 
 - **T2 (transcript parsing, authoritative)**: runs once at cleanup. Reads the actual JSONL transcripts for real token counts and model attribution. Normalises versioned model IDs (strips `-YYYYMMDD` suffix for pricing lookup) and skips `<synthetic>` messages (written by `/compact`). T2 supersedes T1 for all cost figures. Transcript discovery priority: (1) `.transcript-path` in the session dir — full JSONL path written at session-dir creation time (setup block) and reinforced by the PreToolUse hook on first subagent dispatch (where `CLAUDE_PROJECT_DIR` is reliably set); (2) global scan of all `~/.claude/projects/*/` subdirectories — exact UUID match when a UUID is known, most-recently-modified JSONL otherwise. This ensures telemetry works correctly when `/duo` or `/brain` is invoked from any project on any machine, regardless of path form (NFS mount path vs local symlink path).
 
-T2 time window: `[started_at_unix, ended_at_unix]`. `started_at_unix` is parsed from the session-dir basename (`<YYYYMMDDTHHMMSSZ>-<PID>`). `ended_at_unix` is the mtime of `${SESSION_DIR}/.outcome` when present, falling back to `time.time()` otherwise. `/duo-stop`, `/duo-abandon`, and `/brain` cleanup all write `.outcome` before invoking the summariser; the Stop-hook safety net writes `.outcome=abandoned` to disk before invoking it too. With `.outcome` mtime as the upper bound, post-cleanup parent-transcript activity is excluded from cost attribution and re-runs of the summariser are idempotent (the window does not expand to "now").
+T2 time window: `[started_at_unix, ended_at_unix]`. `started_at_unix` is parsed from the session-dir basename (`<YYYYMMDDTHHMMSSZ>-<PID>`). `ended_at_unix` is the mtime of `${SESSION_DIR}/.outcome` when present, falling back to `time.time()` otherwise. `/duo-stop`, `/duo-abandon`, `/brain` cleanup (PASS, FIX-loop final, BLOCK, Phase 0 abandonment, Phase 1 outright rejection), and `/brain-abandon` all write `.outcome` before invoking the summariser; the Stop-hook safety net writes `.outcome=abandoned` to disk before invoking it too. With `.outcome` mtime as the upper bound, post-cleanup parent-transcript activity is excluded from cost attribution and re-runs of the summariser are idempotent (the window does not expand to "now").
 
-Safety net: the Claude Code `Stop` hook runs the T2 summariser on any unfinalised session dirs at session end. The hook writes `.outcome=abandoned` and removes any stale `.duo-inflight` (clearing the badge) before invoking the summariser.
+Safety net: the Claude Code `Stop` hook runs the T2 summariser on any unfinalised session dirs at session end. The hook writes `.outcome=abandoned` and removes any stale `.duo-inflight` and `.brain-inflight` markers (clearing the badge) before invoking the summariser.
 
 #### Monitoring costs per tier
 

@@ -68,6 +68,12 @@ SESSION_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 SESSION_DIR="${SESSIONS_ROOT}/${SESSION_ID}"
 mkdir -p "${SESSION_DIR}"
 export CLAUDE_ORCHESTRA_SESSION_DIR="${SESSION_DIR}"
+# Write .brain-inflight marker in the same shell so SESSION_DIR is available.
+# Stays live through Phase 0/1/2/3; removed by the cleanup block (PASS / abandon /
+# block branches) or by /brain-abandon.
+printf '%s' "<task title, ≤30 chars, no single-quotes>" \
+  > "${SESSION_DIR}/.brain-inflight.tmp"
+mv -f "${SESSION_DIR}/.brain-inflight.tmp" "${SESSION_DIR}/.brain-inflight"
 # Capture current session transcript UUID before subagents create new JSONLs
 _MANGLED="$(printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}" | tr '/' '-')"
 _TRANSCRIPTS="${HOME}/.claude/projects/${_MANGLED}"
@@ -183,10 +189,13 @@ Then proceed to Phase 1.
 If the operator explicitly abandons during the dialogue ("never mind", "drop it"):
 
 1. Summarise briefly what was discussed.
-2. Do NOT write RESEARCH.md.
-3. Stop. Do not proceed to Phase 1.
+2. Do not write RESEARCH.md.
+3. Run the cleanup block (see § Cleanup) with `outcome=abandoned`. This writes
+   `.outcome=abandoned`, removes `.brain-inflight`, runs the T2 telemetry
+   summariser, and clears the status-line badge.
+4. Stop. Do not proceed to Phase 1.
 
-The session subdirectory is left empty; it will be reaped by the housekeeping cleanup in due course.
+The session subdirectory is preserved (PLAN.md may not exist; RESEARCH.md is intentionally not written). The 30-day reaper eventually removes it.
 
 ---
 
@@ -215,7 +224,7 @@ Show the plan to the operator. Ask explicitly: **"Approve this plan?"** Wait for
 
 - **Approved:** call `ExitPlanMode` with the plan content. The operator will then see Claude Code's standard "auto-edit / manually approve / cancel" prompt at the parent layer — this is where the permission posture for Phase 2 is set.
 - **Rejected with feedback:** dispatch Planner again with the feedback. Do not proceed to Phase 2.
-- **Rejected outright:** stop the pipeline. Phase 0 RESEARCH.md remains; PLAN.md remains; nothing is executed.
+- **Rejected outright:** run the cleanup block (see § Cleanup) with `outcome=abandoned`, then stop the pipeline. RESEARCH.md and PLAN.md are left in place for forensics.
 
 ---
 
@@ -265,24 +274,36 @@ Verdict semantics (Reviewer states verdict in its return text):
 
 - **PASS:** brief sign-off; pipeline ends.
 - **FIX:** bounded actionable issues; dispatch Actor again with the issue list as a follow-up step, then re-Review.
-- **BLOCK:** structural concern; stop the loop and surface to operator.
+- **BLOCK:** structural concern; run the cleanup block (see § Cleanup) with `outcome=block`, surface Reviewer's verdict to the operator, then stop.
 
 ---
 
 ## Cleanup
 
+This block runs on every exit path: PASS, FIX-loop final, BLOCK, Phase 0
+abandonment, Phase 1 outright rejection. Use the matching outcome value
+(`pass | fix-loop | block | abandoned`).
+
+Use the literal session dir path captured from the setup echo (`session_dir=...`)
+— substitute `<SESSION_DIR>` with that value. Do not rely on
+`${CLAUDE_ORCHESTRA_SESSION_DIR}`; it is an env var exported in the setup Bash
+call and does not persist into later Bash tool calls.
+
 ### Telemetry finalisation
 
-Before clearing the pipeline badge, write the outcome marker and trigger the T2 telemetry pass. Use the outcome from Reviewer's verdict (`pass | fix-loop | block | abandoned`):
+Order matters: write `.outcome` **before** removing `.brain-inflight` and
+**before** invoking the summariser, so its mtime bounds the T2 time window.
 
 ```bash
-printf '%s' "<outcome>" > "${CLAUDE_ORCHESTRA_SESSION_DIR}/.outcome"
+printf '%s' "<outcome: pass | fix-loop | block | abandoned>" > "<SESSION_DIR>/.outcome.tmp"
+mv -f "<SESSION_DIR>/.outcome.tmp" "<SESSION_DIR>/.outcome"
+rm -f "<SESSION_DIR>/.brain-inflight"
 ~/.claude/scripts/telemetry-summarize.sh \
-    "${CLAUDE_ORCHESTRA_SESSION_DIR}" brain "<outcome>" "$(cat \"${CLAUDE_ORCHESTRA_SESSION_DIR}/.transcript-uuid\" 2>/dev/null || echo \"${CLAUDE_SESSION_ID:-}\")" 2>&1 \
+    "<SESSION_DIR>" brain "<outcome>" "$(cat \"<SESSION_DIR>/.transcript-uuid\" 2>/dev/null || echo \"${CLAUDE_SESSION_ID:-}\")" 2>&1 \
     | tail -n 1
 ```
 
-The summariser writes `${CLAUDE_ORCHESTRA_SESSION_DIR}/telemetry.json` (full record) and appends one line to `~/.claude/orchestra/telemetry.jsonl` (global trend log).
+The summariser writes `<SESSION_DIR>/telemetry.json` (full record) and appends one line to `~/.claude/orchestra/telemetry.jsonl` (global trend log). Errors are logged to `parser_warnings[]` in the JSON; the script never fails the pipeline.
 
 ### Clear the pipeline badge
 
