@@ -2,8 +2,8 @@
 title: "Claude Orchestra — v2 Deferred & TODO items"
 created_at: 20260428-000000
 created_by: Claude Code (Claude Haiku 4.5)
-updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 20260430-195438
+updated_by: Claude Code (Claude Haiku 4.5)
+updated_at: 2026-05-06--00-00
 context: >
   Extract from the design.md reference document, capturing all deferred
   features, v2 architectural stubs, optimization opportunities, and open
@@ -86,6 +86,24 @@ Compare `cost_usd_estimate` and `regret_flag` rate across sessions where Brain w
 | Invocations log | `${PROJECT}/.claude/orchestra/invocations.log` | No rotation in v1 — prune manually |
 
 Pricing rates: `config/pricing.yaml` carries `last_updated`. `telemetry-report.sh` warns if > 90 days stale. Verify against https://docs.anthropic.com/en/docs/about-claude/models/all-models before using cost data for decisions.
+
+---
+
+## Stage 2 telemetry — SoHoAI API integration (COMPLETED)
+
+**Summary:** T2 cost attribution now uses SoHoAI as primary source (with fallback to litellm and pricing.yaml). Sessions are identified by `X-Orchestra-Session-ID` header injected into `settings.local.json`.
+
+| Item | Status | Notes |
+|---|---|---|
+| Header injection (all 5 commands) | done | Atomic `_TMP + mv -f` pattern in setup/cleanup blocks |
+| SoHoAI API query (`query_sohoai_cost`) | done | GET `/v1/usage/stats?session_id=&since=&until=`, ±60s buffer |
+| litellm fallback (`query_litellm_cost`) | done | Model ID normalization, cache-token rates via `get_model_info()` |
+| pricing.yaml fallback | done | Unchanged from original; used if SoHoAI and litellm return zero |
+| `cost_source` field | done | Recorded in `telemetry.json` and `telemetry.jsonl`; values: `sohoai_api`, `litellm`, `pricing_yaml`, `none` |
+| `telemetry-report.sh` Source column | done | Displays `cost_source` in default-mode output |
+| `config/config.yaml` `sohoai:` block | done | `enabled: true`, `timeout_s: 5` |
+
+Cost cascade: SoHoAI → litellm (with cache-token rates) → pricing.yaml. See `design.md` §"Stage 2 — SoHoAI API integration" for architecture details.
 
 ---
 

@@ -23,6 +23,9 @@ import os
 import re
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -108,6 +111,127 @@ def load_pricing_yaml() -> Dict[str, Dict[str, float]]:
                 continue
 
     return {}
+
+
+def _load_sohoai_config() -> Dict[str, Any]:
+    """Load SoHoAI config from config/config.yaml or ~/.claude/orchestra/config.yaml"""
+    if yaml is None:
+        return {"enabled": True, "timeout_s": 5}
+
+    candidates = [
+        Path(__file__).parent.parent / "config" / "config.yaml",
+        Path.home() / ".claude" / "orchestra" / "config.yaml",
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            try:
+                with open(candidate) as f:
+                    data = yaml.safe_load(f)
+                    if data and "sohoai" in data:
+                        return data["sohoai"]
+            except Exception:
+                continue
+
+    return {"enabled": True, "timeout_s": 5}
+
+
+def query_sohoai_cost(
+    session_id: str,
+    started_at_unix: float,
+    ended_at_unix: float,
+    base_url: str,
+    timeout_s: int,
+) -> Optional[float]:
+    """Query SoHoAI API for cost_usd and token counts.
+
+    Returns tuple of (cost_usd, token_counts_dict) or (None, None) on failure.
+    """
+    if not base_url or not session_id:
+        return None
+
+    try:
+        since = datetime.utcfromtimestamp(started_at_unix - 60).isoformat() + "Z"
+        until = datetime.utcfromtimestamp(ended_at_unix + 60).isoformat() + "Z"
+
+        url = (f"{base_url}/v1/usage/stats?"
+               f"session_id={urllib.parse.quote(session_id)}&"
+               f"since={urllib.parse.quote(since)}&"
+               f"until={urllib.parse.quote(until)}")
+
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=timeout_s) as response:
+            if response.status != 200:
+                return None
+            data = json.loads(response.read().decode("utf-8"))
+            totals = data.get("totals", {})
+            cost_usd = totals.get("cost_usd", 0.0)
+            if cost_usd and cost_usd > 0:
+                return float(cost_usd)
+            return None
+    except (urllib.error.URLError, json.JSONDecodeError, KeyError, Exception):
+        return None
+
+
+def query_litellm_cost(parent: Dict, subagents: List[Dict], warnings: List[str]) -> Optional[float]:
+    """Query litellm for cost computation with cache-token rates.
+
+    Returns total cost or None if litellm unavailable or computation fails.
+    """
+    try:
+        import litellm
+    except ImportError:
+        warnings.append("litellm not installed; skipping litellm cost query")
+        return None
+
+    total_cost = 0.0
+
+    try:
+        # Parent cost
+        if parent.get("model"):
+            model = _normalize_model_id(parent["model"])
+            tokens = parent.get("tokens", {})
+            base_cost = litellm.completion_cost(
+                model=model,
+                prompt_tokens=tokens.get("input", 0),
+                completion_tokens=tokens.get("output", 0)
+            )
+            cache_info = litellm.get_model_info(model) or {}
+            cache_create_rate = cache_info.get("cache_creation_input_token_cost", 0.0) or 0.0
+            cache_read_rate = cache_info.get("cache_read_input_token_cost", 0.0) or 0.0
+            parent_cost = (base_cost
+                          + tokens.get("cache_creation", 0) * cache_create_rate
+                          + tokens.get("cache_read", 0) * cache_read_rate)
+            total_cost += parent_cost
+
+        # Subagent costs
+        for subagent in subagents:
+            if subagent.get("model"):
+                model = _normalize_model_id(subagent["model"])
+                tokens = subagent.get("tokens", {})
+                base_cost = litellm.completion_cost(
+                    model=model,
+                    prompt_tokens=tokens.get("input", 0),
+                    completion_tokens=tokens.get("output", 0)
+                )
+                cache_info = litellm.get_model_info(model) or {}
+                cache_create_rate = cache_info.get("cache_creation_input_token_cost", 0.0) or 0.0
+                cache_read_rate = cache_info.get("cache_read_input_token_cost", 0.0) or 0.0
+                agent_cost = (base_cost
+                             + tokens.get("cache_creation", 0) * cache_create_rate
+                             + tokens.get("cache_read", 0) * cache_read_rate)
+                total_cost += agent_cost
+
+        if total_cost == 0.0:
+            # Non-local model but zero cost suggests missing model in litellm
+            if parent.get("model") or any(s.get("model") for s in subagents):
+                warnings.append("litellm returned zero cost for non-local model")
+            return None
+
+        return round(total_cost, 4)
+    except Exception as e:
+        warnings.append(f"litellm cost computation failed: {e}")
+        return None
 
 
 def read_telemetry_events(session_dir: Path) -> List[Dict[str, Any]]:
@@ -399,8 +523,34 @@ def main():
     # Process transcript
     parent, subagents = process_transcript(transcript_path, started_at_unix, ended_at_unix, warnings)
 
-    # Compute cost
-    cost_usd = compute_cost(parent, subagents, pricing_data, warnings)
+    # Compute cost via priority cascade
+    cost_usd = None
+    cost_source = "none"
+
+    # Source 1: SoHoAI API
+    sohoai_base = os.environ.get("ANTHROPIC_BASE_URL", "").rstrip("/")
+    sohoai_cfg = _load_sohoai_config()
+    if sohoai_cfg.get("enabled", True) and sohoai_base:
+        cost_usd = query_sohoai_cost(
+            session_dir.name, started_at_unix, ended_at_unix,
+            sohoai_base, int(sohoai_cfg.get("timeout_s", 5))
+        )
+        if cost_usd is not None:
+            cost_source = "sohoai_api"
+
+    # Source 2: litellm (with cache-token rates)
+    if cost_usd is None:
+        cost_usd = query_litellm_cost(parent, subagents, warnings)
+        if cost_usd is not None:
+            cost_source = "litellm"
+
+    # Source 3: pricing.yaml (original compute_cost, unchanged)
+    if cost_usd is None:
+        cost_usd = compute_cost(parent, subagents, pricing_data, warnings)
+        cost_source = "pricing_yaml" if pricing_data.get("models") else "none"
+
+    if cost_usd is None:
+        cost_usd = 0.0
 
     # Compute iterations and blast radius
     iterations = compute_iterations(session_dir, subagents)
@@ -422,6 +572,7 @@ def main():
         "subagents": subagents,
         "iterations": iterations,
         "cost_usd_estimate": cost_usd,
+        "cost_source": cost_source,
         "blast_radius": blast_radius,
         "pricing_snapshot_date": str(pricing_data.get("last_updated") or datetime.now(timezone.utc).strftime("%Y-%m-%d")),
     }
@@ -459,6 +610,7 @@ def main():
         "duration_s": int(ended_at_unix - started_at_unix),
         "outcome": telemetry["outcome"],
         "cost_usd_estimate": cost_usd,
+        "cost_source": cost_source,
         "total_tokens": total_tokens,
         "regret_flag": regret_flag,
         "pricing_snapshot_date": telemetry["pricing_snapshot_date"],

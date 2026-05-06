@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-06--13-40
+updated_by: Claude Code (Claude Haiku 4.5)
+updated_at: 2026-05-06--00-00
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -327,6 +327,18 @@ The global log drives five decision gates (see `TODO.md §0` for thresholds and 
 5. **Opus vs Sonnet for Brain** — compare `regret_flag` rate at different model tiers once sufficient data exists.
 
 Pricing maintenance: `pricing.yaml` carries a `last_updated` field. `telemetry-report.sh` warns if rates are > 90 days stale; bump manually after verifying against https://docs.anthropic.com/en/docs/about-claude/models/all-models.
+
+#### Stage 2 — SoHoAI API integration
+
+T2 cost attribution uses a three-tier cascade to maximize accuracy. `SoHoAI` is the primary source — each `/brain` and `/duo` command injects `X-Orchestra-Session-ID` into `settings.local.json` at setup and removes it at cleanup, allowing SoHoAI to attribute API calls to the session window. If SoHoAI returns zero or times out, litellm fallback is attempted: `telemetry-summarize.py` calls `litellm.completion_cost()` on each subagent's actual token counts (normalized for versioned model IDs), plus manual cache-token cost via `litellm.get_model_info()`. If litellm is absent or returns zero, the original pricing.yaml-based cost is used.
+
+**apiHeaders injection lifecycle:** All five commands (`brain.md`, `brain-abandon.md`, `duo-plan.md`, `duo-act.md`, `duo-abandon.md`) inject and clear the header. Setup block appends `X-Orchestra-Session-ID=<session-dir-basename>` to `~/.claude/settings.local.json` using atomic `_TMP + mv -f` to prevent corruption. Cleanup block removes it using the same pattern, deleting the empty `apiHeaders` object if no other headers remain. The header is set on the parent process and inherited by all subagents (Planner, Actor, Reviewer) which run as fresh Claude Code subprocess — each subagent process inherits the global `settings.local.json`, so the header is automatically visible to their API calls. **Caveat:** if Claude Code reads settings once at startup rather than per-request, the parent's own `/v1/messages` calls may not carry the header; subagents will. The approach is harmless either way due to JSONL fallback.
+
+**Cost-source cascade in T2:** `query_sohoai_cost()` builds `GET {base_url}/v1/usage/stats?session_id=<ID>&since=<ISO8601>&until=<ISO8601>` with ±60s buffer around session time window. Returns `float(response_json["totals"]["cost_usd"])` on HTTP 200 with non-zero value; `None` otherwise. If SoHoAI returns zero or times out, `query_litellm_cost()` is invoked on the actual parent + subagent token counts from `telemetry.json`. Model IDs are normalized (strip `-YYYYMMDD` suffix) before litellm call. For each agent, `litellm.completion_cost()` gives base cost; `litellm.get_model_info()` supplements cache-token rates (`cache_creation_input_token_cost`, `cache_read_input_token_cost`). If litellm totals to zero for a non-local model, a WARNING is logged and the fallback continues. Final fallback is the original pricing.yaml-based compute_cost.
+
+**Configuration:** `config/config.yaml` carries a `sohoai:` block with `enabled: true` and `timeout_s: 5`. `_load_sohoai_config()` reads this and returns defaults if absent.
+
+**Cost-source field:** `telemetry.json` and each line in `telemetry.jsonl` record a `cost_source` field with values: `"sohoai_api"` (SoHoAI API succeeded), `"litellm"` (litellm fallback), `"pricing_yaml"` (pricing.yaml fallback), or `"none"` (no cost could be computed). `telemetry-report.sh` displays this in a `Source` column in default-mode output, allowing operators to see which sessions used which cost path and quickly identify SoHoAI attribution gaps.
 
 ## See also
 

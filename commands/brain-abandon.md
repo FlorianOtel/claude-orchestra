@@ -52,6 +52,15 @@ Run via `Bash` (substitute `<SESSION_DIR>` with the literal value captured above
 ```bash
 printf '%s' "abandoned" > "<SESSION_DIR>/.outcome.tmp"
 mv -f "<SESSION_DIR>/.outcome.tmp" "<SESSION_DIR>/.outcome"
+# Remove X-Orchestra-Session-ID from settings.local.json.
+SETTINGS_LOCAL="${HOME}/.claude/settings.local.json"
+if command -v jq >/dev/null 2>&1 && [ -f "${SETTINGS_LOCAL}" ]; then
+  _TMP="${SETTINGS_LOCAL}.orchestratmp"
+  jq 'if .apiHeaders then .apiHeaders |= del(.["X-Orchestra-Session-ID"]) |
+       if (.apiHeaders | length) == 0 then del(.apiHeaders) else . end
+      else . end' \
+    "${SETTINGS_LOCAL}" > "${_TMP}" && mv -f "${_TMP}" "${SETTINGS_LOCAL}" || true
+fi
 rm -f "<SESSION_DIR>/.brain-inflight"
 ~/.claude/scripts/telemetry-summarize.sh \
     "<SESSION_DIR>" brain abandoned "$(cat \"<SESSION_DIR>/.transcript-uuid\" 2>/dev/null || echo \"${CLAUDE_SESSION_ID:-}\")" 2>&1 \

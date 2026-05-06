@@ -194,13 +194,14 @@ PYEOF
 # =============================================================================
 else
     {
-        printf "Date\tCommand\tOutcome\tCost\tTokens\tDuration\tNote\n"
+        printf "Date\tCommand\tOutcome\tCost\tSource\tTokens\tDuration\tNote\n"
         tail -n "$LAST_N" "$TELEMETRY_JSONL" | jq -r '
             [
               (.started_at | split("T")[0]),
               .command,
               .outcome,
               ("$" + (.cost_usd_estimate | tostring)),
+              (.cost_source // "-"),
               (.total_tokens | tostring),
               ((.duration_s | tostring) + "s"),
               (if .regret_flag then "⚑ regret" else "" end)
@@ -208,7 +209,7 @@ else
         '
     } | column -t -s$'\t' 2>/dev/null \
       || tail -n "$LAST_N" "$TELEMETRY_JSONL" | \
-         jq -r '[.started_at, .command, .outcome, .cost_usd_estimate, .total_tokens, .duration_s] | @tsv'
+         jq -r '[.started_at, .command, .outcome, .cost_usd_estimate, .cost_source, .total_tokens, .duration_s] | @tsv'
 fi
 
 # =============================================================================

@@ -56,3 +56,12 @@ test_gate:
 # every /brain or /duo invocation.
 housekeeping:
   session_retention_days: 30       # delete sessions/ subdirs older than N days
+
+# -----------------------------------------------------------------------------
+# SoHoAI cost API (Stage 2 telemetry)
+# When enabled, telemetry-summarize.py queries GET ${ANTHROPIC_BASE_URL}/v1/usage/stats
+# for cost_usd as primary source; falls back to litellm then pricing.yaml.
+# -----------------------------------------------------------------------------
+sohoai:
+  enabled: true
+  timeout_s: 5

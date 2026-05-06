@@ -116,6 +116,20 @@ fi
 printf '%s\n' "${_TRANSCRIPT_UUID}" > "${SESSION_DIR}/.transcript-uuid" 2>/dev/null || true
 echo "session_dir=${SESSION_DIR}"
 echo "retention_days=${RETENTION_DAYS}"
+# Inject X-Orchestra-Session-ID so SoHoAI attributes API calls to this session.
+SETTINGS_LOCAL="${HOME}/.claude/settings.local.json"
+SESSION_ID_HEADER="$(basename "${SESSION_DIR}")"
+if command -v jq >/dev/null 2>&1; then
+  _TMP="${SETTINGS_LOCAL}.orchestratmp"
+  if [ -f "${SETTINGS_LOCAL}" ]; then
+    jq --arg sid "${SESSION_ID_HEADER}" \
+      '.apiHeaders["X-Orchestra-Session-ID"] = $sid' \
+      "${SETTINGS_LOCAL}" > "${_TMP}" && mv -f "${_TMP}" "${SETTINGS_LOCAL}" || true
+  else
+    printf '{"apiHeaders":{"X-Orchestra-Session-ID":"%s"}}\n' "${SESSION_ID_HEADER}" \
+      > "${_TMP}" && mv -f "${_TMP}" "${SETTINGS_LOCAL}" || true
+  fi
+fi
 ```
 
 After creating the session directory, write the pipeline mode and task title to the orchestra badge. The title is the operator's invocation text (the args after `/brain`), truncated to 30 printable characters, with single-quotes replaced by spaces. Run via `Bash`:
@@ -384,6 +398,15 @@ Order matters: write `.outcome` **before** removing `.brain-inflight` and
 ```bash
 printf '%s' "<outcome: pass | fix-loop | block | abandoned>" > "<SESSION_DIR>/.outcome.tmp"
 mv -f "<SESSION_DIR>/.outcome.tmp" "<SESSION_DIR>/.outcome"
+# Remove X-Orchestra-Session-ID from settings.local.json.
+SETTINGS_LOCAL="${HOME}/.claude/settings.local.json"
+if command -v jq >/dev/null 2>&1 && [ -f "${SETTINGS_LOCAL}" ]; then
+  _TMP="${SETTINGS_LOCAL}.orchestratmp"
+  jq 'if .apiHeaders then .apiHeaders |= del(.["X-Orchestra-Session-ID"]) |
+       if (.apiHeaders | length) == 0 then del(.apiHeaders) else . end
+      else . end' \
+    "${SETTINGS_LOCAL}" > "${_TMP}" && mv -f "${_TMP}" "${SETTINGS_LOCAL}" || true
+fi
 rm -f "<SESSION_DIR>/.brain-inflight"
 ~/.claude/scripts/telemetry-summarize.sh \
     "<SESSION_DIR>" brain "<outcome>" "$(cat \"<SESSION_DIR>/.transcript-uuid\" 2>/dev/null || echo \"${CLAUDE_SESSION_ID:-}\")" 2>&1 \
