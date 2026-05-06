@@ -151,8 +151,8 @@ def query_sohoai_cost(
         return None
 
     try:
-        since = datetime.utcfromtimestamp(started_at_unix - 60).isoformat() + "Z"
-        until = datetime.utcfromtimestamp(ended_at_unix + 60).isoformat() + "Z"
+        since = datetime.fromtimestamp(started_at_unix - 60, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        until = datetime.fromtimestamp(ended_at_unix + 60, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         url = (f"{base_url}/v1/usage/stats?"
                f"session_id={urllib.parse.quote(session_id)}&"
@@ -193,8 +193,10 @@ def query_litellm_cost(parent: Dict, subagents: List[Dict], warnings: List[str])
             tokens = parent.get("tokens", {})
             base_cost = litellm.completion_cost(
                 model=model,
-                prompt_tokens=tokens.get("input", 0),
-                completion_tokens=tokens.get("output", 0)
+                completion_response={"usage": {
+                    "prompt_tokens": tokens.get("input", 0),
+                    "completion_tokens": tokens.get("output", 0),
+                }}
             )
             cache_info = litellm.get_model_info(model) or {}
             cache_create_rate = cache_info.get("cache_creation_input_token_cost", 0.0) or 0.0
@@ -211,8 +213,10 @@ def query_litellm_cost(parent: Dict, subagents: List[Dict], warnings: List[str])
                 tokens = subagent.get("tokens", {})
                 base_cost = litellm.completion_cost(
                     model=model,
-                    prompt_tokens=tokens.get("input", 0),
-                    completion_tokens=tokens.get("output", 0)
+                    completion_response={"usage": {
+                        "prompt_tokens": tokens.get("input", 0),
+                        "completion_tokens": tokens.get("output", 0),
+                    }}
                 )
                 cache_info = litellm.get_model_info(model) or {}
                 cache_create_rate = cache_info.get("cache_creation_input_token_cost", 0.0) or 0.0

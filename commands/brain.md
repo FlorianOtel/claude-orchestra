@@ -116,17 +116,25 @@ fi
 printf '%s\n' "${_TRANSCRIPT_UUID}" > "${SESSION_DIR}/.transcript-uuid" 2>/dev/null || true
 echo "session_dir=${SESSION_DIR}"
 echo "retention_days=${RETENTION_DAYS}"
-# Inject X-Orchestra-Session-ID so SoHoAI attributes API calls to this session.
+# Inject X-Orchestra-Session-ID via ANTHROPIC_CUSTOM_HEADERS so SoHoAI attributes
+# Actor subagent API calls to this session.
 SETTINGS_LOCAL="${HOME}/.claude/settings.local.json"
 SESSION_ID_HEADER="$(basename "${SESSION_DIR}")"
 if command -v jq >/dev/null 2>&1; then
   _TMP="${SETTINGS_LOCAL}.orchestratmp"
+  _NEW_HDR="X-Orchestra-Session-ID: ${SESSION_ID_HEADER}"
   if [ -f "${SETTINGS_LOCAL}" ]; then
-    jq --arg sid "${SESSION_ID_HEADER}" \
-      '.apiHeaders["X-Orchestra-Session-ID"] = $sid' \
-      "${SETTINGS_LOCAL}" > "${_TMP}" && mv -f "${_TMP}" "${SETTINGS_LOCAL}" || true
+    jq --arg hdr "${_NEW_HDR}" '
+      .env //= {} |
+      .env.ANTHROPIC_CUSTOM_HEADERS = (
+        if .env.ANTHROPIC_CUSTOM_HEADERS then
+          ([$hdr] + (.env.ANTHROPIC_CUSTOM_HEADERS | split("\n")
+            | map(select(test("^X-Orchestra-Session-ID:") | not)))) | join("\n")
+        else $hdr end)
+    ' "${SETTINGS_LOCAL}" > "${_TMP}" && mv -f "${_TMP}" "${SETTINGS_LOCAL}" || true
   else
-    printf '{"apiHeaders":{"X-Orchestra-Session-ID":"%s"}}\n' "${SESSION_ID_HEADER}" \
+    jq -n --arg hdr "${_NEW_HDR}" \
+      '{"env":{"ANTHROPIC_CUSTOM_HEADERS":$hdr}}' \
       > "${_TMP}" && mv -f "${_TMP}" "${SETTINGS_LOCAL}" || true
   fi
 fi
@@ -398,14 +406,20 @@ Order matters: write `.outcome` **before** removing `.brain-inflight` and
 ```bash
 printf '%s' "<outcome: pass | fix-loop | block | abandoned>" > "<SESSION_DIR>/.outcome.tmp"
 mv -f "<SESSION_DIR>/.outcome.tmp" "<SESSION_DIR>/.outcome"
-# Remove X-Orchestra-Session-ID from settings.local.json.
+# Remove X-Orchestra-Session-ID from ANTHROPIC_CUSTOM_HEADERS in settings.local.json.
 SETTINGS_LOCAL="${HOME}/.claude/settings.local.json"
 if command -v jq >/dev/null 2>&1 && [ -f "${SETTINGS_LOCAL}" ]; then
   _TMP="${SETTINGS_LOCAL}.orchestratmp"
-  jq 'if .apiHeaders then .apiHeaders |= del(.["X-Orchestra-Session-ID"]) |
-       if (.apiHeaders | length) == 0 then del(.apiHeaders) else . end
-      else . end' \
-    "${SETTINGS_LOCAL}" > "${_TMP}" && mv -f "${_TMP}" "${SETTINGS_LOCAL}" || true
+  jq '
+    if .env.ANTHROPIC_CUSTOM_HEADERS then
+      .env.ANTHROPIC_CUSTOM_HEADERS = (
+        .env.ANTHROPIC_CUSTOM_HEADERS | split("\n")
+        | map(select(test("^X-Orchestra-Session-ID:") | not))
+        | join("\n")) |
+      if .env.ANTHROPIC_CUSTOM_HEADERS == "" then del(.env.ANTHROPIC_CUSTOM_HEADERS) else . end |
+      if (.env | length) == 0 then del(.env) else . end
+    else . end
+  ' "${SETTINGS_LOCAL}" > "${_TMP}" && mv -f "${_TMP}" "${SETTINGS_LOCAL}" || true
 fi
 rm -f "<SESSION_DIR>/.brain-inflight"
 ~/.claude/scripts/telemetry-summarize.sh \

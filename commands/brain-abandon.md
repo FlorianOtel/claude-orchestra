@@ -52,14 +52,20 @@ Run via `Bash` (substitute `<SESSION_DIR>` with the literal value captured above
 ```bash
 printf '%s' "abandoned" > "<SESSION_DIR>/.outcome.tmp"
 mv -f "<SESSION_DIR>/.outcome.tmp" "<SESSION_DIR>/.outcome"
-# Remove X-Orchestra-Session-ID from settings.local.json.
+# Remove X-Orchestra-Session-ID from ANTHROPIC_CUSTOM_HEADERS in settings.local.json.
 SETTINGS_LOCAL="${HOME}/.claude/settings.local.json"
 if command -v jq >/dev/null 2>&1 && [ -f "${SETTINGS_LOCAL}" ]; then
   _TMP="${SETTINGS_LOCAL}.orchestratmp"
-  jq 'if .apiHeaders then .apiHeaders |= del(.["X-Orchestra-Session-ID"]) |
-       if (.apiHeaders | length) == 0 then del(.apiHeaders) else . end
-      else . end' \
-    "${SETTINGS_LOCAL}" > "${_TMP}" && mv -f "${_TMP}" "${SETTINGS_LOCAL}" || true
+  jq '
+    if .env.ANTHROPIC_CUSTOM_HEADERS then
+      .env.ANTHROPIC_CUSTOM_HEADERS = (
+        .env.ANTHROPIC_CUSTOM_HEADERS | split("\n")
+        | map(select(test("^X-Orchestra-Session-ID:") | not))
+        | join("\n")) |
+      if .env.ANTHROPIC_CUSTOM_HEADERS == "" then del(.env.ANTHROPIC_CUSTOM_HEADERS) else . end |
+      if (.env | length) == 0 then del(.env) else . end
+    else . end
+  ' "${SETTINGS_LOCAL}" > "${_TMP}" && mv -f "${_TMP}" "${SETTINGS_LOCAL}" || true
 fi
 rm -f "<SESSION_DIR>/.brain-inflight"
 ~/.claude/scripts/telemetry-summarize.sh \
