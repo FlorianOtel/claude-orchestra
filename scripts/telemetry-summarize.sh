@@ -2,7 +2,7 @@
 # telemetry-summarize.sh — wrapper that activates the project venv and runs the Python parser.
 # Usage: telemetry-summarize.sh <session_dir> <command> <outcome> [transcript_session_id]
 #
-# Designed to be invoked from /duo-end and /duo-abandon cleanup, /brain Phase 3
+# Designed to be invoked from /duo-act and /duo-abandon cleanup, /brain Phase 3
 # cleanup, and orchestra-hook.sh stop mode.
 #
 # chmod +x me after deploy

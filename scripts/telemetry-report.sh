@@ -30,7 +30,7 @@ PYTHON3="${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3"
 PRICING_FILE="${HOME}/.claude/orchestra/pricing.yaml"
 
 if [ ! -f "$TELEMETRY_JSONL" ]; then
-    echo "(no telemetry yet — run /duo-start (then /duo-end) or /brain first)"
+    echo "(no telemetry yet — run /duo-plan (then /duo-act) or /brain first)"
     exit 0
 fi
 

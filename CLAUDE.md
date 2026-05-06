@@ -15,7 +15,7 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 ## Layout
 
 - `agents/`   — planner (Sonnet 4.6), actor (Haiku 4.5), reviewer (Sonnet 4.6)
-- `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents) + /brain-abandon (explicit cancel); /duo-start, /duo-end, /duo-abandon (lightweight session-bracketed pipeline: Sonnet plans interactively across multiple turns, Haiku acts after /duo-end)
+- `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents) + /brain-abandon (explicit cancel); /duo-plan, /duo-act, /duo-abandon (lightweight session-bracketed pipeline: Sonnet plans interactively across multiple turns, Haiku acts after /duo-act)
 - `scripts/orchestra-hook.sh` — PreToolUse / SubagentStop / PreCompact / Stop dispatcher
 - `config/config.yaml` — global orchestra defaults
 - `docs/design.md`    — full architecture reference
@@ -47,9 +47,9 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 Verify T1 (hook events) and T2 (transcript parse) after any /duo or /brain run.
 
 ### /duo smoke test
-1. In plan mode, run: `/duo-start add a comment line "# telemetry-smoke-test-<date>" to scripts/telemetry-report.sh`
+1. In plan mode, run: `/duo-plan add a comment line "# telemetry-smoke-test-<date>" to scripts/telemetry-report.sh`
 2. (Optional) Refine across one or two turns to verify multi-turn refinement.
-3. Run `/duo-end`, approve, and let Actor run.
+3. Run `/duo-act`, approve, and let Actor run.
 4. After Phase 4 cleanup completes, run: `./scripts/smoke-test.sh`
 5. Expected: T1 has ≥2 events (actor start + end), T2 cost > $0, subagents list contains "actor", `.outcome` mtime bounds the T2 window.
 

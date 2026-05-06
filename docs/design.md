@@ -30,11 +30,11 @@ Talk to Brain normally. Brain delegates to Planner/Actor/Reviewer as needed. No 
 
 ### /duo — lightweight (Sonnet plans, Haiku acts), session-bracketed
 
-`/duo` is a three-command session-bracketed pipeline. `/duo-start <task>` opens a planning session (sets up the session_dir, drafts an initial `PLAN.md`, and yields back). The operator then refines the plan across as many normal plan-mode turns as needed. `/duo-end` commits the plan, calls `ExitPlanMode`, dispatches Actor (Haiku), and runs cleanup + telemetry. `/duo-abandon` cancels the active session cleanly. No Reviewer. Example: "add a docstring to rag_engine/search.py::search_rag" — low risk, no review needed.
+`/duo` is a three-command session-bracketed pipeline. `/duo-plan <task>` opens a planning session (sets up the session_dir, drafts an initial `PLAN.md`, and yields back). The operator then refines the plan across as many normal plan-mode turns as needed. `/duo-act` commits the plan, calls `ExitPlanMode`, dispatches Actor (Haiku), and runs cleanup + telemetry. `/duo-abandon` cancels the active session cleanly. No Reviewer. Example: "add a docstring to rag_engine/search.py::search_rag" — low risk, no review needed.
 
-Workflow: (1) `claude --model claude-sonnet-4-6`. (2) `Shift+Tab` to enter plan mode. (3) `/duo-start <task>`. (4) Refine across turns until the plan is right. (5) `/duo-end` to execute (or `/duo-abandon` to cancel); on approval, `Shift+Tab` to bypassPermissions if desired, Actor runs uninterrupted.
+Workflow: (1) `claude --model claude-sonnet-4-6`. (2) `Shift+Tab` to enter plan mode. (3) `/duo-plan <task>`. (4) Refine across turns until the plan is right. (5) `/duo-act` to execute (or `/duo-abandon` to cancel); on approval, `Shift+Tab` to bypassPermissions if desired, Actor runs uninterrupted.
 
-Splitting the plan-approval gate into an explicit `/duo-end` (rather than the slash command barrelling through to `ExitPlanMode` in one response) means rejection-or-redirect during planning is now first-class: refinement is a normal multi-turn conversation, not a rejected-plan-and-informally-keep-chatting situation. Telemetry attribution stays correct because `.outcome`-file mtime bounds the T2 time window (see §Per-session telemetry).
+Splitting the plan-approval gate into an explicit `/duo-act` (rather than the slash command barrelling through to `ExitPlanMode` in one response) means rejection-or-redirect during planning is now first-class: refinement is a normal multi-turn conversation, not a rejected-plan-and-informally-keep-chatting situation. Telemetry attribution stays correct because `.outcome`-file mtime bounds the T2 time window (see §Per-session telemetry).
 
 ### /brain — full pipeline (Opus orchestrates, cap-3 review loop)
 
@@ -131,7 +131,7 @@ The status line script is called by Claude Code on each render tick — after ev
 
 | Signal | Source | Written by |
 |---|---|---|
-| `/duo` title and inflight state | `${SESSION_DIR}/.duo-inflight` | `/duo-start` command setup |
+| `/duo` title and inflight state | `${SESSION_DIR}/.duo-inflight` | `/duo-plan` command setup |
 | `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
 | `/brain` inflight marker (session-discovery for `/brain-abandon` and explicit CMD-classification by Stop-hook) | `${SESSION_DIR}/.brain-inflight` | `/brain` command setup |
 | Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
@@ -157,7 +157,7 @@ agents/
   planner.md, actor.md, reviewer.md
 commands/
   brain.md, brain-abandon.md
-  duo-start.md, duo-end.md, duo-abandon.md
+  duo-plan.md, duo-act.md, duo-abandon.md
 scripts/
   orchestra-hook.sh
 orchestra/
@@ -172,7 +172,7 @@ CLAUDE.md  (sentinel-bracketed orchestra-guard block injected by deploy.sh
 sessions/
   <UTC-ts>-<PID>/
     PLAN.md, TASKS.json, review-comments.md
-    .duo-inflight          (present during /duo planning phase + execution; removed by /duo-end or /duo-abandon)
+    .duo-inflight          (present during /duo planning phase + execution; removed by /duo-act or /duo-abandon)
     .brain-inflight        (present throughout /brain Phase 0/1/2/3; removed by cleanup block or /brain-abandon)
     .last-logfile          (sidecar: hook start writes logfile path; end reads+deletes)
     .outcome               (pass | block | partial | abandoned)
@@ -260,7 +260,7 @@ Two complementary layers:
 
 - **T2 (transcript parsing, authoritative)**: runs once at cleanup. Reads the actual JSONL transcripts for real token counts and model attribution. Normalises versioned model IDs (strips `-YYYYMMDD` suffix for pricing lookup) and skips `<synthetic>` messages (written by `/compact`). T2 supersedes T1 for all cost figures. **Transcript discovery (fixed 2026-05-05):** Walks **all** `*.jsonl` files in `transcript_path.parent` (the project's transcripts directory) that have records within the session time window — capturing content split across multiple JSONLs by `--fork-session` or `/clear`-induced UUID rotation. Each in-window parent JSONL's `<uuid>/subagents/` directory is walked for subagent attribution. Tokens are accumulated across all contributing parent JSONLs; the first non-null model encountered is used for attribution. The `parent.transcripts` field in `telemetry.json` lists all contributing JSONL UUIDs for forensics. Transcript discovery priority for establishing the initial `transcript_path` (used to find the transcripts directory to glob): (1) `.transcript-path` in the session dir — full JSONL path written at session-dir creation time (setup block) and reinforced by the PreToolUse hook on first subagent dispatch (where `CLAUDE_PROJECT_DIR` is reliably set); (2) global scan of all `~/.claude/projects/*/` subdirectories — exact UUID match when a UUID is known, most-recently-modified JSONL otherwise. This ensures telemetry works correctly when `/duo` or `/brain` is invoked from any project on any machine, regardless of path form (NFS mount path vs local symlink path).
 
-T2 time window: `[started_at_unix, ended_at_unix]`. `started_at_unix` is parsed from the session-dir basename (`<YYYYMMDDTHHMMSSZ>-<PID>`). `ended_at_unix` is the mtime of `${SESSION_DIR}/.outcome` when present, falling back to `time.time()` otherwise. `/duo-end`, `/duo-abandon`, `/brain` cleanup (PASS, FIX-loop final, BLOCK, Phase 0 abandonment, Phase 1 outright rejection), and `/brain-abandon` all write `.outcome` before invoking the summariser; the Stop-hook safety net writes `.outcome=abandoned` to disk before invoking it too. With `.outcome` mtime as the upper bound, post-cleanup parent-transcript activity is excluded from cost attribution and re-runs of the summariser are idempotent (the window does not expand to "now").
+T2 time window: `[started_at_unix, ended_at_unix]`. `started_at_unix` is parsed from the session-dir basename (`<YYYYMMDDTHHMMSSZ>-<PID>`). `ended_at_unix` is the mtime of `${SESSION_DIR}/.outcome` when present, falling back to `time.time()` otherwise. `/duo-act`, `/duo-abandon`, `/brain` cleanup (PASS, FIX-loop final, BLOCK, Phase 0 abandonment, Phase 1 outright rejection), and `/brain-abandon` all write `.outcome` before invoking the summariser; the Stop-hook safety net writes `.outcome=abandoned` to disk before invoking it too. With `.outcome` mtime as the upper bound, post-cleanup parent-transcript activity is excluded from cost attribution and re-runs of the summariser are idempotent (the window does not expand to "now").
 
 Safety net: the Claude Code `Stop` hook runs the T2 summariser on any unfinalised session dirs at session end. The hook writes `.outcome=abandoned` and removes any stale `.duo-inflight` and `.brain-inflight` markers (clearing the badge) before invoking the summariser. Gate broadened 2026-05-05: any session_dir with at least one orchestra-pipeline artefact (`PLAN.md`, `RESEARCH.md`, `.brain-inflight`, `.duo-inflight`, or `telemetry-events.jsonl`) is finalised; previously the gate required `PLAN.md` specifically and silently skipped Phase-0-only abandonments and dispatch-skip cases. After finalising a /brain session, the safety net also appends `ORCHESTRA_MODE=default` to `state.env` so the badge clears (multi-Claude-Code-session concurrency caveat: this can clear another session's still-active /brain badge — same flavour as the existing concurrency limitation).
 

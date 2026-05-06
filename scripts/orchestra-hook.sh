@@ -256,7 +256,7 @@ case "$MODE" in
             done
             $HAS_ARTEFACT || continue
             # Determine command from inflight markers. .brain-inflight and
-            # .duo-inflight are written by /brain and /duo-start setup;
+            # .duo-inflight are written by /brain and /duo-plan setup;
             # default to brain for legacy session_dirs without either marker.
             CMD="brain"
             [ -f "$dir/.brain-inflight" ] && CMD="brain"

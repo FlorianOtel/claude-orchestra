@@ -1,17 +1,17 @@
 ---
-description: Commit the active /duo plan and execute. Calls ExitPlanMode, dispatches Actor (Haiku), and runs cleanup + telemetry. Refuses if no active /duo session.
+description: Commit the active /duo plan and execute — transitions from planning discussion to action. Calls ExitPlanMode, dispatches Actor (Haiku), and runs cleanup + telemetry. Refuses if no active /duo session.
 ---
 
-# /duo-end — commit the active /duo plan and execute
+# /duo-act — commit the active /duo plan and execute
 
-You are running the **duo** pipeline's commit-and-execute step. `/duo-end` finalises the active /duo planning session: it presents the current `PLAN.md`, calls `ExitPlanMode`, dispatches the Actor (Haiku) subagent, then runs cleanup + telemetry.
+You are running the **duo** pipeline's commit-and-execute step. `/duo-act` finalises the active /duo planning session: it presents the current `PLAN.md`, calls `ExitPlanMode`, dispatches the Actor (Haiku) subagent, then runs cleanup + telemetry.
 
-If no /duo session is active (no `.duo-inflight` in any session subdir), refuse and tell the operator to run `/duo-start` first.
+If no /duo session is active (no `.duo-inflight` in any session subdir), refuse and tell the operator to run `/duo-plan` first.
 
 ## Prerequisites
 
-1. **Plan mode is active.** `/duo-end` calls `ExitPlanMode`, which only fires from plan mode. If not, stop and say:
-   > "Please enter plan mode first (Shift+Tab), then run `/duo-end`."
+1. **Plan mode is active.** `/duo-act` calls `ExitPlanMode`, which only fires from plan mode. If not, stop and say:
+   > "Please enter plan mode first (Shift+Tab), then run `/duo-act`."
 2. **An active /duo session exists.** Verified below.
 
 ## Locate the active session
@@ -31,7 +31,7 @@ if [ -d "$SESSIONS_ROOT" ]; then
   done < <(find "$SESSIONS_ROOT" -mindepth 2 -maxdepth 2 -name '.duo-inflight' 2>/dev/null)
 fi
 if [ -z "$ACTIVE_INFLIGHT" ]; then
-  echo "NO_SESSION: no active /duo session — run /duo-start first."
+  echo "NO_SESSION: no active /duo session — run /duo-plan first."
   exit 0
 fi
 if [ "$ACTIVE_COUNT" -gt 1 ]; then
@@ -47,7 +47,7 @@ Capture the `session_dir=...` value; use it as the literal path for the rest of 
 
 ## Read PLAN.md
 
-Read `<SESSION_DIR>/PLAN.md`. If it does not exist (e.g. `/duo-start` was interrupted), stop and tell the operator the session is malformed; suggest `/duo-abandon`.
+Read `<SESSION_DIR>/PLAN.md`. If it does not exist (e.g. `/duo-plan` was interrupted), stop and tell the operator the session is malformed; suggest `/duo-abandon`.
 
 You may show the operator a brief one-line confirmation of what's about to run, but you do not need to re-display the full plan — they have been refining it. Proceed directly to the approval gate.
 
@@ -57,7 +57,7 @@ Call `ExitPlanMode` with the full text of `<SESSION_DIR>/PLAN.md`. The operator
 will see Claude Code's standard "auto-edit / manually approve / cancel" prompt.
 
 - **Approved (auto-edit or manually approve):** the parent exits plan mode and Phase 3 below proceeds. The permission posture set here applies to Actor's tool calls.
-- **Rejected (cancel):** the assistant's turn pauses. The session **stays open** — `.duo-inflight` is preserved. The operator can refine more and run `/duo-end` again, or run `/duo-abandon` to give up. Do not run any cleanup on rejection.
+- **Rejected (cancel):** the assistant's turn pauses. The session **stays open** — `.duo-inflight` is preserved. The operator can refine more and run `/duo-act` again, or run `/duo-abandon` to give up. Do not run any cleanup on rejection.
 
 ---
 
@@ -119,7 +119,7 @@ Do **not** commit, push, or open a PR unless explicitly asked.
 
 ## What this command does NOT do
 
-- ❌ Open a new /duo session (that's `/duo-start`).
+- ❌ Open a new /duo session (that's `/duo-plan`).
 - ❌ Cancel without executing (that's `/duo-abandon`).
 - ❌ Spawn `claude -p` subprocesses or use `run-tier.sh`.
 - ❌ Have a Reviewer (use `/brain` for that).

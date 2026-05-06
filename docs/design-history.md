@@ -1382,3 +1382,13 @@ Fix: normalize all three places that compute a project path with `realpath` befo
 **Change.** `commands/duo-stop.md` renamed to `commands/duo-end.md`. All references updated.
 
 **Files.** Renamed: `commands/duo-stop.md` → `commands/duo-end.md`. Modified: `commands/duo-start.md`, `scripts/telemetry-summarize.sh`, `scripts/telemetry-report.sh`, `scripts/smoke-test.sh`, `scripts/telemetry-summarize.py`, `deploy.sh` (orphan-cleanup adds `duo-stop.md`), `collect.sh`, `docs/design.md`, `CLAUDE.md`, `README.md`, `docs/design-history.md` (this note). No functional changes — pure rename.
+
+---
+
+## Amendment 2026-05-06 — rename /duo-start → /duo-plan and /duo-end → /duo-act
+
+**Motivation.** The original names described sequence (`start`/`end`) rather than role. `/duo-plan` makes it explicit that this command opens a *planning discussion* — the session is for iterative plan refinement, not immediate execution. `/duo-act` makes it clear that this command transitions from planning to *action* — it commits the plan and dispatches Actor. The new names make the intent self-evident without reading the docs.
+
+**Change.** `commands/duo-start.md` renamed to `commands/duo-plan.md`. `commands/duo-end.md` renamed to `commands/duo-act.md`. Frontmatter descriptions updated to reflect new names and roles. All references updated.
+
+**Files.** Renamed: `commands/duo-start.md` → `commands/duo-plan.md`, `commands/duo-end.md` → `commands/duo-act.md`. Modified: `commands/duo-plan.md`, `commands/duo-act.md`, `commands/duo-abandon.md` (no `/duo-plan` refs needed), `scripts/orchestra-hook.sh`, `scripts/telemetry-report.sh`, `scripts/smoke-test.sh`, `deploy.sh` (orphan-cleanup adds `duo-start.md` and `duo-end.md`), `collect.sh`, `docs/design.md`, `CLAUDE.md`, `README.md`, `docs/design-history.md` (this note). No functional changes — pure rename.
