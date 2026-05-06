@@ -244,23 +244,28 @@ case "$MODE" in
         | while read -r dir; do
             # Skip already-finalised sessions.
             [ -f "$dir/telemetry.json" ] && continue
-            # Finalise any session_dir with at least one orchestra-pipeline
-            # artefact. Broadened from the original "PLAN.md only" gate to
-            # also catch Phase-0-only abandonments (no PLAN.md but RESEARCH.md
-            # or telemetry-events.jsonl present) and pre-.brain-inflight
-            # legacy sessions where the dispatch-skip bug prevented PLAN.md
-            # from being written.
+            # Skip sessions still in-progress (inflight marker present).
+            # The Stop hook fires at the end of every response turn, not only
+            # on process exit. Removing the marker here would destroy the
+            # status-line badge and cause NO_SESSION errors on the next
+            # refinement turn. Badge and session-discovery clear when
+            # /duo-act, /duo-abandon, or /brain-abandon explicitly removes the
+            # marker as part of their own cleanup.
+            [ -f "$dir/.duo-inflight" ]   && continue
+            [ -f "$dir/.brain-inflight" ] && continue
+            # Safety-net: finalise sessions where inflight markers were already
+            # removed (by /duo-act//duo-abandon//brain cleanup) but
+            # telemetry-summarize.sh failed to write telemetry.json.
+            # Only process dirs that have at least one pipeline artefact.
             HAS_ARTEFACT=false
-            for marker in PLAN.md RESEARCH.md .brain-inflight .duo-inflight telemetry-events.jsonl; do
+            for marker in PLAN.md RESEARCH.md telemetry-events.jsonl; do
               if [ -e "$dir/$marker" ]; then HAS_ARTEFACT=true; break; fi
             done
             $HAS_ARTEFACT || continue
-            # Determine command from inflight markers. .brain-inflight and
-            # .duo-inflight are written by /brain and /duo-plan setup;
-            # default to brain for legacy session_dirs without either marker.
+            # Inflight markers are always absent here (guarded above). CMD
+            # defaults to brain; /duo sessions reach this path only when
+            # /duo-act cleanup removed .duo-inflight but telemetry failed.
             CMD="brain"
-            [ -f "$dir/.brain-inflight" ] && CMD="brain"
-            [ -f "$dir/.duo-inflight" ]   && CMD="duo"
             # Determine outcome marker. If .outcome doesn't exist, write
             # "abandoned" to disk before invoking the summariser so its mtime
             # bounds the T2 ended_at_unix window (else the parser falls back
@@ -272,8 +277,6 @@ case "$MODE" in
               printf '%s' "$OUTCOME" > "$dir/.outcome.tmp" 2>/dev/null \
                 && mv -f "$dir/.outcome.tmp" "$dir/.outcome" 2>/dev/null || true
             fi
-            # Remove stale inflight markers so the badge / session-discovery clears.
-            rm -f "$dir/.duo-inflight" "$dir/.brain-inflight" 2>/dev/null || true
             # Invoke summariser; pass empty transcript-id to let it self-discover.
             SUMMARISER="${HOME}/.claude/scripts/telemetry-summarize.sh"
             [ -x "$SUMMARISER" ] && "$SUMMARISER" "$dir" "$CMD" "$OUTCOME" "" 2>/dev/null || true

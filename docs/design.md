@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-05--00-00
+updated_at: 2026-05-06--00-00
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -98,7 +98,7 @@ Five hook types in `~/.claude/settings.json`, dispatching to `~/.claude/scripts/
 1. **PreToolUse(Agent)** — `start` mode. Logs subagent invocation to invocations.log.
 2. **SubagentStop** — `end` mode. Logs subagent completion.
 3. **PreCompact** — `compact` mode. Saves `brain-state.md` (plan/task/decision snapshot for resumption post-`/clear`).
-4. **Stop** — `stop` mode (safety net). Walks unfinalised session_dirs at Claude Code session end. Gate (broadened 2026-05-05): no `telemetry.json` AND any of (`PLAN.md`, `RESEARCH.md`, `.brain-inflight`, `.duo-inflight`, `telemetry-events.jsonl`) — catches Phase-0-only abandonments and dispatch-skip cases. Writes `.outcome=abandoned` to disk before invoking the summariser (so its mtime bounds the T2 window), removes stale `.duo-inflight`/`.brain-inflight`, runs T2, and resets `state.env` (`ORCHESTRA_MODE=default`) when finalising a /brain session so the badge clears.
+4. **Stop** — `stop` mode (safety net). Fires at the end of **every response turn** (not only on process exit). Walks session_dirs that have no `telemetry.json` **and** no inflight marker — i.e., sessions where cleanup already started (inflight markers removed by `/duo-act`/`/duo-abandon`/`/brain`) but `telemetry-summarize.sh` failed to write `telemetry.json`. Gate (updated 2026-05-06): skip if `.duo-inflight` or `.brain-inflight` is present (session still in-progress — removing the marker here would destroy the badge and cause `NO_SESSION` errors on the next refinement turn); then check for artefacts (`PLAN.md`, `RESEARCH.md`, `telemetry-events.jsonl`). Writes `.outcome=abandoned` before invoking the summariser (mtime bounds the T2 window), and resets `state.env` when finalising a /brain session so the badge clears. Inflight marker removal is the exclusive responsibility of `/duo-act`, `/duo-abandon`, and `/brain`/`/brain-abandon` cleanup.
 5. (No tool-call hooks; subagent tool dispatch is opaque by design.)
 
 ### Status line
@@ -262,7 +262,7 @@ Two complementary layers:
 
 T2 time window: `[started_at_unix, ended_at_unix]`. `started_at_unix` is parsed from the session-dir basename (`<YYYYMMDDTHHMMSSZ>-<PID>`). `ended_at_unix` is the mtime of `${SESSION_DIR}/.outcome` when present, falling back to `time.time()` otherwise. `/duo-act`, `/duo-abandon`, `/brain` cleanup (PASS, FIX-loop final, BLOCK, Phase 0 abandonment, Phase 1 outright rejection), and `/brain-abandon` all write `.outcome` before invoking the summariser; the Stop-hook safety net writes `.outcome=abandoned` to disk before invoking it too. With `.outcome` mtime as the upper bound, post-cleanup parent-transcript activity is excluded from cost attribution and re-runs of the summariser are idempotent (the window does not expand to "now").
 
-Safety net: the Claude Code `Stop` hook runs the T2 summariser on any unfinalised session dirs at session end. The hook writes `.outcome=abandoned` and removes any stale `.duo-inflight` and `.brain-inflight` markers (clearing the badge) before invoking the summariser. Gate broadened 2026-05-05: any session_dir with at least one orchestra-pipeline artefact (`PLAN.md`, `RESEARCH.md`, `.brain-inflight`, `.duo-inflight`, or `telemetry-events.jsonl`) is finalised; previously the gate required `PLAN.md` specifically and silently skipped Phase-0-only abandonments and dispatch-skip cases. After finalising a /brain session, the safety net also appends `ORCHESTRA_MODE=default` to `state.env` so the badge clears (multi-Claude-Code-session concurrency caveat: this can clear another session's still-active /brain badge — same flavour as the existing concurrency limitation).
+Safety net: the Claude Code `Stop` hook runs the T2 summariser on session dirs where cleanup started (inflight markers already removed) but `telemetry.json` was never written. Sessions that still have `.duo-inflight` or `.brain-inflight` are **skipped** — they are in-progress and must not be disturbed. After finalising a /brain session the hook appends `ORCHESTRA_MODE=default` to `state.env` so the badge clears (multi-Claude-Code-session concurrency caveat: this can clear another session's still-active /brain badge — same flavour as the existing concurrency limitation). Inflight marker removal is the exclusive responsibility of the explicit cleanup commands.
 
 #### Monitoring costs per tier
 

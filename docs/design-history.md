@@ -2,8 +2,8 @@
 title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design notes & open questions"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_at: 2026-05-05--20-30
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-06--00-00
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1392,3 +1392,42 @@ Fix: normalize all three places that compute a project path with `realpath` befo
 **Change.** `commands/duo-start.md` renamed to `commands/duo-plan.md`. `commands/duo-end.md` renamed to `commands/duo-act.md`. Frontmatter descriptions updated to reflect new names and roles. All references updated.
 
 **Files.** Renamed: `commands/duo-start.md` → `commands/duo-plan.md`, `commands/duo-end.md` → `commands/duo-act.md`. Modified: `commands/duo-plan.md`, `commands/duo-act.md`, `commands/duo-abandon.md` (no `/duo-plan` refs needed), `scripts/orchestra-hook.sh`, `scripts/telemetry-report.sh`, `scripts/smoke-test.sh`, `deploy.sh` (orphan-cleanup adds `duo-start.md` and `duo-end.md`), `collect.sh`, `docs/design.md`, `CLAUDE.md`, `README.md`, `docs/design-history.md` (this note). No functional changes — pure rename.
+
+---
+
+## Amendment 2026-05-06 — fix Stop-hook destroying badge during /duo-plan refinement
+
+### Bug
+
+After `/duo-plan` responded, the `♪ orchestra -> plan <title>` badge disappeared immediately, and refinement turns produced `NO_SESSION: no active /duo session — run /duo-plan first.`.
+
+### Root cause
+
+The Claude Code `Stop` hook fires at the **end of every response turn**, not only on process exit. The 2026-05-05 broadened-gate fix added `.duo-inflight` and `.brain-inflight` to the `HAS_ARTEFACT` check, causing the Stop hook to treat every in-progress `/duo-plan` session as abandoned at the end of the first turn:
+
+1. `/duo-plan` setup writes `.duo-inflight` → badge appears.
+2. Response ends → `Stop` hook fires → finds `.duo-inflight`, no `telemetry.json` → matches "has artefact, not finalised" → writes `.outcome=abandoned`, removes `.duo-inflight`.
+3. Badge disappears. Next refinement turn: bash finds no `.duo-inflight` → `NO_SESSION`.
+
+The model improvised recovery logic ("The .duo-inflight marker is missing, but the PLAN.md is intact. Restoring the marker and proceeding.") but this was unreliable and the badge kept flickering off between turns.
+
+### Fix
+
+**`scripts/orchestra-hook.sh` stop mode** — add two early `continue` guards:
+
+```bash
+[ -f "$dir/.duo-inflight" ]   && continue
+[ -f "$dir/.brain-inflight" ] && continue
+```
+
+Place these immediately after the existing `[ -f "$dir/telemetry.json" ] && continue` guard. Remove the `rm -f "$dir/.duo-inflight" "$dir/.brain-inflight"` line. Remove `.brain-inflight` and `.duo-inflight` from the `HAS_ARTEFACT` list.
+
+The Stop hook is now a pure safety net for sessions where cleanup already started (inflight markers removed by `/duo-act`/`/duo-abandon`/`/brain`) but `telemetry.json` was never written. Inflight marker removal is the exclusive responsibility of the explicit cleanup commands.
+
+**`commands/duo-plan.md` refinement section** — add an explicit bash code block for session-location at the start of each refinement turn (matching the pattern in `duo-act.md`), replacing the prose instruction "locate the session the same way /duo-act does."
+
+### Behavioural change for abandoned sessions
+
+If the user closes the terminal mid-plan, `.duo-inflight` is no longer removed by the Stop hook. The badge stays visible in the next session; the `/duo-plan` refusal check blocks a new session until the user runs `/duo-abandon` (which writes T2 and removes the marker) or the 30-day housekeeping sweep runs. This is the correct behaviour: explicit cancel, not silent discard.
+
+**Files.** Modified: `scripts/orchestra-hook.sh`, `commands/duo-plan.md`, `docs/design.md`, `docs/design-history.md`.

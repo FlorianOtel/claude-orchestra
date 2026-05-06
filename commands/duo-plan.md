@@ -170,7 +170,21 @@ Stop here. The next operator turn will be either a refinement message, `/duo-act
 
 These happen between `/duo-plan` and `/duo-act`/`/duo-abandon`. The operator types feedback; you re-read `${SESSION_DIR}/PLAN.md`, integrate the feedback, and rewrite it via the same atomic-rename pattern. This is exactly Claude Code's native plan-mode iteration — the slash command does not need to drive it.
 
-Locate the active `${SESSION_DIR}` on each refinement turn the same way `/duo-act` and `/duo-abandon` do (find the `.duo-inflight` under the project's sessions root). One active session per project; if there's none, tell the operator to run `/duo-plan` first.
+At the start of each refinement turn, locate the active session by running:
+
+```bash
+CLAUDE_PROJECT_DIR="$(realpath "${CLAUDE_PROJECT_DIR:-$(pwd)}" 2>/dev/null || echo "${CLAUDE_PROJECT_DIR:-$(pwd)}")"
+SESSIONS_ROOT="${CLAUDE_PROJECT_DIR}/.claude/orchestra/sessions"
+ACTIVE_INFLIGHT="$(find "$SESSIONS_ROOT" -mindepth 2 -maxdepth 2 -name '.duo-inflight' 2>/dev/null | head -1)"
+if [ -z "$ACTIVE_INFLIGHT" ]; then
+  echo "NO_SESSION: no active /duo session — run /duo-plan first."
+  exit 0
+fi
+SESSION_DIR="$(dirname "$ACTIVE_INFLIGHT")"
+echo "session_dir=${SESSION_DIR}"
+```
+
+If the output starts with `NO_SESSION:`, tell the operator there is no active session and stop. Otherwise, use the captured `session_dir=...` value as the literal path for reading and rewriting `PLAN.md`.
 
 Do **not** call `ExitPlanMode` during refinement. That's `/duo-act`'s job.
 
