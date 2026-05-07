@@ -18,7 +18,7 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents) + /brain-abandon (explicit cancel); /duo-plan, /duo-act, /duo-abandon (lightweight session-bracketed pipeline: Sonnet plans interactively across multiple turns, Haiku acts after /duo-act)
 - `scripts/orchestra-hook.sh` — PreToolUse / SubagentStop / PreCompact / Stop dispatcher
 - `scripts/otel-headers-helper.sh` — X-Orchestra-Session-ID injection; auto-creates native session entries (CC 2.1.132: not called — fallback via bash-session-init.sh)
-- `scripts/bash-session-init.sh` — sourced via `BASH_ENV`; writes `uuid-<CC_MAIN_PID>` sidecar so Stop hook can retrieve session UUID from Bash-call context
+- `scripts/bash-session-init.sh` — sourced via `BASH_ENV`; registers native session as `native-<UUID>.lck` on first Bash call (UUID-keyed, cc_pid for liveness only)
 - `scripts/native-session-finalize.py` — Stop-hook helper: finalise one native session; T2 fallback via `_walk_jsonl_for_tokens` + `pricing.yaml`
 - `scripts/session-report.{sh,py}` — unified cost report (native + orchestra)
 - `config/config.yaml` — global orchestra defaults
@@ -60,6 +60,9 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - **Timestamp:** 2026-05-07T17:09:00Z
 - **Model:** claude-sonnet-4-6
 - **Reason:** fix(telemetry): BASH_ENV bridge — bash-session-init.sh writes uuid-<CC_MAIN_PID> sidecar; Stop hook reads /proc/NODE/stat for parent lookup. Fixes: CLAUDE_CODE_SESSION_ID not set in hook context (only in Bash subprocesses). Bug caught: ||exit 0 logic killed all Bash calls when UUID was set — fixed to if/then guard.
+- **Timestamp:** 2026-05-07T17:39:00Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** refactor(telemetry): UUID-keyed native sessions — bash-session-init.sh now writes native-<UUID>.lck directly (registration moved from Stop hook). Eliminated PID ancestry traversal (/proc/stat). Session IDs are now native-<UUID>. Bug caught during implementation: `[ -z ] && return || exit` idiom kills bash when UUID is set — must use `if/then`.
 
 ## Telemetry Smoke Tests
 
@@ -80,19 +83,20 @@ Verify T1 (hook events) and T2 (transcript parse) after any /duo or /brain run.
 
 ### Native session telemetry smoke test
 1. Open a fresh CC session (no /brain or /duo).
-2. Run a trivial command (ask a question — this triggers the first Stop hook which self-registers the session).
+2. Run a trivial Bash command (triggers BASH_ENV → `bash-session-init.sh` writes `native-<UUID>.lck`).
 3. Close the session (Ctrl+C or exit).
-4. In another CC session, send any message (triggers Stop hook → finds dead .lck → T2 finalization).
+4. In another CC session, send any message (triggers Stop hook → finds dead `.lck` → T2 finalization).
 5. Check: `cat ~/.claude/native-sessions/telemetry.jsonl | tail -1 | jq .`
-   Expected: `cost_usd_estimate > 0`, `cost_source: "pricing_yaml"`, `model` field present.
+   Expected: `session_id="native-<UUID>"`, `cost_usd_estimate > 0`, `cost_source: "pricing_yaml"`, `model` field present.
 6. Run: `~/.claude/scripts/session-report.sh --source native --last 5`
    Expected: new row with cost, model, duration.
 
 **Telemetry flow (CC 2.1.132):**
 - `otelHeadersHelper` is configured but NOT called by CC 2.1.132 — no session attribution to SoHoAI, `cost_source: "none"` without the fallback
-- `bash-session-init.sh` (sourced via `BASH_ENV`) bridges the gap: writes `~/.claude/active-sessions/uuid-<CC_MAIN_PID>` on first Bash call — `CLAUDE_CODE_SESSION_ID` is available in Bash subprocesses but not in hooks
-- Stop hook self-registers: PPID = CC node subprocess; reads `/proc/NODE/stat` field 4 to get CC main PID; reads `uuid-<CC_MAIN_PID>` sidecar to get session UUID; writes `native-${NODE_PID}.lck` with `session_uuid`
-- When session ends, next session's Stop hook finds dead `.lck` → calls `native-session-finalize.py --session-uuid UUID` → T2 parses JSONL → `cost_source: "pricing_yaml"`
+- `bash-session-init.sh` (sourced via `BASH_ENV`) registers the session on first Bash call: writes `~/.claude/active-sessions/native-<UUID>.lck` with `cc_pid` (stable CC main process), `session_uuid`, `started_at`
+- `CLAUDE_CODE_SESSION_ID` is available in Bash subprocesses but NOT in hooks — registration happens in bash-session-init.sh, not the Stop hook
+- Stop hook only finalizes dead sessions: iterates `native-*.lck`, checks `kill -0 <cc_pid>`, runs `native-session-finalize.py` when dead → T2 parses JSONL → `cost_source: "pricing_yaml"`
+- Session IDs: `native-<UUID>` (stable, globally unique — no timestamp-PID suffix)
 - **Requires**: `BASH_ENV=/home/florian/.claude/scripts/bash-session-init.sh` in `settings.json` env (NOT managed by deploy.sh — must be set manually or kept in settings.json)
 
 ### Reading the unified session report
