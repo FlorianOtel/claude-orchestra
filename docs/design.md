@@ -244,7 +244,7 @@ See design-history.md §13.3 for three potential approaches to close the gap.
 
 Multi-tier orchestration has a non-obvious cost structure. Brain (Opus or Sonnet) dominates by token volume — it re-sends its full context every turn (cached after the first hit, but still billed at the cache-read rate of the most expensive model) and receives all subagent returns. Planner and Reviewer (Sonnet) are single-call-per-phase. Actor (Haiku) is cheap per token but may iterate. Without measurement, cost/quality trade-offs are guesses: which tier to change? which phase to skip? does the built-in `Explore` subagent justify a dedicated cheaper Researcher agent? Telemetry makes those decisions data-driven (see `TODO.md §0` for the full decision-gate framework).
 
-Every `/brain` and `/duo` run is instrumented post-hoc by `scripts/telemetry-summarize.{sh,py}`, invoked from each command's cleanup block. Native (non-orchestra) CC sessions are tracked automatically: `otel-headers-helper.sh` writes a `native-<timestamp>-<PID>` session entry, and `native-session-finalize.py` finalizes it on session end (via the Stop hook).
+Every `/brain` and `/duo` run is instrumented post-hoc by `scripts/telemetry-summarize.{sh,py}`, invoked from each command's cleanup block. Native (non-orchestra) CC sessions are tracked automatically via `bash-session-init.sh` (sourced on every Bash tool call through `BASH_ENV`) and finalized by the Stop hook — see §Native session tracking below.
 
 Two complementary approaches cover the full cost picture. They are tried in priority order; the first to return a non-zero value is used.
 
@@ -270,6 +270,45 @@ T2 writes:
 **T2 time window:** `[started_at, ended_at]`. `started_at` is parsed from the session-dir basename (`<YYYYMMDDTHHMMSSZ>-<PID>`). `ended_at` is the mtime of `${SESSION_DIR}/.outcome` when present, falling back to `time.time()`. All exit paths — `/duo-act`, `/duo-abandon`, `/brain` cleanup (all verdicts), `/brain-abandon`, and the Stop-hook safety net — write `.outcome` before invoking the summariser. This makes the window deterministic and re-runs of the summariser idempotent (the window does not expand to "now").
 
 **Safety net:** the `Stop` hook runs T2 on session dirs where cleanup started (inflight markers already removed) but `telemetry.json` was never written. Sessions that still have `.duo-inflight` or `.brain-inflight` are skipped — they are in-progress.
+
+---
+
+### Native session tracking
+
+Native (non-orchestra) CC sessions are tracked via a two-step mechanism that avoids the need for any per-request header or proxy instrumentation.
+
+**Registration — `scripts/bash-session-init.sh` (sourced via `BASH_ENV`).**
+Claude Code sets `CLAUDE_CODE_SESSION_ID` in the environment of every Bash tool call, but not in hook subprocesses. `bash-session-init.sh` exploits this: it is sourced automatically at the start of each Bash tool call (via `BASH_ENV=/home/florian/.claude/scripts/bash-session-init.sh` in `settings.json`). On the first call it writes a `.lck` file to `~/.claude/active-sessions/native-<UUID>.lck` containing:
+
+```
+cc_pid=<stable-claude-PID>
+session_id=native-<UUID>
+started_at=<ISO8601>
+session_uuid=<UUID>
+```
+
+`cc_pid` is the stable top-level `claude` process — found by checking if `$PPID.comm == "claude"` (normal case) or walking one level up (if PPID is a transient node subprocess). The script is a no-op for subsequent calls (file already exists) and skips orchestra sessions (`.brain-inflight` / `.duo-inflight` present — handled by orchestra telemetry instead). The UUID serves as the primary key; the PID is stored solely for liveness detection.
+
+**Finalization — `scripts/orchestra-hook.sh` stop mode.**
+The Stop hook fires per response turn. It iterates all `native-*.lck` files and for each runs `kill -0 <cc_pid>`. If the process is dead the session has ended: it invokes `native-session-finalize.py` (T2 cost attribution via the cost-source cascade) and removes the `.lck`. Since `CLAUDE_CODE_SESSION_ID` is not available in hook context, finalization of session N is triggered by the Stop hook of session N+1 — typically within seconds of the user opening a new session.
+
+**Session IDs.** Native session IDs are `native-<UUID>` (e.g. `native-6dedcd3d-37e5-46a9-958e-fb0a822b5e3a`). This is the value stored in `~/.claude/native-sessions/telemetry.jsonl` and displayed by `session-report.sh`. The UUID is the CC session UUID (`CLAUDE_CODE_SESSION_ID`), making IDs globally unique and stable — they do not embed a timestamp or a PID.
+
+**Telemetry record fields** (written to `~/.claude/native-sessions/telemetry.jsonl`):
+
+| Field | Description |
+|-------|-------------|
+| `session_id` | `native-<UUID>` |
+| `command` | always `"native"` |
+| `started_at` | ISO8601 timestamp from `.lck` creation |
+| `ended_at` | ISO8601 timestamp at finalization |
+| `duration_s` | wall-clock seconds |
+| `cost_usd_estimate` | from cost-source cascade |
+| `cost_source` | `sohoai_api` / `litellm` / `pricing_yaml` / `none` |
+| `model` | model name (present when `cost_source == "pricing_yaml"`) |
+| `total_tokens` | token count (present when `cost_source == "pricing_yaml"`) |
+
+**Requirement.** `BASH_ENV=/home/florian/.claude/scripts/bash-session-init.sh` must be set in `settings.json` env. This is **not** managed by `deploy.sh` — it must be set manually or persisted in `settings.json`. Without it, `bash-session-init.sh` is never sourced and no `.lck` is written; native sessions appear as `cost_source: "none"` with zero cost.
 
 #### Inspecting per-session data
 
@@ -320,7 +359,7 @@ tail -10 ~/.claude/native-sessions/telemetry.jsonl | jq .
 
 #### How it works
 
-SoHoAI tracks cost per API call server-side, attributed by a session header injected into every outbound request. Each `/brain` and `/duo` command writes `X-Orchestra-Session-ID: <session-id>` to `ANTHROPIC_CUSTOM_HEADERS` in `~/.claude/settings.local.json` at session setup, and removes it at cleanup (atomic `tmp + mv -f` to prevent corruption). The header value is the session-dir basename (e.g. `20260507T101953Z-1971495`). For native sessions, `otel-headers-helper.sh` auto-creates a `native-<timestamp>-<PID>` session entry and injects the header for every CC session automatically.
+SoHoAI tracks cost per API call server-side, attributed by a session header injected into every outbound request. Each `/brain` and `/duo` command writes `X-Orchestra-Session-ID: <session-id>` to `ANTHROPIC_CUSTOM_HEADERS` in `~/.claude/settings.local.json` at session setup, and removes it at cleanup (atomic `tmp + mv -f` to prevent corruption). The header value is the session-dir basename (e.g. `20260507T101953Z-1971495`). For native sessions, `otel-headers-helper.sh` is configured to inject a `native-<UUID>` header, but is not called by CC 2.1.132 — native session cost attribution falls back to T2 (`pricing_yaml`).
 
 At T2 cleanup, `telemetry-summarize.py` queries:
 
@@ -330,7 +369,7 @@ GET {ANTHROPIC_BASE_URL}/v1/usage/stats?session_id=<ID>&since=<ISO8601>&until=<I
 
 with a ±60s buffer around the session time window. If SoHoAI returns a non-zero `totals.cost_usd`, that value is used and `cost_source` is set to `"sohoai_api"`. Otherwise the system falls back to litellm or pricing.yaml (see §Cost-source cascade).
 
-For native sessions, `native-session-finalize.py` performs the same SoHoAI query at finalization time, writing the result to `~/.claude/native-sessions/telemetry.jsonl`.
+For native sessions, `native-session-finalize.py` performs the same SoHoAI query at finalization time. In practice (CC 2.1.132), SoHoAI returns zero for native sessions (no header injected), so cost attribution falls back to `pricing_yaml`. The result is written to `~/.claude/native-sessions/telemetry.jsonl`.
 
 **Known limitation:** `ANTHROPIC_CUSTOM_HEADERS` is read by Claude Code at startup. The parent process's own initial API calls (before the setup block writes the header) do not carry the session ID. Subagents inherit the already-written header via `settings.local.json` and are correctly attributed.
 

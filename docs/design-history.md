@@ -1449,3 +1449,49 @@ If the user closes the terminal mid-plan, `.duo-inflight` is no longer removed b
 This callout signals to Brain that these specific bash calls are exempt from the plan-mode constraint. It's a documentation fix, not a logic change — but one that is load-bearing for correct /duo behaviour in plan mode.
 
 **Files.** Modified: `commands/duo-plan.md`, `docs/design-history.md`.
+
+---
+
+## Amendment 2026-05-07 — native session tracking: PID → UUID as primary key
+
+### Problem: PID-based registration was fragile and hard to reason about
+
+The original native session tracking scheme used PIDs as primary keys throughout:
+
+- `bash-session-init.sh` (sourced via `BASH_ENV` on every Bash tool call) wrote `~/.claude/active-sessions/uuid-<CC_MAIN_PID>` — a sidecar file mapping a process PID to the session UUID.
+- The Stop hook self-registered sessions by reading `$PPID` (its own parent PID, a transient node subprocess), then deriving the CC main PID via `/proc/$PPID/stat field 4` (the parent of that subprocess), then reading the `uuid-<CC_MAIN_PID>` sidecar to recover the session UUID, then writing `native-<PPID>.lck`.
+- `session_id` in `telemetry.jsonl` was `native-<TIMESTAMP>-<PID>` — embedding both the wall-clock registration time and the ephemeral node subprocess PID.
+
+This caused several concrete problems:
+
+1. **Ephemeral subprocess accumulation.** Claude Code sometimes spawns transient node subprocesses for individual tool calls. When a Bash call was parented by such a subprocess, `$PPID` differed across calls within the same session, causing multiple `uuid-<PID>` sidecar files to accumulate — e.g. `uuid-2084061` and `uuid-2094214` both from the same session. If a dead transient PID was used as the `.lck` key, the Stop hook's `kill -0` would immediately trigger false finalization.
+
+2. **Fragile two-hop ancestry walk.** The Stop hook resolved the session UUID via `/proc/$PPID/stat field 4` — the grandparent of the hook process in the process tree. This worked when the process hierarchy was `CC_MAIN → hook_node → hook_script`, but produced the wrong PID (the tmux shell) when the hook was spawned one level differently.
+
+3. **PID-keyed files are not human-readable.** `native-2083279.lck` conveys nothing; `native-6dedcd3d-37e5-46a9-958e-fb0a822b5e3a.lck` identifies the session unambiguously.
+
+4. **`session_id` embedded an ephemeral PID.** `native-20260507T151437Z-2083279` used the transient hook subprocess PID as the persistent session identifier — meaning two runs of the same session could produce different IDs depending on which subprocess spawned the Stop hook first.
+
+### Root cause
+
+`CLAUDE_CODE_SESSION_ID` (the stable UUID) is injected by CC into Bash tool call environments but **not** into hook subprocess environments. The PID bridge was a workaround for this gap: Bash calls know the UUID, hooks know PIDs, and `/proc/stat` ancestry was used to map one to the other.
+
+The fix was to ask: *who already has both pieces of information?* Answer: `bash-session-init.sh` itself. It runs in a Bash tool call context, so it has both `CLAUDE_CODE_SESSION_ID` and `$PPID`. Moving registration there eliminates the need for the hook to do any UUID lookup.
+
+### Solution
+
+**Registration moved to `bash-session-init.sh`.** On the first Bash tool call of a native session, the script now writes `~/.claude/active-sessions/native-<UUID>.lck` directly — UUID-keyed, with `cc_pid` as internal metadata for liveness only. To find a stable CC PID (one that lives for the full session), the script checks `$PPID.comm`: if it is `"claude"`, that IS the CC main process; otherwise it walks one level up. The file is idempotent (skipped if already exists) and respects the orchestra guard (skipped if any `.brain-inflight` or `.duo-inflight` is present).
+
+**Stop hook simplified.** The 35-line self-registration block (PID ancestry walk, `uuid-<PID>` lookup, `native-<PPID>.lck` creation) was removed. The hook now only iterates `native-*.lck` files, checks `kill -0 <cc_pid>`, and finalizes dead sessions.
+
+**Session IDs changed to `native-<UUID>`.** Stable, globally unique, no embedded timestamps or PIDs. Old records in `telemetry.jsonl` retain their `native-<TIMESTAMP>-<PID>` IDs (the file is append-only); reporting scripts use the `started_at` field for dates, never parsing `session_id`.
+
+**`cc_pid` removed from `telemetry.jsonl`.** The PID was only meaningful for `kill -0` liveness detection in `.lck` files at runtime. After finalization it was stale metadata. Removed from `native-session-finalize.py`'s output record; existing records scrubbed with `jq del(.cc_pid)`.
+
+### Bug discovered during implementation
+
+The one-liner `[ -z "$_uuid" ] && return 0 2>/dev/null || exit 0` is subtly wrong. Shell operator precedence makes it `(false && return 0) || exit 0` when `$_uuid` IS set — so `exit 0` fires and kills the bash subprocess, producing silent "no output" from every CC Bash tool call. The correct form is `if [ -z "$_uuid" ]; then return 0 2>/dev/null || exit 0; fi`. The same pattern appeared in the original `bash-session-init.sh` when fixing a prior bug; this time the mistake was caught during immediate smoke testing.
+
+### Files
+
+Modified: `scripts/bash-session-init.sh` (complete rewrite), `scripts/orchestra-hook.sh` (removed registration block), `scripts/native-session-finalize.py` (dropped `cc_pid` from output record), `CLAUDE.md` (updated telemetry flow), `docs/design.md` (new §Native session tracking, updated SoHoAI section), `docs/design-history.md` (this note). Data: `~/.claude/native-sessions/telemetry.jsonl` scrubbed; `~/.claude/active-sessions/uuid-*` sidecar files deleted. Commits: `40b536c` (UUID-keyed registration), `8b29f70` (cc_pid removal).
