@@ -154,12 +154,12 @@ def apply_filters(records: List[Dict[str, Any]], args: argparse.Namespace) -> Li
     if args.month:
         try:
             month_dt = datetime.strptime(args.month, "%Y-%m").replace(tzinfo=timezone.utc)
-            month_end = (
+            month_next = (
                 month_dt.replace(day=28) + __import__("datetime").timedelta(days=4)
-            ).replace(day=1) - __import__("datetime").timedelta(days=1)
+            ).replace(day=1)
             filtered = [
                 r for r in filtered
-                if month_dt <= parse_iso8601(r.get("started_at", "")) <= month_end
+                if month_dt <= parse_iso8601(r.get("started_at", "")) < month_next
             ]
         except Exception:
             pass
