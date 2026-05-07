@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Haiku 4.5)
-updated_at: 2026-05-06--00-00
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-07--10-30
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -34,7 +34,7 @@ Talk to Brain normally. Brain delegates to Planner/Actor/Reviewer as needed. No 
 
 Workflow: (1) `claude --model claude-sonnet-4-6`. (2) `Shift+Tab` to enter plan mode. (3) `/duo-plan <task>`. (4) Refine across turns until the plan is right. (5) `/duo-act` to execute (or `/duo-abandon` to cancel); on approval, `Shift+Tab` to bypassPermissions if desired, Actor runs uninterrupted.
 
-Splitting the plan-approval gate into an explicit `/duo-act` (rather than the slash command barrelling through to `ExitPlanMode` in one response) means rejection-or-redirect during planning is now first-class: refinement is a normal multi-turn conversation, not a rejected-plan-and-informally-keep-chatting situation. Telemetry attribution stays correct because `.outcome`-file mtime bounds the T2 time window (see §Per-session telemetry).
+Splitting the plan-approval gate into an explicit `/duo-act` (rather than the slash command barrelling through to `ExitPlanMode` in one response) means rejection-or-redirect during planning is now first-class: refinement is a normal multi-turn conversation, not a rejected-plan-and-informally-keep-chatting situation. Telemetry attribution stays correct because `.outcome`-file mtime bounds the T2 time window (see §Telemetry).
 
 ### /brain — full pipeline (Opus orchestrates, cap-3 review loop)
 
@@ -236,70 +236,162 @@ Hooks fire at tool-call boundaries only. They capture *what the subagent is doin
 
 See design-history.md §13.3 for three potential approaches to close the gap.
 
-### Per-session telemetry
+---
 
-#### Why it exists
+## Telemetry
 
-Multi-tier orchestration has non-obvious cost structure. Brain (Opus or Sonnet) dominates by token volume — it re-sends its full context every turn (cached after the first hit, but still billed at the cache-read rate of the most expensive model in the system) and receives all subagent returns. Planner and Reviewer (Sonnet) are single-call-per-phase. Actor (Haiku) is cheap per token but may iterate. Without measurement, cost/quality trade-offs (which tier to change? which phase to skip?) are guesses. Telemetry makes them data-driven.
+### Rationale
 
-The original motivation was a specific question: does the built-in `Explore` subagent (dispatched during `/duo` Phase 0 and `/brain` Phase 0 research) justify a dedicated cheaper Researcher agent? Telemetry answered it: measure first, then decide. See `TODO.md §0` for the full decision-gate framework.
+Multi-tier orchestration has a non-obvious cost structure. Brain (Opus or Sonnet) dominates by token volume — it re-sends its full context every turn (cached after the first hit, but still billed at the cache-read rate of the most expensive model) and receives all subagent returns. Planner and Reviewer (Sonnet) are single-call-per-phase. Actor (Haiku) is cheap per token but may iterate. Without measurement, cost/quality trade-offs are guesses: which tier to change? which phase to skip? does the built-in `Explore` subagent justify a dedicated cheaper Researcher agent? Telemetry makes those decisions data-driven (see `TODO.md §0` for the full decision-gate framework).
 
-#### What is collected
+Every `/brain` and `/duo` run is instrumented post-hoc by `scripts/telemetry-summarize.{sh,py}`, invoked from each command's cleanup block. Native (non-orchestra) CC sessions are tracked automatically: `otel-headers-helper.sh` writes a `native-<timestamp>-<PID>` session entry, and `native-session-finalize.py` finalizes it on session end (via the Stop hook).
 
-Every `/brain` and `/duo` run is instrumented post-hoc by `scripts/telemetry-summarize.{sh,py}`, invoked from each command's cleanup block. The parser walks the parent's JSONL for parent tokens, then walks `<parent-uuid>/subagents/agent-*.jsonl` (each subagent's own transcript) attributed via the matching `agent-*.meta.json` sidecar (`{"agentType": "…"}`). It applies USD rates from `config/pricing.yaml` and writes:
+Two complementary approaches cover the full cost picture. They are tried in priority order; the first to return a non-zero value is used.
 
-- `${SESSION_DIR}/telemetry.json` — rich per-session record (parent + subagent tokens per tier, USD cost, iteration counts, outcome, blast_radius).
-- `~/.claude/orchestra/telemetry.jsonl` — global append-only trend log; one line per session. Each entry includes `session_dir` (absolute path) so sessions can be located across any project directory without running from a specific project.
-- `${SESSION_DIR}/telemetry-events.jsonl` — live T1 hook event stream (timing-only; `usage=null` since hook payloads don't expose token counts); drives the real-time `~$X.YZ` status-line indicator.
+---
 
-On-demand report: `~/.claude/scripts/telemetry-report.sh --last N`. Per-session verification: `./scripts/smoke-test.sh`.
+### Approach 1 — Local JSONL (T1 + T2 hybrid)
 
-#### T1 + T2 hybrid
+**Prerequisite:** works with **any** Anthropic API endpoint — direct or proxied — as long as JSONL transcripts are written locally by Claude Code under `~/.claude/projects/`. No proxy required.
 
-Two complementary layers:
+#### How it works
 
-- **T1 (hook-based, real-time)**: `orchestra-hook.sh start/end` appends one JSON event per subagent dispatch/completion to `telemetry-events.jsonl`. Captures timing and stage identity; `usage` is always `null` (hook payloads don't expose token counts). Drives the live `~$X.YZ` status-line badge via a cached last-known value — the cost persists through subagent execution even though the parent's reported `used_percentage` drops to 0 while a subagent runs.
+Two layers instrument every orchestra session:
 
-- **T2 (transcript parsing, authoritative)**: runs once at cleanup. Reads the actual JSONL transcripts for real token counts and model attribution. Normalises versioned model IDs (strips `-YYYYMMDD` suffix for pricing lookup) and skips `<synthetic>` messages (written by `/compact`). T2 supersedes T1 for all cost figures. **Transcript discovery (fixed 2026-05-05):** Walks **all** `*.jsonl` files in `transcript_path.parent` (the project's transcripts directory) that have records within the session time window — capturing content split across multiple JSONLs by `--fork-session` or `/clear`-induced UUID rotation. Each in-window parent JSONL's `<uuid>/subagents/` directory is walked for subagent attribution. Tokens are accumulated across all contributing parent JSONLs; the first non-null model encountered is used for attribution. The `parent.transcripts` field in `telemetry.json` lists all contributing JSONL UUIDs for forensics. Transcript discovery priority for establishing the initial `transcript_path` (used to find the transcripts directory to glob): (1) `.transcript-path` in the session dir — full JSONL path written at session-dir creation time (setup block) and reinforced by the PreToolUse hook on first subagent dispatch (where `CLAUDE_PROJECT_DIR` is reliably set); (2) global scan of all `~/.claude/projects/*/` subdirectories — exact UUID match when a UUID is known, most-recently-modified JSONL otherwise. This ensures telemetry works correctly when `/duo` or `/brain` is invoked from any project on any machine, regardless of path form (NFS mount path vs local symlink path).
+**T1 — hook-based, real-time.** `orchestra-hook.sh` appends one JSON event per subagent dispatch / completion to `${SESSION_DIR}/telemetry-events.jsonl`. Captures subagent type, timing, and stage identity. Token counts are always `null` (hook payloads do not expose them). T1 drives the live `~$X.YZ` status-line badge.
 
-T2 time window: `[started_at_unix, ended_at_unix]`. `started_at_unix` is parsed from the session-dir basename (`<YYYYMMDDTHHMMSSZ>-<PID>`). `ended_at_unix` is the mtime of `${SESSION_DIR}/.outcome` when present, falling back to `time.time()` otherwise. `/duo-act`, `/duo-abandon`, `/brain` cleanup (PASS, FIX-loop final, BLOCK, Phase 0 abandonment, Phase 1 outright rejection), and `/brain-abandon` all write `.outcome` before invoking the summariser; the Stop-hook safety net writes `.outcome=abandoned` to disk before invoking it too. With `.outcome` mtime as the upper bound, post-cleanup parent-transcript activity is excluded from cost attribution and re-runs of the summariser are idempotent (the window does not expand to "now").
+**T2 — transcript parsing, authoritative.** Runs once at cleanup. `telemetry-summarize.py` walks all `*.jsonl` files in the project's transcripts directory whose records fall within the session time window — capturing content split across multiple JSONLs by `--fork-session` or `/clear`-induced UUID rotation. For each in-window parent JSONL, it walks `<uuid>/subagents/agent-*.jsonl` (subagent transcripts), attributed via `agent-*.meta.json` sidecars (`{"agentType": "…"}`). Token counts accumulate across all contributing JSONLs; USD cost is computed via the cost-source cascade (see §Cost-source cascade).
 
-Safety net: the Claude Code `Stop` hook runs the T2 summariser on session dirs where cleanup started (inflight markers already removed) but `telemetry.json` was never written. Sessions that still have `.duo-inflight` or `.brain-inflight` are **skipped** — they are in-progress and must not be disturbed. After finalising a /brain session the hook appends `ORCHESTRA_MODE=default` to `state.env` so the badge clears (multi-Claude-Code-session concurrency caveat: this can clear another session's still-active /brain badge — same flavour as the existing concurrency limitation). Inflight marker removal is the exclusive responsibility of the explicit cleanup commands.
+T2 writes:
+- `${SESSION_DIR}/telemetry.json` — rich per-session record: parent + subagent tokens per tier, USD cost estimate, iteration counts, outcome, `cost_source`, `parser_warnings`.
+- `~/.claude/orchestra/telemetry.jsonl` — global append-only trend log; one line per session (includes `session_dir` for cross-project lookup).
+- T2 supersedes T1 for all cost figures.
 
-#### Monitoring costs per tier
+**T2 time window:** `[started_at, ended_at]`. `started_at` is parsed from the session-dir basename (`<YYYYMMDDTHHMMSSZ>-<PID>`). `ended_at` is the mtime of `${SESSION_DIR}/.outcome` when present, falling back to `time.time()`. All exit paths — `/duo-act`, `/duo-abandon`, `/brain` cleanup (all verdicts), `/brain-abandon`, and the Stop-hook safety net — write `.outcome` before invoking the summariser. This makes the window deterministic and re-runs of the summariser idempotent (the window does not expand to "now").
 
-Two commands cover all reporting needs:
+**Safety net:** the `Stop` hook runs T2 on session dirs where cleanup started (inflight markers already removed) but `telemetry.json` was never written. Sessions that still have `.duo-inflight` or `.brain-inflight` are skipped — they are in-progress.
+
+#### Inspecting per-session data
 
 ```bash
-# Session totals — quick tabular summary of recent sessions
+# T1 live events for an orchestra session (timing and stage identity; usage=null)
+cat ~/.claude/orchestra/sessions/<session-id>/telemetry-events.jsonl
+
+# T2 authoritative per-session record
+cat ~/.claude/orchestra/sessions/<session-id>/telemetry.json | jq .
+
+# Verify T1 and T2 captured correctly after a /duo or /brain run
+./scripts/smoke-test.sh
+
+# Check the global orchestra trend log
+tail -20 ~/.claude/orchestra/telemetry.jsonl | jq .
+
+# Check native session records
+tail -10 ~/.claude/native-sessions/telemetry.jsonl | jq .
+```
+
+#### Summary reports
+
+```bash
+# Tabular summary of recent orchestra sessions
 ~/.claude/scripts/telemetry-report.sh --last 10
 
-# Per-tier breakdown + cumulative totals (run from project dir)
-~/.claude/scripts/telemetry-report.sh --last 20 --tier
+# Per-tier breakdown + cumulative totals across recent sessions
+~/.claude/scripts/telemetry-report.sh --last 10 --tier
+
+# Native CC sessions only (reads CC's own usage-data + transcripts, pricing.yaml cost)
+~/.claude/scripts/native-session-report.sh --last 10
+~/.claude/scripts/native-session-report.sh --last 10 --tier
+~/.claude/scripts/native-session-report.sh --since 2026-05-01
+
+# Unified report: native + orchestra sessions in one table (most useful day-to-day)
+~/.claude/scripts/session-report.sh --last 10
+~/.claude/scripts/session-report.sh --source orchestra
+~/.claude/scripts/session-report.sh --source native
+~/.claude/scripts/session-report.sh --since 2026-05-01
+~/.claude/scripts/session-report.sh --month 2026-05
 ```
 
-**`--tier` rationale:** The global `telemetry.jsonl` stores only session totals — sufficient for trend queries but opaque about *which tier* drove a cost spike. Per-tier attribution lives in the richer per-session `telemetry.json` files, located via the `session_dir` field in each log entry. `--tier` bridges the two: it reads the global log to enumerate sessions, looks up each session's per-tier breakdown, prints a per-session table, then appends a **cumulative totals table** across all sessions — the primary tool for answering "which tier is driving my costs overall?"
+---
 
-**`--tier` requirements:** can be run from any directory — session dirs are resolved via the `session_dir` field in the global log. Sessions whose dirs have been cleaned up (30-day retention) appear with log totals only and are excluded from the cumulative.
+### Approach 2 — SoHoAI proxy (LiteLLM)
 
-**Sample `--tier` output:**
+**Prerequisite:** API calls must be routed through the [SoHoAI](https://sohoai.org) LiteLLM proxy (`ANTHROPIC_BASE_URL` set to the SoHoAI endpoint). Without this, the SoHoAI API query returns nothing and the system falls back to Approach 1 cost calculation transparently.
+
+#### How it works
+
+SoHoAI tracks cost per API call server-side, attributed by a session header injected into every outbound request. Each `/brain` and `/duo` command writes `X-Orchestra-Session-ID: <session-id>` to `ANTHROPIC_CUSTOM_HEADERS` in `~/.claude/settings.local.json` at session setup, and removes it at cleanup (atomic `tmp + mv -f` to prevent corruption). The header value is the session-dir basename (e.g. `20260507T101953Z-1971495`). For native sessions, `otel-headers-helper.sh` auto-creates a `native-<timestamp>-<PID>` session entry and injects the header for every CC session automatically.
+
+At T2 cleanup, `telemetry-summarize.py` queries:
 
 ```
-  2026-04-30  brain   560s  outcome=pass  total=$1.30
-    Tier         Model                  Tokens   %tok      Cost   %cost
-    brain        claude-sonnet-4-6  1,322,163  68.5%  $0.8100   66.3%
-    planner      claude-sonnet-4-6     92,598   4.8%  $0.1563   12.8%
-    actor        claude-haiku-4-5     425,531  22.0%  $0.1007    8.2%
-    reviewer     claude-sonnet-4-6     89,658   4.6%  $0.1549   12.7%
-    TOTAL                           1,929,950          $1.2219
-
---- Cumulative totals (3 session(s)) ---
-  brain        claude-sonnet-4-6  2,009,402  69.3%  $1.2079   69.9%
-  planner      claude-sonnet-4-5     92,598   3.2%  $0.1563    9.0%
-  actor        claude-haiku-4-5     709,827  24.5%  $0.2081   12.0%
-  reviewer     claude-sonnet-4-5     89,658   3.1%  $0.1549    9.0%
-  TOTAL                           2,901,485          $1.7271
+GET {ANTHROPIC_BASE_URL}/v1/usage/stats?session_id=<ID>&since=<ISO8601>&until=<ISO8601>
 ```
+
+with a ±60s buffer around the session time window. If SoHoAI returns a non-zero `totals.cost_usd`, that value is used and `cost_source` is set to `"sohoai_api"`. Otherwise the system falls back to litellm or pricing.yaml (see §Cost-source cascade).
+
+For native sessions, `native-session-finalize.py` performs the same SoHoAI query at finalization time, writing the result to `~/.claude/native-sessions/telemetry.jsonl`.
+
+**Known limitation:** `ANTHROPIC_CUSTOM_HEADERS` is read by Claude Code at startup. The parent process's own initial API calls (before the setup block writes the header) do not carry the session ID. Subagents inherit the already-written header via `settings.local.json` and are correctly attributed.
+
+#### Inspecting per-session data
+
+```bash
+# Check which cost source was used for a specific orchestra session
+cat ~/.claude/orchestra/sessions/<session-id>/telemetry.json | jq '{cost_usd_estimate, cost_source}'
+
+# Check cost source across all finalized native sessions
+cat ~/.claude/native-sessions/telemetry.jsonl | jq '{session_id, cost_source}'
+
+# Distribution of cost sources across orchestra sessions
+grep -o '"cost_source":"[^"]*"' ~/.claude/orchestra/telemetry.jsonl | sort | uniq -c
+
+# Confirm the active-sessions header is set (during an orchestra session)
+cat ~/.claude/settings.local.json | jq .env.ANTHROPIC_CUSTOM_HEADERS
+```
+
+#### Summary reports
+
+Both the unified and orchestra-specific reports show a `Source` column (`sohoai_api` | `litellm` | `pricing_yaml` | `none`) so you can see which cost path was used at a glance:
+
+```bash
+# Unified report with Source column
+~/.claude/scripts/session-report.sh --last 10
+
+# Orchestra-only report with Source column
+~/.claude/scripts/telemetry-report.sh --last 10
+
+# Filter to native sessions only (finalized via SoHoAI where available)
+~/.claude/scripts/session-report.sh --source native --last 10
+
+# Scope to a date range
+~/.claude/scripts/session-report.sh --since 2026-05-01
+~/.claude/scripts/session-report.sh --month 2026-05
+```
+
+---
+
+### Cost-source cascade
+
+T2 applies sources in priority order; first non-zero value wins:
+
+| Priority | Source | `cost_source` value | Condition |
+|---|---|---|---|
+| 1 | SoHoAI API | `"sohoai_api"` | `ANTHROPIC_BASE_URL` set; `GET /v1/usage/stats` returns non-zero |
+| 2 | litellm | `"litellm"` | litellm installed; `completion_cost()` returns non-zero for session models |
+| 3 | pricing.yaml | `"pricing_yaml"` | `config/pricing.yaml` present with model rates |
+| — | none (0.0) | `"none"` | All three unavailable or return zero |
+
+`pricing.yaml` carries a `last_updated` field. `telemetry-report.sh` warns if rates are > 90 days stale; bump manually after verifying against https://docs.anthropic.com/en/docs/about-claude/models/all-models.
+
+**Caveats:**
+- Per-session `telemetry.json` is the authoritative source (T2). The global `telemetry.jsonl` stores totals only.
+- `CLAUDE_SESSION_ID` is not set in subprocess environments (all hook invocations show `session: "unknown"`). `CLAUDE_PROJECT_DIR` is set in hook subprocesses but not in Bash tool call subprocesses. All three places that compute a project path (`orchestra-hook.sh`, `duo.md`, `brain.md`) normalize with `realpath` to resolve symlinks to the physical NFS path.
+- T2 transcript discovery uses `.transcript-path` (stored at session-dir creation) as primary, and a global `~/.claude/projects/*/` scan as secondary. No hardcoded path remains.
+
+---
+
+### Per-tier cost interpretation
 
 **Typical tier proportions:**
 
@@ -309,36 +401,43 @@ Two commands cover all reporting needs:
 | `/brain` — Opus Brain | ~95% | ~2% | ~1% | ~2% |
 | `/duo` | ~60% | — | ~40% | — |
 
-**Key insight:** Brain's tier dominance (95% Opus / 66% Sonnet) is what's left **after** prompt caching has already taken ~86% off Brain's bill — the proportions in the table are post-cache. Without caching, Brain's line would be roughly 10× larger and the session-total ratio more lopsided still. Three multipliers stack to keep Brain on top: **model rate** (Opus cache-read $1.50/MTok ≈ 15× Haiku cache-read $0.10/MTok), **context size** (Brain re-sends the whole session every turn; subagents get a fresh, scoped prompt), and **turn count** (Brain runs every user message + every dispatch round-trip; subagents are one-shot). Caching only attacks the first multiplier — the other two are structural to Brain's role as orchestrator. To shift the proportions further you must trim context (`/compact`, smaller inlined artifacts) or downgrade the Brain model — caching is already doing all it can.
+Brain's tier dominance is what remains **after** prompt caching has already taken ~86% off Brain's bill — the proportions in the table are post-cache. Three multipliers stack to keep Brain on top: **model rate** (Opus cache-read ≈ 15× Haiku cache-read), **context size** (Brain re-sends the whole session every turn; subagents get a fresh, scoped prompt), and **turn count** (Brain runs every user message + every dispatch round-trip; subagents are one-shot). Caching only attacks the first multiplier. To shift the proportions further: trim context (`/compact`, smaller inlined artifacts) or downgrade the Brain model.
 
-**Caveats:**
-- Per-session `telemetry.json` is the authoritative source (T2). The global `telemetry.jsonl` stores totals only. Re-running T2 on sessions completed > ~30 minutes ago produces unreliable results — the time window expands to "now" and captures unrelated transcript activity.
-- `CLAUDE_SESSION_ID` is not set by Claude Code in subprocess environments (all hook invocations show `session: "unknown"`). `CLAUDE_PROJECT_DIR` is set in hook subprocesses but **not** in Bash tool call subprocesses. All three places that compute a project path (`orchestra-hook.sh`, `duo.md`, `brain.md`) normalize with `realpath` to resolve symlinks to the physical NFS path before use. T2 transcript discovery uses `.transcript-path` (primary) and a global `~/.claude/projects/*/` scan (secondary); no hardcoded path remains.
-- `pricing.yaml` carries a `last_updated` field; `telemetry-report.sh` warns when rates are > 90 days stale.
+The `--tier` flag on `telemetry-report.sh` reads per-session `telemetry.json` files (located via the `session_dir` field in the global log) to produce a per-tier breakdown for each session, then a cumulative totals table across all sessions — the primary tool for answering "which tier is driving my costs overall?".
 
-#### What the data is intended for
+**Sample `--tier` output:**
 
-The global log drives five decision gates (see `TODO.md §0` for thresholds and sample-size requirements):
+```
+  2026-04-30  brain   560s  outcome=pass  total=$1.30
+    Tier         Model                  Tokens   %tok      Cost   %cost
+    ----------------------------------------------------------------
+    brain        claude-sonnet-4-6  1,322,163  68.5%  $0.8100   66.3%
+    planner      claude-sonnet-4-6     92,598   4.8%  $0.1563   12.8%
+    actor        claude-haiku-4-5     425,531  22.0%  $0.1007    8.2%
+    reviewer     claude-sonnet-4-6     89,658   4.6%  $0.1549   12.7%
+    ----------------------------------------------------------------
+    TOTAL                           1,929,950          $1.2219
 
-1. **Researcher agent** — implement only if `Explore` dispatches are frequent and account for > 15% of session cost. Currently too few sessions to decide.
+--- Cumulative totals (3 session(s)) ---
+  Tier         Model                  Tokens   %tok       Cost   %cost
+  --------------------------------------------------------------------
+  brain        claude-sonnet-4-6  2,009,402  69.3%   $1.2079   69.9%
+  planner      claude-sonnet-4-6     92,598   3.2%   $0.1563    9.0%
+  actor        claude-haiku-4-5     709,827  24.5%   $0.2081   12.0%
+  reviewer     claude-sonnet-4-6     89,658   3.1%   $0.1549    9.0%
+  --------------------------------------------------------------------
+  TOTAL                           2,901,485           $1.7271
+```
+
+**Decision gates** (see `TODO.md §0` for thresholds and sample-size requirements):
+
+1. **Researcher agent** — implement only if `Explore` dispatches account for > 15% of session cost.
 2. **Planner model** — downgrade to Haiku only if `planner_replans` rate is low and Planner cost fraction is measurable.
-3. **1-hour TTL caching** — activate per-tier when TTL-miss rate exceeds 33% (requires measuring inter-call gaps).
+3. **1-hour TTL caching** — activate per-tier when TTL-miss rate exceeds 33%.
 4. **Reviewer skip** — only if FIX-verdict rate drops below 10% over ≥ 50 sessions (quality risk).
 5. **Opus vs Sonnet for Brain** — compare `regret_flag` rate at different model tiers once sufficient data exists.
 
-Pricing maintenance: `pricing.yaml` carries a `last_updated` field. `telemetry-report.sh` warns if rates are > 90 days stale; bump manually after verifying against https://docs.anthropic.com/en/docs/about-claude/models/all-models.
-
-#### Stage 2 — SoHoAI API integration
-
-T2 cost attribution uses a three-tier cascade to maximize accuracy. `SoHoAI` is the primary source — each `/brain` and `/duo` command injects `X-Orchestra-Session-ID` into `settings.local.json` at setup and removes it at cleanup, allowing SoHoAI to attribute API calls to the session window. If SoHoAI returns zero or times out, litellm fallback is attempted: `telemetry-summarize.py` calls `litellm.completion_cost()` on each subagent's actual token counts (normalized for versioned model IDs), plus manual cache-token cost via `litellm.get_model_info()`. If litellm is absent or returns zero, the original pricing.yaml-based cost is used.
-
-**apiHeaders injection lifecycle:** All five commands (`brain.md`, `brain-abandon.md`, `duo-plan.md`, `duo-act.md`, `duo-abandon.md`) inject and clear the header. Setup block appends `X-Orchestra-Session-ID=<session-dir-basename>` to `~/.claude/settings.local.json` using atomic `_TMP + mv -f` to prevent corruption. Cleanup block removes it using the same pattern, deleting the empty `apiHeaders` object if no other headers remain. The header is set on the parent process and inherited by all subagents (Planner, Actor, Reviewer) which run as fresh Claude Code subprocess — each subagent process inherits the global `settings.local.json`, so the header is automatically visible to their API calls. **Caveat:** if Claude Code reads settings once at startup rather than per-request, the parent's own `/v1/messages` calls may not carry the header; subagents will. The approach is harmless either way due to JSONL fallback.
-
-**Cost-source cascade in T2:** `query_sohoai_cost()` builds `GET {base_url}/v1/usage/stats?session_id=<ID>&since=<ISO8601>&until=<ISO8601>` with ±60s buffer around session time window. Returns `float(response_json["totals"]["cost_usd"])` on HTTP 200 with non-zero value; `None` otherwise. If SoHoAI returns zero or times out, `query_litellm_cost()` is invoked on the actual parent + subagent token counts from `telemetry.json`. Model IDs are normalized (strip `-YYYYMMDD` suffix) before litellm call. For each agent, `litellm.completion_cost()` gives base cost; `litellm.get_model_info()` supplements cache-token rates (`cache_creation_input_token_cost`, `cache_read_input_token_cost`). If litellm totals to zero for a non-local model, a WARNING is logged and the fallback continues. Final fallback is the original pricing.yaml-based compute_cost.
-
-**Configuration:** `config/config.yaml` carries a `sohoai:` block with `enabled: true` and `timeout_s: 5`. `_load_sohoai_config()` reads this and returns defaults if absent.
-
-**Cost-source field:** `telemetry.json` and each line in `telemetry.jsonl` record a `cost_source` field with values: `"sohoai_api"` (SoHoAI API succeeded), `"litellm"` (litellm fallback), `"pricing_yaml"` (pricing.yaml fallback), or `"none"` (no cost could be computed). `telemetry-report.sh` displays this in a `Source` column in default-mode output, allowing operators to see which sessions used which cost path and quickly identify SoHoAI attribution gaps.
+---
 
 ## See also
 

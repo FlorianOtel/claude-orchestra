@@ -224,7 +224,12 @@ def is_session_active() -> bool:
     try:
         for lck_file in active_sessions_dir.glob("*.lck"):
             try:
-                pid = int(lck_file.read_text().strip())
+                content = lck_file.read_text().strip()
+                # Support both old format (raw PID) and new format (cc_pid=PID\n...)
+                if content.startswith("cc_pid="):
+                    pid = int(content.split("\n")[0].split("=", 1)[1].strip())
+                else:
+                    pid = int(content)
                 # Check if process exists
                 if os.path.exists(f"/proc/{pid}"):
                     return True
@@ -401,8 +406,8 @@ def print_table(
         return
 
     # Print header
-    print(f"{'Date':<12} {'Project':<25} {'Model':<25} {'Tokens':>12} {'Cache%':>7} {'Cost':>9}")
-    print("-" * 95)
+    print(f"{'Date':<17} {'Project':<25} {'Model':<25} {'Tokens':>12} {'Cache%':>7} {'Cost':>9}")
+    print("-" * 100)
 
     total_cost = 0.0
     total_tokens = 0
@@ -410,7 +415,11 @@ def print_table(
 
     for session in sessions:
         session_id = session.get("session_id", "")
-        date = session.get("start_time", "")[:10]
+        try:
+            dt = datetime.fromisoformat(session.get("start_time", "").replace("Z", "+00:00"))
+            date = dt.strftime("%Y-%m-%d--%H-%M")
+        except Exception:
+            date = session.get("start_time", "")[:10]
         project = session.get("project_name", "")[:25]
         model = _normalize_model_id(session.get("model", "unknown"))[:25]
         tokens = session.get("tokens", {})
@@ -424,7 +433,7 @@ def print_table(
         marker = " ↑" if is_orchestra else ""
 
         print(
-            f"{date:<12} {project:<25} {model:<25} {total_toks:>12,} "
+            f"{date:<17} {project:<25} {model:<25} {total_toks:>12,} "
             f"{cache_pct:>6.1f}% ${cost:>8.4f}{marker}"
         )
 

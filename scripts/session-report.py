@@ -228,7 +228,7 @@ def main():
         tok = rec.get("total_tokens")
         tok_str = f"{tok:,}" if tok else "-"
         display_records.append({
-            "date": parse_iso8601(rec.get("started_at", "")).strftime("%Y-%m-%d"),
+            "date": parse_iso8601(rec.get("started_at", "")).strftime("%Y-%m-%d--%H-%M"),
             "source": rec.get("source", "-"),
             "project": extract_project_name(rec.get("session_dir", "")) if rec.get("session_dir") else "-",
             "model": "-",
@@ -241,7 +241,7 @@ def main():
     # Add active sessions at top
     for active in active_sessions:
         display_records.insert(0, {
-            "date": parse_iso8601(active.get("started_at", "")).strftime("%Y-%m-%d"),
+            "date": parse_iso8601(active.get("started_at", "")).strftime("%Y-%m-%d--%H-%M"),
             "source": active.get("source", "-"),
             "project": "-",
             "model": "-",
@@ -253,14 +253,14 @@ def main():
 
     # Print header
     print()
-    print(f"{'Date':<11} {'Source':<8} {'Project':<17} {'Model':<23} {'Tokens':>10}  {'Cost':>9}  {'Dur':>6}  Outcome")
-    print("-" * 100)
+    print(f"{'Date':<17} {'Source':<8} {'Project':<17} {'Model':<23} {'Tokens':>10}  {'Cost':>9}  {'Dur':>6}  Outcome")
+    print("-" * 106)
 
     # Print rows with alignment
     total_cost = 0.0
     session_count = 0
     for rec in display_records:
-        date_str = rec["date"].ljust(11)
+        date_str = rec["date"].ljust(17)
         source_str = rec["source"].ljust(8)
         project_str = rec["project"][:17].ljust(17)
         model_str = rec["model"][:23].ljust(23)

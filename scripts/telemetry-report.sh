@@ -99,7 +99,7 @@ tiers.sort(key=lambda x: ORDER.get(x[0], 4))
 grand_tok  = sum(sum(tok.values()) for _, _, tok in tiers)
 grand_cost = sum(cost(tok, m)      for _, m, tok in tiers)
 
-date = t["started_at"][:10]
+date = t["started_at"][:16].replace("T", "--")
 dur  = t.get("duration_s", 0)
 print(f"  {date}  {t['command']:<6}  {dur}s  outcome={t['outcome']:<10}  total=${grand_cost:.4f}")
 print(f"    {'Tier':<12} {'Model':<22} {'Tokens':>10}  {'%tok':>5}  {'Cost':>8}  {'%cost':>6}")
@@ -177,7 +177,7 @@ PYEOF
     while IFS= read -r line; do
         TF=$(printf '%s' "$line" | jq -r 'if .session_dir then .session_dir + "/telemetry.json" else "" end')
         if [ ! -f "$TF" ]; then
-            DATE=$(printf '%s' "$line" | jq -r '.started_at | split("T")[0]')
+            DATE=$(printf '%s' "$line" | jq -r '.started_at | split("T") | .[0] + "--" + (.[1][0:5])')
             CMD=$(printf '%s' "$line" | jq -r '.command')
             COST=$(printf '%s' "$line" | jq -r '.cost_usd_estimate')
             echo "  $DATE  $CMD  total=\$$COST  (no session dir — log total only)"
@@ -201,7 +201,7 @@ else
         printf "Date\tCommand\tOutcome\tCost\tSource\tTokens\tDuration\tNote\n"
         tail -n "$LAST_N" "$TELEMETRY_JSONL" | jq -r '
             [
-              (.started_at | split("T")[0]),
+              (.started_at | split("T") | .[0] + "--" + (.[1][0:5])),
               .command,
               .outcome,
               ("$" + (.cost_usd_estimate | tostring)),

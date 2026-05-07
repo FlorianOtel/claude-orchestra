@@ -50,6 +50,9 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - **Timestamp:** 2026-05-06T18:34:58Z
 - **Model:** claude-sonnet-4-6
 - **Reason:** /duo LiteLLM telemetry v1.5 — session 20260506T183458Z-1766043, cost=$2.0682, 3/3 standard checks passed. `ANTHROPIC_CUSTOM_HEADERS` fix deployed but SoHoAI attribution still returns 0 (env var is startup-time; subagents inherit parent env which predates the write). cost_source=litellm (litellm fallback now works — no `prompt_tokens` error). Next: investigate `otelHeadersHelper` for per-request dynamic header injection.
+- **Timestamp:** 2026-05-07T10:29:03Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** fix(telemetry): all report scripts now show YYYY-MM-DD--HH-MM timestamps; fixed is_session_active() multi-line lck parsing in native-session-report.py
 
 ## Telemetry Smoke Tests
 
