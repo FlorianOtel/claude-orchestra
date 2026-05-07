@@ -53,6 +53,9 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - **Timestamp:** 2026-05-07T10:29:03Z
 - **Model:** claude-sonnet-4-6
 - **Reason:** fix(telemetry): all report scripts now show YYYY-MM-DD--HH-MM timestamps; fixed is_session_active() multi-line lck parsing in native-session-report.py
+- **Timestamp:** 2026-05-07T14:46:42Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** native session T2 fallback smoke test — session native-20260507T143424Z-2001330, cost=$13.3918, source=pricing_yaml, model=claude-sonnet-4-6. Diagnosed: otelHeadersHelper not called by CC 2.1.132 (no .lck files), SoHoAI query returns 0 (no session attribution). Fix: Stop hook self-registers each session; T2 fallback parses JSONL transcript via session_uuid + pricing.yaml.
 
 ## Telemetry Smoke Tests
 
@@ -73,13 +76,21 @@ Verify T1 (hook events) and T2 (transcript parse) after any /duo or /brain run.
 
 ### Native session telemetry smoke test
 1. Open a fresh CC session (no /brain or /duo).
-2. Run a trivial command (ask a question).
+2. Run a trivial command (ask a question — this triggers the first Stop hook which self-registers the session).
 3. Close the session (Ctrl+C or exit).
-4. In another CC session, trigger a Stop hook (send any message).
+4. In another CC session, send any message (triggers Stop hook → finds dead .lck → T2 finalization).
 5. Check: `cat ~/.claude/native-sessions/telemetry.jsonl | tail -1 | jq .`
-   Expected: record with `session_id` starting with `native-`, `cost_usd_estimate >= 0`.
-6. Run: `~/.claude/scripts/session-report.sh --last 5`
-   Expected: native session appears in the unified table.
+   Expected: `cost_usd_estimate > 0`, `cost_source: "pricing_yaml"`, `model` field present.
+6. Run: `~/.claude/scripts/session-report.sh --source native --last 5`
+   Expected: new row with cost, model, duration.
+
+**Telemetry flow (CC 2.1.132):**
+- `otelHeadersHelper` is configured but NOT called by CC 2.1.132 (confirmed: no .lck files created)
+- SoHoAI `cost_source: "none"` is expected when otelHeadersHelper is absent — the T2 fallback takes over
+- Stop hook self-registers each CC session on its first fire (writes `native-${PPID}.lck` with `session_uuid`)
+- Next session's Stop hook finds the dead .lck and calls `native-session-finalize.py --session-uuid UUID`
+- `native-session-finalize.py` uses `telemetry-summarize.py`'s `_walk_jsonl_for_tokens` + `compute_cost`
+- `cost_source: "pricing_yaml"` means T2 transcript parsing succeeded
 
 ### Reading the unified session report
 ```bash
