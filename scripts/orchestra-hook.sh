@@ -303,9 +303,20 @@ case "$MODE" in
     # Self-register current session as a native .lck if otelHeadersHelper missed it.
     # The Stop hook fires per-turn; the first fire creates the file, subsequent fires skip it.
     # When the session ends, the next session's Stop hook finds the dead .lck and finalises it.
-    _reg_ppid="${PPID}"
+    #
+    # CLAUDE_CODE_SESSION_ID is NOT available in hook context (only in Bash tool calls).
+    # Bridge: bash-session-init.sh (sourced via BASH_ENV) writes a uuid-<CC_MAIN_PID> sidecar.
+    # The Stop hook's PPID = CC node subprocess; its parent = CC main.
+    # We read the sidecar by first deriving CC main PID from /proc/NODE_PID/stat field 4.
+    _reg_ppid="${PPID}"   # CC node subprocess PID (Stop hook's parent)
     _reg_uuid="${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
-    if [ -n "$_reg_ppid" ] && [ -n "$_reg_uuid" ]; then
+    if [ -z "$_reg_uuid" ] && [ -n "$_reg_ppid" ]; then
+        _cc_main_pid="$(awk '{print $4}' /proc/${_reg_ppid}/stat 2>/dev/null || echo '')"
+        if [ -n "$_cc_main_pid" ]; then
+            _reg_uuid="$(cat "${ACTIVE_SESSIONS_DIR}/uuid-${_cc_main_pid}" 2>/dev/null || echo '')"
+        fi
+    fi
+    if [ -n "$_reg_ppid" ]; then
         _self_lck="${ACTIVE_SESSIONS_DIR}/native-${_reg_ppid}.lck"
         if [ ! -f "$_self_lck" ]; then
             # Only register if not inside an active orchestra session (avoid double-counting).
@@ -315,7 +326,7 @@ case "$MODE" in
                 _reg_sat="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
                 _reg_sid="native-${_reg_ts}-${_reg_ppid}"
                 printf 'cc_pid=%s\nsession_id=%s\nstarted_at=%s\nsession_uuid=%s\n' \
-                    "$_reg_ppid" "$_reg_sid" "$_reg_sat" "$_reg_uuid" \
+                    "$_reg_ppid" "$_reg_sid" "$_reg_sat" "${_reg_uuid:-}" \
                     > "${_self_lck}.tmp" 2>/dev/null \
                     && mv -f "${_self_lck}.tmp" "$_self_lck" 2>/dev/null || true
                 printf '{"session_id":"%s","cc_pid":%s,"started_at":"%s"}\n' \
