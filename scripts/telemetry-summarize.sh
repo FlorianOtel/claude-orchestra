@@ -23,6 +23,11 @@ if [ ! -f "$PY_SCRIPT" ]; then
     exit 0
 fi
 
+if [ $# -lt 3 ]; then
+    echo "Usage: telemetry-summarize.sh <session_dir> <command> <outcome> [transcript_id]" >&2
+    exit 1
+fi
+
 # Pass through CLAUDE_SESSION_ID if not explicitly given as 4th arg
 TRANSCRIPT_ID="${4:-${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}}"
 
