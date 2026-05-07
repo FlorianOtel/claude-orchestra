@@ -93,6 +93,15 @@ if [ -f "$REPO/scripts/telemetry-summarize.py" ]; then
     copy_file "$REPO/scripts/telemetry-summarize.py" "$CLAUDE/scripts/telemetry-summarize.py"
 fi
 
+# Native session report (Python + shell wrapper)
+if [ -f "$REPO/scripts/native-session-report.py" ]; then
+    copy_file "$REPO/scripts/native-session-report.py" "$CLAUDE/scripts/native-session-report.py"
+fi
+if [ -f "$REPO/scripts/native-session-report.sh" ]; then
+    copy_file "$REPO/scripts/native-session-report.sh" "$CLAUDE/scripts/native-session-report.sh"
+    $DRY_RUN || chmod +x "$CLAUDE/scripts/native-session-report.sh"
+fi
+
 # Clean up artifacts deleted in the headless→subagents revert (idempotent).
 # Per-category orphan removal — only delete specific known-deleted files,
 # not "anything not in repo" (operator may have personal commands/agents).

@@ -18,12 +18,14 @@ set -uo pipefail
 # --- arg parsing ---
 LAST_N=20
 SHOW_TIER=false
+SHOW_NATIVE=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --last)  LAST_N="${2:-20}"; shift 2 ;;
-        --tier)  SHOW_TIER=true;    shift   ;;
-        [0-9]*)  LAST_N="$1";       shift   ;;
-        *)        shift ;;
+        --last)    LAST_N="${2:-20}"; shift 2 ;;
+        --tier)    SHOW_TIER=true;    shift   ;;
+        --native)  SHOW_NATIVE=true;  shift   ;;
+        [0-9]*)    LAST_N="$1";       shift   ;;
+        *)         shift ;;
     esac
 done
 
@@ -233,3 +235,17 @@ tail -n "$LAST_N" "$TELEMETRY_JSONL" | jq -s '
     }) | sort_by(.command))
 }
 ' 2>/dev/null | jq '.' || echo "Failed to compute aggregates"
+
+# =============================================================================
+# --native: all CC sessions (not just orchestra)
+# =============================================================================
+if ${SHOW_NATIVE:-false}; then
+    echo ""
+    echo "=== Native sessions (all CC sessions) ==="
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "${SCRIPT_DIR}/native-session-report.sh" ]; then
+        "${SCRIPT_DIR}/native-session-report.sh" --last "$LAST_N"
+    else
+        echo "(native-session-report.sh not found — run ./deploy.sh)"
+    fi
+fi
