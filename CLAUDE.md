@@ -17,6 +17,9 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - `agents/`   — planner (Sonnet 4.6), actor (Haiku 4.5), reviewer (Sonnet 4.6)
 - `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents) + /brain-abandon (explicit cancel); /duo-plan, /duo-act, /duo-abandon (lightweight session-bracketed pipeline: Sonnet plans interactively across multiple turns, Haiku acts after /duo-act)
 - `scripts/orchestra-hook.sh` — PreToolUse / SubagentStop / PreCompact / Stop dispatcher
+- `scripts/otel-headers-helper.sh` — X-Orchestra-Session-ID injection; auto-creates native session entries
+- `scripts/native-session-finalize.py` — Stop-hook helper: finalise one native session
+- `scripts/session-report.{sh,py}` — unified cost report (native + orchestra)
 - `config/config.yaml` — global orchestra defaults
 - `docs/design.md`    — full architecture reference
 
@@ -65,7 +68,19 @@ Verify T1 (hook events) and T2 (transcript parse) after any /duo or /brain run.
 3. After cleanup, run: `./scripts/smoke-test.sh`
 4. Expected: T1 has events for planner+actor+reviewer, T2 cost > $0, subagents list contains "planner", "actor", "reviewer". If parser_warnings mentions "T1 usage=null", that is expected (T1 is timing-only; T2 is authoritative).
 
-### Reading the global log
+### Native session telemetry smoke test
+1. Open a fresh CC session (no /brain or /duo).
+2. Run a trivial command (ask a question).
+3. Close the session (Ctrl+C or exit).
+4. In another CC session, trigger a Stop hook (send any message).
+5. Check: `cat ~/.claude/native-sessions/telemetry.jsonl | tail -1 | jq .`
+   Expected: record with `session_id` starting with `native-`, `cost_usd_estimate >= 0`.
+6. Run: `~/.claude/scripts/session-report.sh --last 5`
+   Expected: native session appears in the unified table.
+
+### Reading the unified session report
 ```bash
-~/.claude/scripts/telemetry-report.sh --last 5
+~/.claude/scripts/session-report.sh --last 10
+~/.claude/scripts/session-report.sh --since 2026-05-01
+~/.claude/scripts/session-report.sh --source native
 ```

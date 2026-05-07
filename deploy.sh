@@ -88,18 +88,28 @@ for s in orchestra-hook.sh telemetry-summarize.sh telemetry-report.sh otel-heade
         $DRY_RUN || chmod +x "$CLAUDE/scripts/$s"
     fi
 done
-# Python parser — no chmod
+# Python parsers — no chmod
 if [ -f "$REPO/scripts/telemetry-summarize.py" ]; then
     copy_file "$REPO/scripts/telemetry-summarize.py" "$CLAUDE/scripts/telemetry-summarize.py"
 fi
-
-# Native session report (Python + shell wrapper)
+if [ -f "$REPO/scripts/native-session-finalize.py" ]; then
+    copy_file "$REPO/scripts/native-session-finalize.py" "$CLAUDE/scripts/native-session-finalize.py"
+fi
 if [ -f "$REPO/scripts/native-session-report.py" ]; then
     copy_file "$REPO/scripts/native-session-report.py" "$CLAUDE/scripts/native-session-report.py"
 fi
+if [ -f "$REPO/scripts/session-report.py" ]; then
+    copy_file "$REPO/scripts/session-report.py" "$CLAUDE/scripts/session-report.py"
+fi
+
+# Shell wrappers
 if [ -f "$REPO/scripts/native-session-report.sh" ]; then
     copy_file "$REPO/scripts/native-session-report.sh" "$CLAUDE/scripts/native-session-report.sh"
     $DRY_RUN || chmod +x "$CLAUDE/scripts/native-session-report.sh"
+fi
+if [ -f "$REPO/scripts/session-report.sh" ]; then
+    copy_file "$REPO/scripts/session-report.sh" "$CLAUDE/scripts/session-report.sh"
+    $DRY_RUN || chmod +x "$CLAUDE/scripts/session-report.sh"
 fi
 
 # Clean up artifacts deleted in the headless→subagents revert (idempotent).

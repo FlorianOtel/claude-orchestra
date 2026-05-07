@@ -294,6 +294,29 @@ case "$MODE" in
             fi
           done
     fi
+
+    # Finalise dead native sessions (those whose CC process has ended).
+    ACTIVE_SESSIONS_DIR="${HOME}/.claude/active-sessions"
+    NATIVE_SESSIONS_DIR="${HOME}/.claude/native-sessions"
+    mkdir -p "${NATIVE_SESSIONS_DIR}" 2>/dev/null || true
+    NATIVE_FINALIZER="${HOME}/.claude/scripts/native-session-finalize.py"
+    NATIVE_VENV="${HOME}/Gin-AI/.Gin-AI-python-3.12"
+    for _lck in "${ACTIVE_SESSIONS_DIR}/native-"*.lck; do
+        [ -f "$_lck" ] || continue
+        _pid="$(grep '^cc_pid=' "$_lck" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+        # Skip if process still alive.
+        kill -0 "$_pid" 2>/dev/null && continue
+        _sid="$(grep '^session_id='  "$_lck" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+        _sat="$(grep '^started_at=' "$_lck" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+        _eat="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        if [ -f "$NATIVE_FINALIZER" ] && [ -d "$NATIVE_VENV" ] && [ -n "$_sid" ]; then
+            "${NATIVE_VENV}/bin/python3" "$NATIVE_FINALIZER" \
+                "$_sid" "$_pid" "$_sat" "$_eat" \
+                >> "${ORCHESTRA_DIR}/invocations.log" 2>/dev/null || true
+        fi
+        rm -f "$_lck"
+    done
+
     printf '{"event":"stop",%s}\n' "$(stamp_fields)" \
       >> "$INVOCATIONS_LOG" 2>/dev/null || true
     ;;
