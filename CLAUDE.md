@@ -17,8 +17,9 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - `agents/`   — planner (Sonnet 4.6), actor (Haiku 4.5), reviewer (Sonnet 4.6)
 - `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents) + /brain-abandon (explicit cancel); /duo-plan, /duo-act, /duo-abandon (lightweight session-bracketed pipeline: Sonnet plans interactively across multiple turns, Haiku acts after /duo-act)
 - `scripts/orchestra-hook.sh` — PreToolUse / SubagentStop / PreCompact / Stop dispatcher
-- `scripts/otel-headers-helper.sh` — X-Orchestra-Session-ID injection; auto-creates native session entries
-- `scripts/native-session-finalize.py` — Stop-hook helper: finalise one native session
+- `scripts/otel-headers-helper.sh` — X-Orchestra-Session-ID injection; auto-creates native session entries (CC 2.1.132: not called — fallback via bash-session-init.sh)
+- `scripts/bash-session-init.sh` — sourced via `BASH_ENV`; writes `uuid-<CC_MAIN_PID>` sidecar so Stop hook can retrieve session UUID from Bash-call context
+- `scripts/native-session-finalize.py` — Stop-hook helper: finalise one native session; T2 fallback via `_walk_jsonl_for_tokens` + `pricing.yaml`
 - `scripts/session-report.{sh,py}` — unified cost report (native + orchestra)
 - `config/config.yaml` — global orchestra defaults
 - `docs/design.md`    — full architecture reference
@@ -56,6 +57,9 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - **Timestamp:** 2026-05-07T14:46:42Z
 - **Model:** claude-sonnet-4-6
 - **Reason:** native session T2 fallback smoke test — session native-20260507T143424Z-2001330, cost=$13.3918, source=pricing_yaml, model=claude-sonnet-4-6. Diagnosed: otelHeadersHelper not called by CC 2.1.132 (no .lck files), SoHoAI query returns 0 (no session attribution). Fix: Stop hook self-registers each session; T2 fallback parses JSONL transcript via session_uuid + pricing.yaml.
+- **Timestamp:** 2026-05-07T17:09:00Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** fix(telemetry): BASH_ENV bridge — bash-session-init.sh writes uuid-<CC_MAIN_PID> sidecar; Stop hook reads /proc/NODE/stat for parent lookup. Fixes: CLAUDE_CODE_SESSION_ID not set in hook context (only in Bash subprocesses). Bug caught: ||exit 0 logic killed all Bash calls when UUID was set — fixed to if/then guard.
 
 ## Telemetry Smoke Tests
 
@@ -85,12 +89,11 @@ Verify T1 (hook events) and T2 (transcript parse) after any /duo or /brain run.
    Expected: new row with cost, model, duration.
 
 **Telemetry flow (CC 2.1.132):**
-- `otelHeadersHelper` is configured but NOT called by CC 2.1.132 (confirmed: no .lck files created)
-- SoHoAI `cost_source: "none"` is expected when otelHeadersHelper is absent — the T2 fallback takes over
-- Stop hook self-registers each CC session on its first fire (writes `native-${PPID}.lck` with `session_uuid`)
-- Next session's Stop hook finds the dead .lck and calls `native-session-finalize.py --session-uuid UUID`
-- `native-session-finalize.py` uses `telemetry-summarize.py`'s `_walk_jsonl_for_tokens` + `compute_cost`
-- `cost_source: "pricing_yaml"` means T2 transcript parsing succeeded
+- `otelHeadersHelper` is configured but NOT called by CC 2.1.132 — no session attribution to SoHoAI, `cost_source: "none"` without the fallback
+- `bash-session-init.sh` (sourced via `BASH_ENV`) bridges the gap: writes `~/.claude/active-sessions/uuid-<CC_MAIN_PID>` on first Bash call — `CLAUDE_CODE_SESSION_ID` is available in Bash subprocesses but not in hooks
+- Stop hook self-registers: PPID = CC node subprocess; reads `/proc/NODE/stat` field 4 to get CC main PID; reads `uuid-<CC_MAIN_PID>` sidecar to get session UUID; writes `native-${NODE_PID}.lck` with `session_uuid`
+- When session ends, next session's Stop hook finds dead `.lck` → calls `native-session-finalize.py --session-uuid UUID` → T2 parses JSONL → `cost_source: "pricing_yaml"`
+- **Requires**: `BASH_ENV=/home/florian/.claude/scripts/bash-session-init.sh` in `settings.json` env (NOT managed by deploy.sh — must be set manually or kept in settings.json)
 
 ### Reading the unified session report
 ```bash
