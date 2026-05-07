@@ -27,8 +27,8 @@ if [ ! -f "${_native_lck}" ]; then
     _session_ts="$(date -u +%Y%m%dT%H%M%SZ)"
     _session_id="native-${_session_ts}-${PPID}"
     _started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf 'cc_pid=%s\nsession_id=%s\nstarted_at=%s\n' \
-        "${PPID}" "${_session_id}" "${_started_at}" \
+    printf 'cc_pid=%s\nsession_id=%s\nstarted_at=%s\nsession_uuid=%s\n' \
+        "${PPID}" "${_session_id}" "${_started_at}" "${CLAUDE_CODE_SESSION_ID:-}" \
         > "${_native_lck}.tmp"
     mv -f "${_native_lck}.tmp" "${_native_lck}"
     # Append to persistent session registry.

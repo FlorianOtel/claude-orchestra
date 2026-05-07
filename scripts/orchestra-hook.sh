@@ -298,7 +298,32 @@ case "$MODE" in
     # Finalise dead native sessions (those whose CC process has ended).
     ACTIVE_SESSIONS_DIR="${HOME}/.claude/active-sessions"
     NATIVE_SESSIONS_DIR="${HOME}/.claude/native-sessions"
-    mkdir -p "${NATIVE_SESSIONS_DIR}" 2>/dev/null || true
+    mkdir -p "${NATIVE_SESSIONS_DIR}" "${ACTIVE_SESSIONS_DIR}" 2>/dev/null || true
+
+    # Self-register current session as a native .lck if otelHeadersHelper missed it.
+    # The Stop hook fires per-turn; the first fire creates the file, subsequent fires skip it.
+    # When the session ends, the next session's Stop hook finds the dead .lck and finalises it.
+    _reg_ppid="${PPID}"
+    _reg_uuid="${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
+    if [ -n "$_reg_ppid" ] && [ -n "$_reg_uuid" ]; then
+        _self_lck="${ACTIVE_SESSIONS_DIR}/native-${_reg_ppid}.lck"
+        if [ ! -f "$_self_lck" ]; then
+            # Only register if not inside an active orchestra session (avoid double-counting).
+            _orch_active="$(find_active_session_dir)"
+            if [ -z "$_orch_active" ]; then
+                _reg_ts="$(date -u +%Y%m%dT%H%M%SZ)"
+                _reg_sat="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                _reg_sid="native-${_reg_ts}-${_reg_ppid}"
+                printf 'cc_pid=%s\nsession_id=%s\nstarted_at=%s\nsession_uuid=%s\n' \
+                    "$_reg_ppid" "$_reg_sid" "$_reg_sat" "$_reg_uuid" \
+                    > "${_self_lck}.tmp" 2>/dev/null \
+                    && mv -f "${_self_lck}.tmp" "$_self_lck" 2>/dev/null || true
+                printf '{"session_id":"%s","cc_pid":%s,"started_at":"%s"}\n' \
+                    "$_reg_sid" "$_reg_ppid" "$_reg_sat" \
+                    >> "${NATIVE_SESSIONS_DIR}/sessions.jsonl" 2>/dev/null || true
+            fi
+        fi
+    fi
     NATIVE_FINALIZER="${HOME}/.claude/scripts/native-session-finalize.py"
     NATIVE_VENV="${HOME}/Gin-AI/.Gin-AI-python-3.12"
     for _lck in "${ACTIVE_SESSIONS_DIR}/native-"*.lck; do
@@ -308,10 +333,12 @@ case "$MODE" in
         kill -0 "$_pid" 2>/dev/null && continue
         _sid="$(grep '^session_id='  "$_lck" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
         _sat="$(grep '^started_at=' "$_lck" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+        _uuid="$(grep '^session_uuid=' "$_lck" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
         _eat="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         if [ -f "$NATIVE_FINALIZER" ] && [ -d "$NATIVE_VENV" ] && [ -n "$_sid" ]; then
             "${NATIVE_VENV}/bin/python3" "$NATIVE_FINALIZER" \
                 "$_sid" "$_pid" "$_sat" "$_eat" \
+                ${_uuid:+--session-uuid "$_uuid"} \
                 >> "${ORCHESTRA_DIR}/invocations.log" 2>/dev/null || true
         fi
         rm -f "$_lck"

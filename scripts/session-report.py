@@ -227,11 +227,15 @@ def main():
     for rec in filtered_records:
         tok = rec.get("total_tokens")
         tok_str = f"{tok:,}" if tok else "-"
+        raw_model = rec.get("model") or "-"
+        if raw_model != "-":
+            raw_model = re.sub(r'\[.*?\]$', '', raw_model)
+            raw_model = re.sub(r'-\d{8}$', '', raw_model)
         display_records.append({
             "date": parse_iso8601(rec.get("started_at", "")).strftime("%Y-%m-%d--%H-%M"),
             "source": rec.get("source", "-"),
             "project": extract_project_name(rec.get("session_dir", "")) if rec.get("session_dir") else "-",
-            "model": "-",
+            "model": raw_model,
             "tokens": tok_str,
             "cost": format_cost(rec.get("cost_usd_estimate", 0)),
             "duration": format_duration(rec.get("duration_s", 0)),

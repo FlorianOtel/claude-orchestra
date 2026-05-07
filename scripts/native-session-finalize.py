@@ -3,11 +3,13 @@
 native-session-finalize.py — Stop-hook helper to finalize one native session.
 
 Usage: native-session-finalize.py <session_id> <cc_pid> <started_at_iso> <ended_at_iso>
+                                   [--session-uuid UUID]
 
 Finalizes a native (non-orchestra) Claude Code session by:
 1. Querying SoHoAI for cost attribution (if available)
-2. Writing a record to ~/.claude/native-sessions/telemetry.jsonl
-3. Printing a one-line summary to stdout (captured by stop hook)
+2. T2 fallback: parsing the JSONL transcript by UUID (if --session-uuid provided)
+3. Writing a record to ~/.claude/native-sessions/telemetry.jsonl
+4. Printing a one-line summary to stdout (captured by stop hook)
 """
 
 import argparse
@@ -35,7 +37,7 @@ def to_iso8601(unix_time: float) -> str:
 
 
 def import_telemetry_module():
-    """Import query_sohoai_cost from sibling telemetry-summarize.py via importlib."""
+    """Import telemetry-summarize.py via importlib."""
     try:
         spec = importlib.util.spec_from_file_location(
             "ts", Path(__file__).parent / "telemetry-summarize.py"
@@ -55,6 +57,11 @@ def main():
     parser.add_argument("cc_pid", type=int, help="Claude Code process PID")
     parser.add_argument("started_at_iso", help="ISO-8601 start timestamp")
     parser.add_argument("ended_at_iso", help="ISO-8601 end timestamp")
+    parser.add_argument(
+        "--session-uuid",
+        default="",
+        help="CC session UUID (CLAUDE_CODE_SESSION_ID) for JSONL transcript lookup",
+    )
     args = parser.parse_args()
 
     # Convert timestamps
@@ -65,6 +72,8 @@ def main():
     # Try to query SoHoAI for cost
     cost_usd_estimate = 0.0
     cost_source = "none"
+    model: Optional[str] = None
+    total_tokens: int = 0
 
     ts_mod = import_telemetry_module()
     if ts_mod is not None:
@@ -80,6 +89,32 @@ def main():
             except Exception:
                 pass
 
+    # T2 fallback: parse JSONL transcript via session UUID + pricing.yaml
+    if cost_usd_estimate == 0 and ts_mod is not None and args.session_uuid:
+        try:
+            jsonl_path = ts_mod.get_transcript_path(args.session_uuid)
+            if jsonl_path:
+                # ended_at_unix is "now" (hook fire time); use it as upper bound —
+                # dead session content is all before this point.
+                # started_at may be the Stop-hook fire time (first turn), not actual
+                # session start. Use a 1-hour lookback to capture early messages.
+                t2_model, t2_tokens, first_ts, _ = ts_mod._walk_jsonl_for_tokens(
+                    jsonl_path, max(0.0, started_at_unix - 3600), ended_at_unix
+                )
+                if first_ts is not None:
+                    pricing_data = ts_mod.load_pricing_yaml()
+                    if pricing_data:
+                        warnings: list = []
+                        parent = {"model": t2_model, "tokens": t2_tokens}
+                        t2_cost = ts_mod.compute_cost(parent, [], pricing_data, warnings)
+                        if t2_cost > 0:
+                            cost_usd_estimate = t2_cost
+                            cost_source = "pricing_yaml"
+                            model = t2_model
+                            total_tokens = sum(t2_tokens.values())
+        except Exception:
+            pass
+
     # Build telemetry record
     record = {
         "session_id": args.session_id,
@@ -91,6 +126,10 @@ def main():
         "cost_usd_estimate": cost_usd_estimate,
         "cost_source": cost_source,
     }
+    if model:
+        record["model"] = model
+    if total_tokens:
+        record["total_tokens"] = total_tokens
 
     # Write to telemetry.jsonl (atomic append)
     native_sessions_dir = Path.home() / ".claude" / "native-sessions"
