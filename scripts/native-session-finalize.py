@@ -118,7 +118,6 @@ def main():
     # Build telemetry record
     record = {
         "session_id": args.session_id,
-        "cc_pid": args.cc_pid,
         "command": "native",
         "started_at": args.started_at_iso,
         "ended_at": args.ended_at_iso,
