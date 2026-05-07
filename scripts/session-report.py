@@ -22,7 +22,7 @@ import argparse
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -154,9 +154,7 @@ def apply_filters(records: List[Dict[str, Any]], args: argparse.Namespace) -> Li
     if args.month:
         try:
             month_dt = datetime.strptime(args.month, "%Y-%m").replace(tzinfo=timezone.utc)
-            month_next = (
-                month_dt.replace(day=28) + __import__("datetime").timedelta(days=4)
-            ).replace(day=1)
+            month_next = (month_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
             filtered = [
                 r for r in filtered
                 if month_dt <= parse_iso8601(r.get("started_at", "")) < month_next
@@ -185,10 +183,15 @@ def load_active_native_sessions() -> List[Dict[str, Any]]:
                         if "=" in line:
                             k, v = line.split("=", 1)
                             record[k.strip()] = v.strip()
-                    if record.get("session_id"):
+                    cc_pid = int(record.get("cc_pid", 0)) if record.get("cc_pid") else 0
+                    if record.get("session_id") and cc_pid:
+                        try:
+                            os.kill(cc_pid, 0)  # raises if process is dead
+                        except (ProcessLookupError, PermissionError):
+                            continue  # stale .lck — skip silently
                         active.append({
                             "session_id": record.get("session_id"),
-                            "cc_pid": int(record.get("cc_pid", 0)) if record.get("cc_pid") else 0,
+                            "cc_pid": cc_pid,
                             "started_at": record.get("started_at", ""),
                             "source": "native",
                             "status": "(active)",
@@ -219,8 +222,29 @@ def main():
     # Apply filters
     filtered_records = apply_filters(all_records, args)
 
-    # Load active sessions
+    # Load active sessions, filtered to the same date window as main records
     active_sessions = load_active_native_sessions()
+
+    def _active_in_window(active: Dict[str, Any]) -> bool:
+        ts = parse_iso8601(active.get("started_at", ""))
+        if args.since:
+            try:
+                since_dt = datetime.strptime(args.since, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                if ts < since_dt:
+                    return False
+            except Exception:
+                pass
+        if args.month:
+            try:
+                month_dt = datetime.strptime(args.month, "%Y-%m").replace(tzinfo=timezone.utc)
+                month_next = (month_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
+                if not (month_dt <= ts < month_next):
+                    return False
+            except Exception:
+                pass
+        return True
+
+    active_sessions = [a for a in active_sessions if _active_in_window(a)]
 
     # Prepare display records
     display_records = []
