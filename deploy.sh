@@ -82,7 +82,7 @@ done
 
 # ── 5. Hook script ────────────────────────────────────────────────────────────
 echo "Scripts:"
-for s in orchestra-hook.sh telemetry-summarize.sh telemetry-report.sh; do
+for s in orchestra-hook.sh telemetry-summarize.sh telemetry-report.sh otel-headers-helper.sh; do
     if [ -f "$REPO/scripts/$s" ]; then
         copy_file "$REPO/scripts/$s" "$CLAUDE/scripts/$s"
         $DRY_RUN || chmod +x "$CLAUDE/scripts/$s"

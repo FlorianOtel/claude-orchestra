@@ -41,6 +41,12 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - **Timestamp:** 2026-04-30T17:34:41Z
 - **Model:** claude-sonnet-4-6
 - **Reason:** /brain telemetry end-to-end smoke test — session 20260430T173441Z-1527612, cost=$0.9107, 6 T1 events, 3/3 checks passed. Cost persisted through all subagent phases.
+- **Timestamp:** 2026-05-06T18:17:44Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** /duo LiteLLM telemetry v1 — session 20260506T181744Z-1733561, cost=$1.5855, 3/3 standard checks passed. Revealed: `apiHeaders` is not a valid CC field (silently ignored); all Actor calls hit SoHoAI as `claude_code_native`. Fix: switched to `env.ANTHROPIC_CUSTOM_HEADERS`. cost_source=pricing_yaml (litellm also failed with `prompt_tokens` kwarg error).
+- **Timestamp:** 2026-05-06T18:34:58Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** /duo LiteLLM telemetry v1.5 — session 20260506T183458Z-1766043, cost=$2.0682, 3/3 standard checks passed. `ANTHROPIC_CUSTOM_HEADERS` fix deployed but SoHoAI attribution still returns 0 (env var is startup-time; subagents inherit parent env which predates the write). cost_source=litellm (litellm fallback now works — no `prompt_tokens` error). Next: investigate `otelHeadersHelper` for per-request dynamic header injection.
 
 ## Telemetry Smoke Tests
 

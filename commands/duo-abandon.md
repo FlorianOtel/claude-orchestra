@@ -52,21 +52,8 @@ Run via `Bash` (substitute `<SESSION_DIR>` with the literal value captured above
 ```bash
 printf '%s' "abandoned" > "<SESSION_DIR>/.outcome.tmp"
 mv -f "<SESSION_DIR>/.outcome.tmp" "<SESSION_DIR>/.outcome"
-# Remove X-Orchestra-Session-ID from ANTHROPIC_CUSTOM_HEADERS in settings.local.json.
-SETTINGS_LOCAL="${HOME}/.claude/settings.local.json"
-if command -v jq >/dev/null 2>&1 && [ -f "${SETTINGS_LOCAL}" ]; then
-  _TMP="${SETTINGS_LOCAL}.orchestratmp"
-  jq '
-    if .env.ANTHROPIC_CUSTOM_HEADERS then
-      .env.ANTHROPIC_CUSTOM_HEADERS = (
-        .env.ANTHROPIC_CUSTOM_HEADERS | split("\n")
-        | map(select(test("^X-Orchestra-Session-ID:") | not))
-        | join("\n")) |
-      if .env.ANTHROPIC_CUSTOM_HEADERS == "" then del(.env.ANTHROPIC_CUSTOM_HEADERS) else . end |
-      if (.env | length) == 0 then del(.env) else . end
-    else . end
-  ' "${SETTINGS_LOCAL}" > "${_TMP}" && mv -f "${_TMP}" "${SETTINGS_LOCAL}" || true
-fi
+# Remove session ID sidecar so otelHeadersHelper stops injecting the header.
+rm -f "${HOME}/.claude/active-sessions/$(basename "<SESSION_DIR>").lck"
 rm -f "<SESSION_DIR>/.duo-inflight"
 ~/.claude/scripts/telemetry-summarize.sh \
     "<SESSION_DIR>" duo abandoned "$(cat \"<SESSION_DIR>/.transcript-uuid\" 2>/dev/null || echo \"${CLAUDE_SESSION_ID:-}\")" 2>&1 \
