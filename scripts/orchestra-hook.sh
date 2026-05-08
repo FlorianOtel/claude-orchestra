@@ -77,6 +77,13 @@ stage_for_subagent() {
   esac
 }
 
+# Returns 0 if a /brain or /duo session is currently in-flight.
+has_active_orchestra_session() {
+  find "${ORCHESTRA_DIR}/sessions" -maxdepth 2 \
+    \( -name ".brain-inflight" -o -name ".duo-inflight" \) \
+    2>/dev/null | grep -q .
+}
+
 # Sidecar so `end` can find what `start` created.
 # Prefer session-relative path (shared by start and end); fall back to PID-named
 # file when no active session dir exists yet.
@@ -115,9 +122,11 @@ case "$MODE" in
     # Remember this logfile so `end` can find it
     printf '%s\n' "$LOGFILE" > "$LAST_LOGFILE_REF" 2>/dev/null || true
 
-    printf '{"event":"start","stage":"%s","subagent":"%s","logfile":"%s",%s}\n' \
-      "$STAGE" "$SUBAGENT" "$LOGFILE" "$(stamp_fields)" \
-      >> "$INVOCATIONS_LOG" 2>/dev/null || true
+    if has_active_orchestra_session; then
+      printf '{"event":"start","stage":"%s","subagent":"%s","logfile":"%s",%s}\n' \
+        "$STAGE" "$SUBAGENT" "$LOGFILE" "$(stamp_fields)" \
+        >> "$INVOCATIONS_LOG" 2>/dev/null || true
+    fi
 
     # T1 telemetry: append start-event to active session's telemetry-events.jsonl
     ACTIVE_SESSION_DIR="$(find_active_session_dir)"
@@ -165,9 +174,11 @@ case "$MODE" in
       } >> "$LOGFILE" 2>/dev/null || true
     fi
 
-    printf '{"event":"end","stage":"%s","subagent":"%s","logfile":"%s",%s}\n' \
-      "$STAGE" "$SUBAGENT" "$LOGFILE" "$(stamp_fields)" \
-      >> "$INVOCATIONS_LOG" 2>/dev/null || true
+    if has_active_orchestra_session; then
+      printf '{"event":"end","stage":"%s","subagent":"%s","logfile":"%s",%s}\n' \
+        "$STAGE" "$SUBAGENT" "$LOGFILE" "$(stamp_fields)" \
+        >> "$INVOCATIONS_LOG" 2>/dev/null || true
+    fi
 
     # T1 telemetry: append end-event to active session's telemetry-events.jsonl
     ACTIVE_SESSION_DIR="$(find_active_session_dir)"
