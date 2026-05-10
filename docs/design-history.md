@@ -2,8 +2,8 @@
 title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design notes & open questions"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (claude-code-qwen3-coder-next)
-updated_at: 2026-05-10--18-09
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-10--20-28
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1574,3 +1574,13 @@ See §Verification in PLAN.md (session 20260510T180922Z-2575990) for complete ch
 ### Session reference
 
 Session ID: `20260510T180922Z-2575990` (this session). All code + documentation changes staged for review in Phase 4.
+
+---
+
+## Amendment 2026-05-10 (b) — actor-heavy switched to claude-code-kimi-k2.6
+
+**Change:** `agents/actor-heavy.md` model field updated from `claude-code-deepseek-v4-pro` to `claude-code-kimi-k2.6`.
+
+**Rationale:** Operator preference; Kimi K2.6 is available as a SoHoAI alias and is now the preferred model for heavy-tier Actor steps. Planner continues to use `claude-code-deepseek-v4-pro`; no change there.
+
+**Files updated:** `agents/actor-heavy.md` (model + description + body text), `docs/design.md` (agents table, multi-model routing table, tier annotation text, alias stability example list), `docs/design-history.md` (this amendment), `docs/TODO.md` (§10.2 status line).

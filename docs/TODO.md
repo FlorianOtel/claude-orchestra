@@ -2,8 +2,8 @@
 title: "Claude Orchestra — v2 Deferred & TODO items"
 created_at: 20260428-000000
 created_by: Claude Code (Claude Haiku 4.5)
-updated_by: Claude Code (claude-code-qwen3-coder-next)
-updated_at: 2026-05-10--18-09
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-10--20-28
 context: >
   Extract from the design.md reference document, capturing all deferred
   features, v2 architectural stubs, optimization opportunities, and open
@@ -144,7 +144,7 @@ Per-step `[tier: …]` annotations were deferred pending multi-model routing rol
 
 - Schema: `[tier: default]`, `[tier: heavy]` on PLAN.md step headings.
 - Planner 30 KB threshold auto-detects input size and picks agent (DeepSeek for normal, Sonnet for large).
-- Actor dispatches to `actor-heavy` (DeepSeek) for heavy steps, `actor` (Qwen3) otherwise.
+- Actor dispatches to `actor-heavy` (Kimi K2.6) for heavy steps, `actor` (Qwen3) otherwise.
 - See `design.md` §Multi-model routing + `design-history.md` §Amendment 2026-05-10.
 
 ### §10.3 Other deferred items

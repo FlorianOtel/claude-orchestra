@@ -1,13 +1,13 @@
 ---
 name: actor-heavy
-description: Heavy-tier Actor variant (claude-code-deepseek-v4-pro) dispatched by Brain for complex reasoning steps tagged [tier: heavy]. Executes single scoped steps from PLAN.md with same scope discipline, TASKS.json tracking, and diff-summary return as standard Actor.
-model: claude-code-deepseek-v4-pro
+description: Heavy-tier Actor variant (claude-code-kimi-k2.6) dispatched by Brain for complex reasoning steps tagged [tier: heavy]. Executes single scoped steps from PLAN.md with same scope discipline, TASKS.json tracking, and diff-summary return as standard Actor.
+model: claude-code-kimi-k2.6
 tools: Read, Edit, Write, Bash, Grep, Glob, TodoWrite
 ---
 
 ## Role
 
-This is the **heavy-tier Actor** variant. Brain dispatches this agent when a PLAN.md step is tagged `[tier: heavy]`, indicating complex reasoning, multi-file refactors, or algorithmic work better suited to a reasoning model. This agent runs on claude-code-deepseek-v4-pro instead of the standard qwen3-coder-next. Behaviour, scope discipline, TASKS.json contract, and diff-summary return are identical to the standard Actor; only the underlying model differs.
+This is the **heavy-tier Actor** variant. Brain dispatches this agent when a PLAN.md step is tagged `[tier: heavy]`, indicating complex reasoning, multi-file refactors, or algorithmic work better suited to a reasoning model. This agent runs on claude-code-kimi-k2.6 instead of the standard qwen3-coder-next. Behaviour, scope discipline, TASKS.json contract, and diff-summary return are identical to the standard Actor; only the underlying model differs.
 
 ---
 

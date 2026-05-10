@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (claude-code-qwen3-coder-next)
-updated_at: 2026-05-10--18-09
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-10--20-28
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -58,7 +58,7 @@ When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo
 | **Planner** | `claude-code-deepseek-v4-pro` | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md; Sonnet 4.6 via `planner-long` for >30 KB inputs |
 | **Planner** (long) | Sonnet 4.6 | `~/.claude/agents/planner-long.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Fallback for large inputs (>30 KB); preserves Anthropic cache discount |
 | **Actor** | `claude-code-qwen3-coder-next` | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
-| **Actor** (heavy) | `claude-code-deepseek-v4-pro` | `~/.claude/agents/actor-heavy.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Complex multi-file refactors; triggered by `[tier: heavy]` step annotations |
+| **Actor** (heavy) | `claude-code-kimi-k2.6` | `~/.claude/agents/actor-heavy.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Complex multi-file refactors; triggered by `[tier: heavy]` step annotations |
 | **Reviewer** | Sonnet 4.6 | `~/.claude/agents/reviewer.md` | Read, Grep, Glob, TodoWrite (read-only) | Reviews diff against PLAN.md; returns PASS / FIX / BLOCK |
 
 ### Model requirements
@@ -497,7 +497,7 @@ Reference: [Design history & amendments](design-history.md) §Amendment 2026-05-
 | Planner (normal) | `claude-code-deepseek-v4-pro` | inputs ≤ 30 KB |
 | Planner (long-context fallback) | Sonnet 4.6 | inputs > 30 KB; preserves Anthropic cache discount |
 | Actor (default) | `claude-code-qwen3-coder-next` | all steps unless marked heavy |
-| Actor (heavy) | `claude-code-deepseek-v4-pro` | `[tier: heavy]` annotation in PLAN.md step |
+| Actor (heavy) | `claude-code-kimi-k2.6` | `[tier: heavy]` annotation in PLAN.md step |
 | Reviewer | Sonnet 4.6 | all reviews (unchanged; calibration priority) |
 
 **Brain** remains Opus 4.7 for `/brain` and Sonnet 4.6 for `/duo` (no change).
@@ -507,7 +507,7 @@ Reference: [Design history & amendments](design-history.md) §Amendment 2026-05-
 Plan steps may be tagged with optional `[tier: …]` annotations to override tier defaults:
 
 - `[tier: default]` — use default tier (Qwen3 for Actor, DeepSeek for Planner). Usually omitted.
-- `[tier: heavy]` — use heavy tier (DeepSeek for Actor; Sonnet stays for Planner). Used for complex multi-file refactors, architectural changes, or security-sensitive code.
+- `[tier: heavy]` — use heavy tier (Kimi K2.6 for Actor; Sonnet stays for Planner). Used for complex multi-file refactors, architectural changes, or security-sensitive code.
 
 Format: annotation appears on the same line as the step heading (e.g., `### 5. Refactor X [tier: heavy]`). Brain's PLAN parser confirms the annotation exists before dispatching the heavy-tier subagent; if malformed or missing, the step runs at default tier.
 
@@ -519,7 +519,7 @@ See TODO.md §10e for the deferred automation of this check.
 
 ### Alias stability contract
 
-SoHoAI exposes agents as aliases: `claude-code-deepseek-v4-pro`, `claude-code-qwen3-coder-next`, etc. These are **stable across deployments** within the SoHoAI domain (as of 2026-05-10, per handoff §1). If the alias routing changes (e.g., DeepSeek → Claude 3.7), SoHoAI commits to rotating the alias URL, not swapping backends silently. Updates will be documented in the design-history.md amendment chain.
+SoHoAI exposes agents as aliases: `claude-code-deepseek-v4-pro`, `claude-code-qwen3-coder-next`, `claude-code-kimi-k2.6`, etc. These are **stable across deployments** within the SoHoAI domain (as of 2026-05-10, per handoff §1). If the alias routing changes (e.g., DeepSeek → Claude 3.7), SoHoAI commits to rotating the alias URL, not swapping backends silently. Updates will be documented in the design-history.md amendment chain.
 
 Without this contract, cost + quality tracking would drift silently between deployments.
 
