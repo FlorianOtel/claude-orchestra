@@ -52,7 +52,9 @@ echo ""
 
 echo "Agents:"
 collect_file "$CLAUDE/agents/planner.md"        "$REPO/agents/planner.md"
+collect_file "$CLAUDE/agents/planner-long.md"   "$REPO/agents/planner-long.md"
 collect_file "$CLAUDE/agents/actor.md"           "$REPO/agents/actor.md"
+collect_file "$CLAUDE/agents/actor-heavy.md"    "$REPO/agents/actor-heavy.md"
 collect_file "$CLAUDE/agents/reviewer.md"        "$REPO/agents/reviewer.md"
 
 echo "Commands:"
