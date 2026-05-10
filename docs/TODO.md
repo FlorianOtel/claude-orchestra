@@ -2,8 +2,8 @@
 title: "Claude Orchestra — v2 Deferred & TODO items"
 created_at: 20260428-000000
 created_by: Claude Code (Claude Haiku 4.5)
-updated_by: Claude Code (Claude Haiku 4.5)
-updated_at: 2026-05-06--00-00
+updated_by: Claude Code (claude-code-qwen3-coder-next)
+updated_at: 2026-05-10--18-09
 context: >
   Extract from the design.md reference document, capturing all deferred
   features, v2 architectural stubs, optimization opportunities, and open
@@ -136,6 +136,17 @@ v2 implementation notes:
 - CROSS-CHECK is not a new subagent; it's a Brain-level step inside the `/brain` skill.
 - Halt-and-resume semantics share infrastructure with the `PreCompact` hook already wired in v1.
 
+### §10.2.1 Per-step tier annotation — RESOLVED
+
+**Status: Completed in session 20260510T180922Z-2575990.**
+
+Per-step `[tier: …]` annotations were deferred pending multi-model routing rollout (Ollama Cloud Pro flat-rate made tiering economically viable). Now implemented:
+
+- Schema: `[tier: default]`, `[tier: heavy]` on PLAN.md step headings.
+- Planner 30 KB threshold auto-detects input size and picks agent (DeepSeek for normal, Sonnet for large).
+- Actor dispatches to `actor-heavy` (DeepSeek) for heavy steps, `actor` (Qwen3) otherwise.
+- See `design.md` §Multi-model routing + `design-history.md` §Amendment 2026-05-10.
+
 ### §10.3 Other deferred items
 
 - **Option A showcase** (separate `claude --model …` processes per tier in dedicated tmux windows) — build only if v1's in-process subagent pattern proves insufficient for some specific task.
@@ -144,6 +155,20 @@ v2 implementation notes:
 - **Non-NFS machine deployment helper** (`make install-orchestra` or similar to `rsync ~/.claude/` to a non-NFS host) — only when a Debian box outside the NFS mount shows up.
 - **Review-loop escalation verbs** after cap-3 surface (`/fix`, `/accept-with-comments`, `/reject`) — v1 just lets Brain surface a text summary and the user decides in natural conversation.
 - **`PreCompact` payload schema refinement** — v1 writes Brain's current `PLAN.md` reference, open `TASKS.json` items, last-N decisions, and active gate state to `brain-state.md`. Format evolves during v1 use.
+
+### §10.4 Multi-model routing follow-ups (session 20260510T180922Z-2575990)
+
+These items are deferred pending real-world telemetry from the new multi-model routing (DeepSeek Planner, Qwen3 Actor, Sonnet Reviewer).
+
+- **Reviewer GLM-5.1 second-pass cross-check** — Evaluate `claude-code-glm-5.1` as a second-pass Reviewer after the primary Sonnet 4.6 review. Rationale: GLM-5.1 may catch different class of issues (e.g., performance, security) that Sonnet misses. Only implement after ≥ 20 sessions show consistent FIX-verdict patterns under new multi-model routing (baseline to measure improvement against).
+
+- **SoHoAI 429-fallback path in `scripts/orchestra-hook.sh`** — When Ollama Cloud Pro session or weekly cap exhaustion returns 429, fall back gracefully to Anthropic Haiku/Sonnet for the affected subagent, then resume with the primary model on next invocation. Today a 429 mid-`/brain` aborts the entire pipeline. Trigger: implement after first observed 429 in real usage, or proactively if Ollama Cloud Pro caps tighten materially.
+
+- **PLAN.md schema validator** — DeepSeek's format discipline is empirically weaker than Sonnet's. Add a post-Planner parse check that confirms numbered steps, optional `[tier: …]` placement, and canonical headings before Brain persists PLAN.md to `${SESSION_DIR}/`. If invalid, re-dispatch Planner with specific feedback. Trigger: implement after first observed malformed PLAN.md from `claude-code-deepseek-v4-pro`.
+
+- **Automate the 30 KB Planner threshold** — Brain is currently instructed (in prose) to `wc -c` the combined RESEARCH.md + constraints text and pick `planner` or `planner-long`. If Brain forgets or context is ambiguous, cost regresses (no Anthropic cache discount on large inputs). Implement as a small Bash helper invoked by `commands/brain.md` Phase 1 that prints the chosen `subagent_type` (and input size), so Brain reads it directly and always picks the right agent. Trigger: cost telemetry shows the manual check is consistently being skipped (baseline: sample 10 `/brain` runs, check logs for "30 KB" decision text).
+
+- **Agent-frontmatter `max_tokens` knob** — Handoff §3 specifies `max_tokens ≥ 500` for reasoning models (DeepSeek, Qwen3 require reasoning budget). CC's default is well above this, but if a future Claude Code version lowers the default, reasoning-model subagents will exhaust tokens and return empty with `stop_reason: max_tokens`. Trigger: monitor smoke 2 + first 5 real `/brain` runs for empty-output failures; if observed, surface the workaround in `design.md` with concrete example and link to CC version notes.
 
 ## Hook-based model enforcement via `$CLAUDE_MODEL`
 

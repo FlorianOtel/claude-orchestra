@@ -10,7 +10,7 @@ No separate sessions. No `claude -p` subprocesses. No multi-run registry. If the
 
 ## Pipeline rules — READ FIRST
 
-`/brain` orchestrates **subagents**: Planner (Sonnet 4.6) produces the plan, Actor (Haiku 4.5) makes code changes, Reviewer (Sonnet 4.6) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
+`/brain` orchestrates **subagents**: Planner (Sonnet 4.6 or `claude-code-deepseek-v4-pro` for large inputs via `planner-long`) produces the plan, Actor (`claude-code-qwen3-coder-next` or `claude-code-deepseek-v4-pro` for `[tier: heavy]` steps) makes code changes, Reviewer (Sonnet 4.6) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
 
 ### Override of plan-mode's plan-file directive
 
@@ -265,6 +265,8 @@ Task tool invocation:
     to ${SESSION_DIR}/PLAN.md via Bash atomic-rename.
 ```
 
+> **Long-context fallback:** Before dispatching Planner, measure the combined size of RESEARCH.md + any additional constraints text (use `wc -c`). If the combined input exceeds ~30 KB, dispatch Planner with `subagent_type: planner-long` (Sonnet 4.6, long-context variant) instead of the default `planner`. This variant provides larger context windows for research-heavy or architecturally complex tasks.
+
 Planner is **purely read-only** by frontmatter (`tools: Read, Grep, Glob, WebFetch`); it cannot modify any files. **You (Brain) own persistence of `PLAN.md`** — Planner returns the plan text; you do the atomic-rename.
 
 After Planner returns, persist its plan via `Bash`:
@@ -290,10 +292,12 @@ Show the plan to the operator. Ask explicitly: **"Approve this plan?"** Wait for
 
 After `ExitPlanMode` is approved, the parent is out of plan mode. Actor's tool calls follow the operator's chosen permission posture (auto-accept / manual approve).
 
+**Tier-aware dispatch:** For each step or step-group, check the PLAN.md entry for a `[tier: heavy]` annotation. If present, dispatch with `subagent_type: actor-heavy` (for heavyweight refactoring, large-scale refactors, or architecturally complex changes); otherwise use `subagent_type: actor` (default). The prompt and instructions are identical; only the subagent type differs.
+
 **Each step (or tight group of steps) of Phase 2 begins with this exact `Task` tool call.** Do NOT use `Edit/Write/Bash` on project code yourself — Actor owns the code changes. Do NOT skip ahead to Phase 3 by inspecting the diff yourself — Reviewer owns the audit.
 
 ```
-Task tool invocation:
+Task tool invocation (default tier):
   subagent_type: actor
   description: <one-liner describing the step or step-group>
   prompt: |
@@ -310,6 +314,8 @@ Task tool invocation:
     Include a unified diff summary in your final message — this is what
     Reviewer will audit verbatim.
 ```
+
+> **NOTE:** For `[tier: heavy]` steps, use `subagent_type: actor-heavy` instead of `actor`. The prompt body is identical; only the subagent type changes.
 
 For each step (or tight group of steps) in `PLAN.md`:
 

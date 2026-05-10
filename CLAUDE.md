@@ -63,6 +63,9 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - **Timestamp:** 2026-05-07T17:39:00Z
 - **Model:** claude-sonnet-4-6
 - **Reason:** refactor(telemetry): UUID-keyed native sessions — bash-session-init.sh now writes native-<UUID>.lck directly (registration moved from Stop hook). Eliminated PID ancestry traversal (/proc/stat). Session IDs are now native-<UUID>. Bug caught during implementation: `[ -z ] && return || exit` idiom kills bash when UUID is set — must use `if/then`.
+- **Timestamp:** 2026-05-10T18:51:03Z
+- **Model:** claude-code-qwen3-coder-next (Actor) + claude-code-deepseek-v4-pro (Planner / Actor-heavy) + claude-sonnet-4-6 (Reviewer / planner-long fallback)
+- **Reason:** graduated SoHoAI rollout — Phases A+B+C: pricing.yaml + tier annotations + actor-heavy + planner-long + Reviewer-stays-Sonnet. Smoke tests pending — session 20260510T180922Z-2575990. Cost/duration TBD-post-smoke.
 
 ## Telemetry Smoke Tests
 

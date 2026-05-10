@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-07--18-20
+updated_by: Claude Code (claude-code-qwen3-coder-next)
+updated_at: 2026-05-10--18-09
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -55,8 +55,10 @@ When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo
 | Agent | Model | File | Tools | Role |
 |---|---|---|---|---|
 | **Brain** | Opus 4.7 (or Sonnet for /duo) | — (main session) | all | Orchestrates; calls `ExitPlanMode` at plan approval (G2) |
-| **Planner** | Sonnet 4.6 | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md |
-| **Actor** | Haiku 4.5 | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
+| **Planner** | `claude-code-deepseek-v4-pro` | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md; Sonnet 4.6 via `planner-long` for >30 KB inputs |
+| **Planner** (long) | Sonnet 4.6 | `~/.claude/agents/planner-long.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Fallback for large inputs (>30 KB); preserves Anthropic cache discount |
+| **Actor** | `claude-code-qwen3-coder-next` | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
+| **Actor** (heavy) | `claude-code-deepseek-v4-pro` | `~/.claude/agents/actor-heavy.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Complex multi-file refactors; triggered by `[tier: heavy]` step annotations |
 | **Reviewer** | Sonnet 4.6 | `~/.claude/agents/reviewer.md` | Read, Grep, Glob, TodoWrite (read-only) | Reviews diff against PLAN.md; returns PASS / FIX / BLOCK |
 
 ### Model requirements
@@ -475,6 +477,66 @@ The `--tier` flag on `telemetry-report.sh` reads per-session `telemetry.json` fi
 3. **1-hour TTL caching** — activate per-tier when TTL-miss rate exceeds 33%.
 4. **Reviewer skip** — only if FIX-verdict rate drops below 10% over ≥ 50 sessions (quality risk).
 5. **Opus vs Sonnet for Brain** — compare `regret_flag` rate at different model tiers once sufficient data exists.
+
+---
+
+## Multi-model routing (SoHoAI graduated rollout)
+
+### Rationale: from marginal cost to flat-rate pricing
+
+Prior to May 2026, multi-model routing in the orchestra was rejected based on a per-token marginal cost model: switching from Sonnet to a cheaper tier would save money linearly. The analysis assumed all cost differences flowed to the operator. Under that assumption, tiering complexity was not justified.
+
+Ollama Cloud Pro changed the equation: it operates on a **flat-rate subscription model** rather than per-token billing. This means the marginal cost of a Planner replan or an Actor redo is now zero (within the subscription cap), while the **quality risk** of using an untested model remains real. The decision matrix inverted: we now optimize for **quality and capability per subscription dollar**, not token efficiency.
+
+Reference: [Design history & amendments](design-history.md) §Amendment 2026-05-10 — this section documents the decision; see `design-history.md` for the historical context.
+
+### Model assignments and tier annotations
+
+| Role | Model | Trigger |
+|---|---|---|
+| Planner (normal) | `claude-code-deepseek-v4-pro` | inputs ≤ 30 KB |
+| Planner (long-context fallback) | Sonnet 4.6 | inputs > 30 KB; preserves Anthropic cache discount |
+| Actor (default) | `claude-code-qwen3-coder-next` | all steps unless marked heavy |
+| Actor (heavy) | `claude-code-deepseek-v4-pro` | `[tier: heavy]` annotation in PLAN.md step |
+| Reviewer | Sonnet 4.6 | all reviews (unchanged; calibration priority) |
+
+**Brain** remains Opus 4.7 for `/brain` and Sonnet 4.6 for `/duo` (no change).
+
+### Step-level tier annotations
+
+Plan steps may be tagged with optional `[tier: …]` annotations to override tier defaults:
+
+- `[tier: default]` — use default tier (Qwen3 for Actor, DeepSeek for Planner). Usually omitted.
+- `[tier: heavy]` — use heavy tier (DeepSeek for Actor; Sonnet stays for Planner). Used for complex multi-file refactors, architectural changes, or security-sensitive code.
+
+Format: annotation appears on the same line as the step heading (e.g., `### 5. Refactor X [tier: heavy]`). Brain's PLAN parser confirms the annotation exists before dispatching the heavy-tier subagent; if malformed or missing, the step runs at default tier.
+
+### Planner long-context fallback
+
+When RESEARCH + constraints + prior artifacts exceed ~30 KB, Brain runs Sonnet 4.6 via the `planner-long` agent instead of `planner`. This preserves Anthropic's prompt cache discount on large inputs (30× savings on repetitive prefix tokens) while staying in the flat-rate economy via `planner-long` as a documented SoHoAI alias. The 30 KB threshold is approximate; Brain is instructed to `wc -c` the combined input and pick the tier accordingly.
+
+See TODO.md §10e for the deferred automation of this check.
+
+### Alias stability contract
+
+SoHoAI exposes agents as aliases: `claude-code-deepseek-v4-pro`, `claude-code-qwen3-coder-next`, etc. These are **stable across deployments** within the SoHoAI domain (as of 2026-05-10, per handoff §1). If the alias routing changes (e.g., DeepSeek → Claude 3.7), SoHoAI commits to rotating the alias URL, not swapping backends silently. Updates will be documented in the design-history.md amendment chain.
+
+Without this contract, cost + quality tracking would drift silently between deployments.
+
+### Reviewer remains Sonnet 4.6
+
+Reviewer stays Sonnet 4.6 (no multi-model routing). Rationale:
+- Reviewer is a calibration touchstone — if it starts rejecting code that Sonnet previously accepted, review-loop iteration counts will spike, signaling a model regression.
+- Reviewer is called ≤ 3 times per step (review loop cap); its cost is < 15% of typical sessions.
+- Code review is a high-stakes task where Sonnet's consistency is proven; evaluation of GLM-5.1 as a second-pass cross-check is deferred (see TODO.md §10b).
+
+### Cross-reference
+
+- Agents table (this document, §How the workflow works): file paths and role descriptions.
+- design-history.md §Amendment 2026-05-10: historical context, operator caveats, deferred follow-ups.
+- TODO.md §10b–10f: deferred items (GLM-5.1 second-pass, 429 fallback, PLAN schema validator, 30 KB threshold automation, max_tokens knob).
+- Handoff §1: SoHoAI alias stability contract.
+- Handoff §3: max_tokens ≥ 500 requirement for reasoning models.
 
 ---
 
