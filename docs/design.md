@@ -126,7 +126,9 @@ Fields injected by the orchestra block:
 
 The utilization denominator is looked up from `context-windows.yaml` per model ID, with fallback to Claude Code's native `context_window.context_window_size`. Model ID normalization strips `[1m]`, `[200k]`, and date suffixes before lookup. Models with `[1m]` in their ID force a 1,000,000 denominator.
 
-**`~$X.YZ`** — live running cost (shown when cost > 0; absent for zero-cost models). Source: SoHoAI API (primary, TTL=8 min cache) or JSONL estimate fallback. Stale cache marked with `*`; pure JSONL estimate marked with `(est)`. Works for both orchestra sessions and native sessions. Native sessions read `started_at` from the `.lck` file (converted from ISO 8601 to Unix epoch).
+**`~$X.YZ`** — live running cost (shown when cost > 0; absent for zero-cost models). Source differs by session type:
+- **Orchestra sessions**: SoHoAI API query (TTL=8 s cache); stale cache marked `*`; JSONL estimate fallback marked `(est)`.
+- **Native sessions**: `cost.total_cost_usd` from CC's own `statusLine` JSON input — precise, always current, no external query needed.
 
 **`♪ badge`** — orchestra session badge (shown only during active /duo or /brain sessions, or when a subagent is running). Badge formats in descending priority:
 
@@ -150,9 +152,9 @@ The status line script is called by Claude Code on each render tick — after ev
 | `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
 | `/brain` inflight marker (session-discovery for `/brain-abandon` and explicit CMD-classification by Stop-hook) | `${SESSION_DIR}/.brain-inflight` | `/brain` command setup |
 | Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
-| Live cost (orchestra) | SoHoAI LiteLLM proxy via `telemetry-events.jsonl` session lookup | T2 via SoHoAI or JSONL estimate |
+| Live cost (orchestra) | SoHoAI API via `sohoai-live-cost.sh` (TTL=8 s cache; JSONL fallback) | T2 via SoHoAI or JSONL estimate |
+| Live cost (native) | `cost.total_cost_usd` from CC `statusLine` JSON input | CC accumulates cost internally |
 | Live cost (ctx segment) | `context_windows.yaml` + CC context width | ctx-segment.sh |
-| SoHoAI cost source | `~/.claude/scripts/sohoai-live-cost.sh` | SoHoAI query (TTL=8,min cache; JSONL fallback) |
 
 #### ctx segment implementation details
 
@@ -162,13 +164,32 @@ Bar: 10 cells, each representing 10% of the context window (filled `▓`, empty 
 
 Token formatting: values ≥ 1,000,000 show as `XM` (e.g., `1.2M`), values ≥ 1,000 show as `XK`, otherwise raw `XK`.
 
-#### SoHoAI live cost implementation details
+#### CC statusLine JSON schema (CC 2.1.139+)
 
-SoHoAI cost is retrieved via `scripts/sohoai-live-cost.sh` with:
-- **TTL**: 8 minutes (cache hit < 50ms wall time)
+CC passes a rich JSON object to the `statusLine` command on every render. Key fields used by the orchestra block:
+
+| Field | Type | Notes |
+|---|---|---|
+| `session_id` | string | CC session UUID — primary key for `.lck` lookup |
+| `transcript_path` | string | Absolute path to this session's JSONL transcript |
+| `session_name` | string | Human-readable session name (set via `/rename`) |
+| `cost.total_cost_usd` | float | Precise accumulated session cost (all subagents included) |
+| `model.id` / `model.display_name` | string | Model identifier and display name |
+| `context_window.*` | object | Token counts and utilization percentage |
+| `workspace.current_dir` | string | Session working directory |
+| `version` | string | CC version string |
+
+`session_id` is used to identify the native session for the `.lck` existence check. `cost.total_cost_usd` is used directly as the live cost for native sessions — precise, always current, no SoHoAI query needed.
+
+#### SoHoAI live cost (orchestra sessions only)
+
+SoHoAI cost is retrieved via `scripts/sohoai-live-cost.sh` for orchestra sessions:
+- **TTL**: 8 seconds (cache hit < 50ms wall time)
 - **Stale marker**: trailing `*` when cache is stale and SoHoAI failed
 - **JSONL fallback marker**: trailing `(est)` when JSONL estimate is used
-- **TTL header**: SoHoAI query has 1s timeout; JSONL lookback is 1 hour
+- **SoHoAI timeout**: 1s; JSONL lookback is 1 hour
+
+Native sessions bypass this path entirely and use `cost.total_cost_usd` from the JSON input instead.
 
 Model ID lookup in `context-windows.yaml` uses:
 - Primary: exact `model.id` match
@@ -323,6 +344,8 @@ session_uuid=<UUID>
 ```
 
 `cc_pid` is the stable top-level `claude` process — found by checking if `$PPID.comm == "claude"` (normal case) or walking one level up (if PPID is a transient node subprocess). The script is a no-op for subsequent calls (file already exists) and skips orchestra sessions (`.brain-inflight` / `.duo-inflight` present — handled by orchestra telemetry instead). The UUID serves as the primary key; the PID is stored solely for liveness detection.
+
+**Status-line identification.** The `statusLine` command subprocess does not receive `CLAUDE_CODE_SESSION_ID` as an env var (unlike Bash tool call subprocesses). Session identification for the live cost display uses `session_id` from the CC `statusLine` JSON input instead — no PID walking, no env vars. See §CC statusLine JSON schema.
 
 **Finalization — `scripts/orchestra-hook.sh` stop mode.**
 The Stop hook fires per response turn. It iterates all `native-*.lck` files and for each runs `kill -0 <cc_pid>`. If the process is dead the session has ended: it invokes `native-session-finalize.py` (T2 cost attribution via the cost-source cascade) and removes the `.lck`. Since `CLAUDE_CODE_SESSION_ID` is not available in hook context, finalization of session N is triggered by the Stop hook of session N+1 — typically within seconds of the user opening a new session. Edge case: if no new session is opened after session N ends, the `.lck` persists until the next CC session starts. `session-report.py` guards against this by calling `os.kill(cc_pid, 0)` in `load_active_native_sessions()` and silently skipping any stale entry whose process is already dead.
