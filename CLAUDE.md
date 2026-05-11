@@ -12,6 +12,22 @@ automatically. Deploying is an explicit, conscious step.
 git add agents/ commands/ scripts/ config/ && git commit && git push
 ```
 
+## Branch policy — main → litellm-gateway
+
+After every commit to `main`, also merge it into `litellm-gateway`:
+
+```bash
+git checkout litellm-gateway && git merge main --no-edit && git push origin litellm-gateway && git checkout main
+```
+
+**If the merge is clean:** merge silently, push, switch back to main, notify the user in one line.
+
+**If there are conflicts:** do NOT resolve silently. Stop, report:
+- Which files conflict
+- What the conflicting hunks are (show both sides)
+- A concrete recommendation for each conflict
+- Then ask the user how to proceed before touching anything
+
 ## Layout
 
 - `agents/`   — planner (Sonnet 4.6), actor (Haiku 4.5), reviewer (Sonnet 4.6)
