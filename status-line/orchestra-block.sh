@@ -101,7 +101,21 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     fi
 
     # --- ctx segment (model context window + token usage bar) ---
-    # $used_percentage, $tokens_used, $context_window_size are set by the host script.
+    # Self-fix: host status-line.sh may set tokens_used=0 when used_percentage=0
+    # (CC reports 0% usage for non-Anthropic models even when tokens were consumed).
+    # Fallback: derive tokens_used from total_input + total_output; then derive
+    # used_percentage from tokens / context_window.
+    _total_input=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0')
+    _total_output=$(echo "$input" | jq -r '.context_window.total_output_tokens // 0')
+    _total=$((_total_input + _total_output))
+    if { [ "$used_percentage" = "0" ] || [ "$used_percentage" = "null" ]; } && [ "$_total" -gt 0 ]; then
+        tokens_used="$_total"
+        if [ "$context_window_size" -gt 0 ]; then
+            used_percentage=$(echo "scale=2; 100 * $_total / $context_window_size" | bc)
+        fi
+    fi
+    # Round to integer — ctx-segment.sh validates used_percentage with ^[0-9]+$ (integers only)
+    used_percentage=$(printf "%.0f" "$used_percentage")
     model_id=$(echo "$input" | jq -r '.model.id // .model.display_name // ""' 2>/dev/null)
     # DEBUG: uncomment to capture input JSON for troubleshooting model_id extraction
     # echo "$input" > "$HOME/.claude/orchestra/logs/status-line-input-debug.json" 2>/dev/null || true
