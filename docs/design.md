@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-10--20-28
+updated_by: Claude Code (claude-code-opus-4-7[1m])
+updated_at: 2026-05-10--20-50
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -115,17 +115,20 @@ The block renders one of the following badge formats, in descending priority:
 
 | Condition | Badge |
 |---|---|
-| `/duo` session active (one) | `♪ orchestra -> plan <title>  [▶ stage]  [~$X.YZ]` |
-| `/duo` sessions active (many) | `♪ orchestra -> plan #N` |
-| `/brain` session active | `♪ orchestra -> brain <title>  [▶ stage]  [~$X.YZ]` |
-| Subagent running (no /brain or /duo context) | `♪ orchestra  ▶ stage` |
+| `/duo` session active (one) | `♪ orchestra -> plan <title>  [▶ stage]  [ctx ...]  [~$X.YZ]` |
+| `/duo` sessions active (many) | `♪ orchestra -> plan #N  [ctx ...]` |
+| `/brain` session active | `♪ orchestra -> brain <title>  [▶ stage]  [ctx ...]  [~$X.YZ]` |
+| Subagent running (no /brain or /duo context) | `♪ orchestra  ▶ stage  [ctx ...]  [~$X.YZ]` |
 | No orchestra activity | *(nothing — orchestra block is silent)* |
 
-Plus a context-overflow warning appended to any badge: `⚠ >200K` when the parent's `tokens_used` exceeds 180 000 (truncation risk threshold).
+`[ctx ...]` shows context window utilization: colored bar (green/yellow/orange), percentage, and token usage (e.g., `ctx ░░░░░░░░ 12% 24K/200K` in green). Color thresholds:
+- **Green**: < 50% utilization
+- **Yellow**: 50-79% utilization
+- **Orange**: ≥ 80% utilization
 
-`[▶ stage]` shows the current active subagent stage (`plan`, `implement`, `review`, `research`). It appears while the subagent is running and disappears once it completes.
+The utilization denominator is looked up from `context-windows.yaml` per model ID, with fallback to Claude Code's native `context_window.context_window_size`. Model ID normalization strips `[1m]`, `[200k]`, and date suffixes before lookup.
 
-`[~$X.YZ]` is the live running cost from `telemetry-events.jsonl` (T1 approximation; finalised by T2 at session end).
+`[~$X.YZ]` is the live running cost from SoHoAI (primary) or JSONL estimate fallback (stale cache marked with `*`, pure estimate marked with `(est)`).
 
 #### When it updates
 
@@ -139,7 +142,27 @@ The status line script is called by Claude Code on each render tick — after ev
 | `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
 | `/brain` inflight marker (session-discovery for `/brain-abandon` and explicit CMD-classification by Stop-hook) | `${SESSION_DIR}/.brain-inflight` | `/brain` command setup |
 | Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
-| Live cost | `tokens_used` from Claude Code status-line input JSON × $9/M Sonnet blend | Claude Code (always available) |
+| Live cost (orchestra) | SoHoAI LiteLLM proxy via `telemetry-events.jsonl` session lookup | T2 via SoHoAI or JSONL estimate |
+| Live cost (ctx segment) | `context_windows.yaml` + CC context width | ctx-segment.sh |
+| SoHoAI cost source | `~/.claude/scripts/sohoai-live-cost.sh` | SoHoAI query (TTL=8,min cache; JSONL fallback) |
+
+#### ctx segment implementation details
+
+The ctx segment uses `scripts/ctx-segment.sh` which reads `context-windows.yaml` from `~/.claude/orchestra/`. Model ID normalisation strips `[1m]`, `[200k]`, and `-YYYYMMDD` suffixes before lookup. If the original ID contains `[1m]`, the denominator is forced to 1,000,000 regardless of the map entry.
+
+Token formatting: values ≥ 1,000,000 show as `XM` (e.g., `1.2M`), values ≥ 1,000 show as `XK`, otherwise raw `XK`.
+
+#### SoHoAI live cost implementation details
+
+SoHoAI cost is retrieved via `scripts/sohoai-live-cost.sh` with:
+- **TTL**: 8 minutes (cache hit < 50ms wall time)
+- **Stale marker**: trailing `*` when cache is stale and SoHoAI failed
+- **JSONL fallback marker**: trailing `(est)` when JSONL estimate is used
+- **TTL header**: SoHoAI query has 1s timeout; JSONL lookback is 1 hour
+
+Model ID lookup in `context-windows.yaml` uses:
+- Primary: exact `model.id` match
+- Fallback: `display_name` (lowercase, hyphenated, sans parentheses)
 
 #### Deploy / portability
 
@@ -163,9 +186,9 @@ commands/
   brain.md, brain-abandon.md
   duo-plan.md, duo-act.md, duo-abandon.md
 scripts/
-  orchestra-hook.sh
+  orchestra-hook.sh, ctx-segment.sh, sohoai-live-cost.sh
 orchestra/
-  config.yaml
+  config.yaml, context-windows.yaml
   invocations.log (append-only)
 CLAUDE.md  (sentinel-bracketed orchestra-guard block injected by deploy.sh
             from claude-md-block/orchestra-guard.md in the repo)

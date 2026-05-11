@@ -66,9 +66,12 @@ collect_file "$CLAUDE/commands/duo-abandon.md"   "$REPO/commands/duo-abandon.md"
 
 echo "Scripts:"
 collect_file "$CLAUDE/scripts/orchestra-hook.sh" "$REPO/scripts/orchestra-hook.sh"
+collect_file "$CLAUDE/scripts/ctx-segment.sh" "$REPO/scripts/ctx-segment.sh"
+collect_file "$CLAUDE/scripts/sohoai-live-cost.sh" "$REPO/scripts/sohoai-live-cost.sh"
 
 echo "Config:"
 collect_file "$CLAUDE/orchestra/config.yaml"    "$REPO/config/config.yaml"
+collect_file "$CLAUDE/orchestra/context-windows.yaml" "$REPO/config/context-windows.yaml"
 
 echo ""
 $DRY_RUN && echo "Dry run complete — no files written." || echo "Collect complete."

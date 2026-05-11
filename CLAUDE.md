@@ -66,6 +66,9 @@ git add agents/ commands/ scripts/ config/ && git commit && git push
 - **Timestamp:** 2026-05-10T18:51:03Z
 - **Model:** claude-code-qwen3-coder-next (Actor) + claude-code-deepseek-v4-pro (Planner / Actor-heavy) + claude-sonnet-4-6 (Reviewer / planner-long fallback)
 - **Reason:** graduated SoHoAI rollout — Phases A+B+C: pricing.yaml + tier annotations + actor-heavy + planner-long + Reviewer-stays-Sonnet. Smoke tests pending — session 20260510T180922Z-2575990. Cost/duration TBD-post-smoke.
+- **Timestamp:** 2026-05-10T20:45:52Z
+- **Model:** claude-opus-4-7[1m] (Brain) + claude-code-kimi-k2.6 (actor-heavy) + claude-sonnet-4-6 (reviewer-long)
+- **Reason:** status-line ctx + SoHoAI live-cost segments — implemented via /brain heavy-tier workflow, deployed, all smoke tests pass (ctx bar colors, 1M denominator, SoHoAI query, JSONL fallback).
 
 ## Telemetry Smoke Tests
 
@@ -83,6 +86,24 @@ Verify T1 (hook events) and T2 (transcript parse) after any /duo or /brain run.
 2. Go through Phase 0 interrogation, approve plan, let pipeline run.
 3. After cleanup, run: `./scripts/smoke-test.sh`
 4. Expected: T1 has events for planner+actor+reviewer, T2 cost > $0, subagents list contains "planner", "actor", "reviewer". If parser_warnings mentions "T1 usage=null", that is expected (T1 is timing-only; T2 is authoritative).
+
+### Status-line ctx + SoHoAI cost smoke test (no CC restart needed)
+1. Deploy: `./deploy.sh`
+2. Test ctx segment (low fill, expect green):
+   `~/.claude/scripts/ctx-segment.sh 12 24000 200000 claude-sonnet-4-6`
+   → colored `ctx ░░░░░░░░ 12% 24K/200K`
+3. Test ctx segment (high fill, expect orange):
+   `~/.claude/scripts/ctx-segment.sh 85 170000 200000 claude-sonnet-4-6`
+   → `ctx ▓▓▓▓▓▓░░ 85% 170K/200K` in orange
+4. Test ctx 1M variant:
+   `~/.claude/scripts/ctx-segment.sh 12 120000 1000000 'claude-opus-4-7[1m]'`
+   → `ctx ░░░░░░░░ 12% 120K/1M`
+5. Test SoHoAI helper (replace SESSION_ID with active orchestra dir
+   basename or `native-<UUID>` from `~/.claude/active-sessions/`):
+   `~/.claude/scripts/sohoai-live-cost.sh SESSION_ID $(date +%s) /tmp/test-cost-cache`
+   → `~$X.YZ` or empty; <2s wall time
+6. Live render: send any message to CC; observe status bar shows
+   `ctx ... | ♪ orchestra... ~$X.YZ` with no `⚠ >200K`.
 
 ### Native session telemetry smoke test
 1. Open a fresh CC session (no /brain or /duo).
