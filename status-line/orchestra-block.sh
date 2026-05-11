@@ -22,12 +22,13 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     WARNING_COLOR="\033[38;2;254;128;25m"     # bright_orange #FE8019
 
     # Strip CC-native fields 2 (20-seg bar+%) and 3 (↯ token count) — replaced by ctx+cost below.
-    # $status_line contains raw ESC bytes (0x1B) because printf "\033[..." interpolates the octal.
-    # BRACKET_COLOR (38;2;102;92;84m) anchors field 2 start; PERCENTAGE_COLOR (38;2;251;241;199m)
-    # anchors its end. TOKEN_COLOR (38;2;224;175;104m) is unique to field 3 in the CC-native script.
+    # Field 2: $bar is passed via %s arg to printf so BRACKET_COLOR stays as literal \033 (4 chars),
+    # NOT a raw ESC byte. Use \\\\033 so bash→\\033, sed sees \\033 and matches literal \033.
+    # PERCENTAGE_COLOR and RESET are in the format string → raw ESC → ${_ESC} anchor for the end.
+    # Field 3: TOKEN_COLOR is in the format string → raw ESC → ${_ESC} anchor works directly.
     _ESC=$'\033'
     status_line=$(printf '%s' "$status_line" \
-        | sed "s/ | ${_ESC}\[38;2;102;92;84m\[.*${_ESC}\[38;2;251;241;199m[0-9]*%${_ESC}\[0m//")
+        | sed "s/ | \\\\033\[38;2;102;92;84m\[.*${_ESC}\[38;2;251;241;199m[0-9]*%${_ESC}\[0m//")
     status_line=$(printf '%s' "$status_line" \
         | sed "s/ | ${_ESC}\[38;2;224;175;104m[^${_ESC}]*${_ESC}\[0m//")
 
