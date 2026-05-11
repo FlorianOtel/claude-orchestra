@@ -5,6 +5,10 @@ notes: |
   long-cache (1h TTL, 2x input) is not yet tracked separately. Verify against
   the source URL above on every bump and update last_updated.
 models:
+  # NOTE: LiteLLM's internal model database under-prices claude-opus-4-7 — it appears
+  # to omit or zero-out cache_creation and cache_read rates, reporting only input+output.
+  # When cost_source=litellm, expect a ~$29 undercount per 689K cache-creation tokens
+  # relative to these rates. pricing_yaml is the authoritative fallback for full cost.
   claude-opus-4-7:
     input: 15.00
     output: 75.00

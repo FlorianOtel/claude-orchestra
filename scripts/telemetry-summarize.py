@@ -177,6 +177,8 @@ def query_litellm_cost(parent: Dict, subagents: List[Dict], warnings: List[str])
     """Query litellm for cost computation with cache-token rates.
 
     Returns total cost or None if litellm unavailable or computation fails.
+    claude-code-* aliases are SoHoAI gateway aliases (not LiteLLM-registered models);
+    they are treated as $0 per pricing.yaml rather than aborting the entire path.
     """
     try:
         import litellm
@@ -184,51 +186,45 @@ def query_litellm_cost(parent: Dict, subagents: List[Dict], warnings: List[str])
         warnings.append("litellm not installed; skipping litellm cost query")
         return None
 
-    total_cost = 0.0
-
-    try:
-        # Parent cost
-        if parent.get("model"):
-            model = _normalize_model_id(parent["model"])
-            tokens = parent.get("tokens", {})
-            base_cost = litellm.completion_cost(
+    def _model_cost(raw_model: str, tokens: Dict) -> float:
+        """Return litellm cost for one model+tokens, or 0.0 on any failure."""
+        model = _normalize_model_id(raw_model)
+        # SoHoAI gateway aliases — not in LiteLLM's registry; $0 by design (flat subscription).
+        if model.startswith("claude-code-"):
+            return 0.0
+        try:
+            base = litellm.completion_cost(
                 model=model,
                 completion_response={"usage": {
                     "prompt_tokens": tokens.get("input", 0),
                     "completion_tokens": tokens.get("output", 0),
                 }}
             )
-            cache_info = litellm.get_model_info(model) or {}
-            cache_create_rate = cache_info.get("cache_creation_input_token_cost", 0.0) or 0.0
-            cache_read_rate = cache_info.get("cache_read_input_token_cost", 0.0) or 0.0
-            parent_cost = (base_cost
-                          + tokens.get("cache_creation", 0) * cache_create_rate
-                          + tokens.get("cache_read", 0) * cache_read_rate)
-            total_cost += parent_cost
+            info = litellm.get_model_info(model) or {}
+            cc_rate = info.get("cache_creation_input_token_cost", 0.0) or 0.0
+            cr_rate = info.get("cache_read_input_token_cost", 0.0) or 0.0
+            return base + tokens.get("cache_creation", 0) * cc_rate + tokens.get("cache_read", 0) * cr_rate
+        except Exception as e:
+            warnings.append(f"litellm cost skipped for {raw_model!r}: {e}")
+            return 0.0
 
-        # Subagent costs
+    total_cost = 0.0
+    has_native_model = False
+
+    try:
+        if parent.get("model"):
+            if not _normalize_model_id(parent["model"]).startswith("claude-code-"):
+                has_native_model = True
+            total_cost += _model_cost(parent["model"], parent.get("tokens", {}))
+
         for subagent in subagents:
             if subagent.get("model"):
-                model = _normalize_model_id(subagent["model"])
-                tokens = subagent.get("tokens", {})
-                base_cost = litellm.completion_cost(
-                    model=model,
-                    completion_response={"usage": {
-                        "prompt_tokens": tokens.get("input", 0),
-                        "completion_tokens": tokens.get("output", 0),
-                    }}
-                )
-                cache_info = litellm.get_model_info(model) or {}
-                cache_create_rate = cache_info.get("cache_creation_input_token_cost", 0.0) or 0.0
-                cache_read_rate = cache_info.get("cache_read_input_token_cost", 0.0) or 0.0
-                agent_cost = (base_cost
-                             + tokens.get("cache_creation", 0) * cache_create_rate
-                             + tokens.get("cache_read", 0) * cache_read_rate)
-                total_cost += agent_cost
+                if not _normalize_model_id(subagent["model"]).startswith("claude-code-"):
+                    has_native_model = True
+                total_cost += _model_cost(subagent["model"], subagent.get("tokens", {}))
 
         if total_cost == 0.0:
-            # Non-local model but zero cost suggests missing model in litellm
-            if parent.get("model") or any(s.get("model") for s in subagents):
+            if has_native_model:
                 warnings.append("litellm returned zero cost for non-local model")
             return None
 
