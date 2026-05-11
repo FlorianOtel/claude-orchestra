@@ -99,18 +99,18 @@ format_tokens() {
 used_fmt=$(format_tokens "$tokens")
 total_fmt=$(format_tokens "$advertised_size")
 
-# Build 8-cell bar (floor: 12.5% = 1 cell)
-filled=$(awk "BEGIN {print int($used_pct / 12.5)}")
+# Build 10-cell bar (floor: 10% = 1 cell)
+filled=$(awk "BEGIN {print int($used_pct / 10)}")
 
-# Clamp to 0-8
+# Clamp to 0-10
 if [ "$filled" -lt 0 ]; then filled=0; fi
-if [ "$filled" -gt 8 ]; then filled=8; fi
+if [ "$filled" -gt 10 ]; then filled=10; fi
 
 bar=""
 for ((i=0; i<filled; i++)); do
     bar+="▓"
 done
-for ((i=filled; i<8; i++)); do
+for ((i=filled; i<10; i++)); do
     bar+="░"
 done
 
@@ -131,5 +131,5 @@ fi
 
 reset="\033[0m"
 
-# Output format: "ctx ▓▓░░░░░░ 12% 120K/1M" with color
+# Output format: "ctx ▓▓░░░░░░░░ 12% 120K/1M" with color
 printf "%sctx %s %d%% %s/%s%s" "$color" "$bar" "$used_pct" "$used_fmt" "$total_fmt" "$reset"

@@ -21,6 +21,16 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     ACTIVE_COLOR="\033[38;2;215;153;33m"      # dark yellow   #D79921
     WARNING_COLOR="\033[38;2;254;128;25m"     # bright_orange #FE8019
 
+    # Strip CC-native fields 2 (20-seg bar+%) and 3 (↯ token count) — replaced by ctx+cost below.
+    # $status_line contains raw ESC bytes (0x1B) because printf "\033[..." interpolates the octal.
+    # BRACKET_COLOR (38;2;102;92;84m) anchors field 2 start; PERCENTAGE_COLOR (38;2;251;241;199m)
+    # anchors its end. TOKEN_COLOR (38;2;224;175;104m) is unique to field 3 in the CC-native script.
+    _ESC=$'\033'
+    status_line=$(printf '%s' "$status_line" \
+        | sed "s/ | ${_ESC}\[38;2;102;92;84m\[.*${_ESC}\[38;2;251;241;199m[0-9]*%${_ESC}\[0m//")
+    status_line=$(printf '%s' "$status_line" \
+        | sed "s/ | ${_ESC}\[38;2;224;175;104m[^${_ESC}]*${_ESC}\[0m//")
+
     # --- /brain badge: read mode+title from state.env ---
     state_env="$cwd/.claude/orchestra/state.env"
     orch_mode="orchestra"
@@ -97,14 +107,23 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     ctx_seg=$(~/.claude/scripts/ctx-segment.sh "${used_percentage:-0}" "${tokens_used:-0}" "${context_window_size:-200000}" "${model_id:-}" 2>/dev/null || true)
     [ -n "$ctx_seg" ] && status_line+=$(printf " | %s" "$ctx_seg")
 
-    # --- live cost from SoHoAI (with JSONL fallback) ---
+    # --- live cost from SoHoAI (orchestra sessions + native session JSONL fallback) ---
     live_cost=""
-    if [ -n "$live_session_id" ] && [ -n "$active_session_dir" ]; then
-        cost_cache="${active_session_dir}/.live-cost-sohoai"
-        started_at=$(stat -c %Y "$active_session_dir" 2>/dev/null || echo "0")
-        live_cost=$(~/.claude/scripts/sohoai-live-cost.sh \
-            "$live_session_id" "$started_at" "$cost_cache" 2>/dev/null || true)
+    if [ -n "$live_session_id" ]; then
+        if [ -n "$active_session_dir" ]; then
+            cost_cache="${active_session_dir}/.live-cost-sohoai"
+            started_at=$(stat -c %Y "$active_session_dir" 2>/dev/null || echo "0")
+            live_cost=$(~/.claude/scripts/sohoai-live-cost.sh \
+                "$live_session_id" "$started_at" "$cost_cache" 2>/dev/null || true)
+        elif [[ "$live_session_id" == native-* ]]; then
+            _lck="$HOME/.claude/active-sessions/${live_session_id}.lck"
+            _started=$(grep '^started_at=' "$_lck" 2>/dev/null | cut -d= -f2-)
+            cost_cache="$HOME/.claude/active-sessions/${live_session_id}.cost-cache"
+            live_cost=$(~/.claude/scripts/sohoai-live-cost.sh \
+                "$live_session_id" "${_started:-0}" "$cost_cache" 2>/dev/null || true)
+        fi
     fi
+    [ -n "$live_cost" ] && status_line+=$(printf " | %s" "$live_cost")
 
     # --- badge rendering (priority: duo > brain > plain subagent) ---
     if [ "$duo_count" -gt 0 ]; then
@@ -114,19 +133,19 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
             duo_badge="orchestra -> plan #${duo_count}"
         fi
         if [ -n "$active_indicator" ]; then
-            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET} %s%s" "$duo_badge" "$active_indicator" "${live_cost:+ $live_cost}")
+            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET} %s" "$duo_badge" "$active_indicator")
         else
-            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET}%s" "$duo_badge" "${live_cost:+ $live_cost}")
+            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET}" "$duo_badge")
         fi
     elif [ -n "$orch_title" ]; then
         badge="orchestra -> brain ${orch_title}"
         if [ -n "$active_indicator" ]; then
-            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET} %s%s" "$badge" "$active_indicator" "${live_cost:+ $live_cost}")
+            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET} %s" "$badge" "$active_indicator")
         else
-            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET}%s" "$badge" "${live_cost:+ $live_cost}")
+            status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ %s${RESET}" "$badge")
         fi
     elif [ -n "$active_indicator" ]; then
-        status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ orchestra${RESET} %s%s" "$active_indicator" "${live_cost:+ $live_cost}")
+        status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ orchestra${RESET} %s" "$active_indicator")
     fi
 fi
 
