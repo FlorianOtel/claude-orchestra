@@ -170,31 +170,6 @@ These items are deferred pending real-world telemetry from the new multi-model r
 
 - **Agent-frontmatter `max_tokens` knob** — Handoff §3 specifies `max_tokens ≥ 500` for reasoning models (GLM-5.1, Qwen3 require reasoning budget). CC's default is well above this, but if a future Claude Code version lowers the default, reasoning-model subagents will exhaust tokens and return empty with `stop_reason: max_tokens`. Trigger: monitor smoke 2 + first 5 real `/brain` runs for empty-output failures; if observed, surface the workaround in `design.md` with concrete example and link to CC version notes.
 
-## Hook-based model enforcement via `$CLAUDE_MODEL`
-
-**Current state (v1):** `/brain` enforces minimum Sonnet 4.6 and `/duo` warns below Sonnet 4.6
-via **LLM instruction-following** — Brain is instructed to read "The exact model ID is…" from
-its system context, classify the model, and stop (`/brain`) or warn (`/duo`) accordingly. This
-works because Claude Code injects the model ID into every session's system prompt, and Brain
-reliably follows the instruction.
-
-**Limitation:** Instruction-based, not runtime-enforced. Same trust level as the plan-mode
-gate. A future change to Claude Code's system-prompt injection format could silently break
-the detection, and a sufficiently degraded session state could miss it.
-
-**Upgrade path:** Migrate `/brain`'s hard block to a **PreToolUse hook** that fires before
-Brain's first tool call. The hook reads `$CLAUDE_MODEL` (or `$ANTHROPIC_MODEL`, or whatever
-env var Anthropic exposes), compares it against the minimum (`claude-sonnet-4-6`,
-`claude-opus-4-7`), and exits non-zero if the model is below minimum. A non-zero hook exit
-causes Claude Code to surface an error and abort the action — making this a true runtime gate
-independent of LLM instruction-following.
-
-`/duo`'s advisory could similarly move to a hook that prints the warning and exits 0 (non-blocking).
-
-**When to revisit:** When Anthropic exposes `$CLAUDE_MODEL` or equivalent as an environment
-variable available in hook scripts, or when model info appears in the hook `HookInput` payload.
-
----
 
 ## §13.3 What would be required to close the live feed gap
 
@@ -297,6 +272,5 @@ The 2026-04-26 migration to Option A (`claude -p` subprocesses on `main`) makes 
 | `/orchestra-mode` does not actually flip Claude Code permission mode | Deliberate — keeps v1 stub harmless; Axis X flip is user-driven via `Shift+Tab` | v2 `/orchestra-mode` implementation |
 | `brain-state.md` payload is minimal (just pointers to state files + last 20 log lines) | Placeholder in v1; full payload schema depends on what `/brain-resume` will need | v2 schema refinement |
 | No log rotation — `invocations.log` and per-invocation logfiles grow unboundedly | Acceptable for v1 usage volumes; user can `rm` periodically or add logrotate | Optional user-side hygiene |
-| Model check is LLM-enforced, not runtime-enforced | No `$CLAUDE_MODEL` env var in Claude Code v1; check is instruction-based (same trust level as plan-mode gate) | v2 PreToolUse hook when env var becomes available — see "Hook-based model enforcement" section above |
 | Window counter is tmux-session-wide, not per-project | A `plan` window from one project blocks `plan` in another until it auto-closes | Acceptable; window names include stage, not project; 120 s auto-close limits overlap |
 | Hook writes a stale state.env entry that persists indefinitely | Each `start` appends a new `LAST_WINDOW_<STAGE>=…` line; `state.env` grows | Low-impact; later lines shadow earlier when sourced; a `state.env.tmp`+rename rewrite could be added if the file grows uncomfortably large |

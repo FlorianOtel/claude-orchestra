@@ -14,7 +14,7 @@ context: >
 
 # Claude Orchestra
 
-A three-tier orchestration system for Claude Code: **Brain** (Opus 4.7 or Sonnet 4.6) delegates reasoning, implementation, and review across **Planner** (Sonnet 4.6), **Actor** (Haiku 4.5), and **Reviewer** (Sonnet 4.6) tiers using Claude Code's native `Task` tool for subagent dispatch. Single global install at `~/.claude/`; usable from any project.
+A three-tier orchestration system for Claude Code: **Brain** delegates reasoning, implementation, and review across **Planner** (Sonnet 4.6), **Actor** (Haiku 4.5), and **Reviewer** (Sonnet 4.6) tiers using Claude Code's native `Task` tool for subagent dispatch. Single global install at `~/.claude/`; usable from any project.
 
 ## Intro
 
@@ -54,7 +54,7 @@ When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo
 
 | Agent | Model | File | Tools | Role |
 |---|---|---|---|---|
-| **Brain** | Opus 4.7 (or Sonnet for /duo) | — (main session) | all | Orchestrates; calls `ExitPlanMode` at plan approval (G2) |
+| **Brain** | any (user's active model) | — (main session) | all | Orchestrates; calls `ExitPlanMode` at plan approval (G2) |
 | **Planner** | `claude-code-glm-5.1` | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md; Sonnet 4.6 via `planner-long` for >30 KB inputs |
 | **Planner** (long) | Sonnet 4.6 | `~/.claude/agents/planner-long.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Fallback for large inputs (>30 KB); preserves Anthropic cache discount |
 | **Actor** | `claude-code-qwen3-coder-next` | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
@@ -65,10 +65,9 @@ When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo
 
 | Command | Minimum | Recommended | Enforcement |
 |---|---|---|---|
-| `/brain` | Sonnet 4.6 | Opus 4.7 | Hard block — Brain reads model ID from system context and refuses to proceed if below minimum |
 | `/duo` | none | Sonnet 4.6 | Advisory only — Brain warns and continues |
 
-Both checks happen at command startup before any Bash or setup runs. The check is LLM-enforced (Brain reads "The exact model ID is…" injected by Claude Code into every session's system context) — same trust level as the plan-mode gate. See TODO.md for the hook-based upgrade path when `$CLAUDE_MODEL` becomes available.
+The check happens at command startup before any Bash or setup runs. It is LLM-enforced (Brain reads "The exact model ID is…" injected by Claude Code into every session's system context) — same trust level as the plan-mode gate.
 
 ### Sequential Phase Architecture & gates
 
@@ -523,7 +522,7 @@ Reference: [Design history & amendments](design-history.md) §Amendment 2026-05-
 | Actor (heavy) | `claude-code-kimi-k2.6` | `[tier: heavy]` annotation in PLAN.md step |
 | Reviewer | Sonnet 4.6 | all reviews (unchanged; calibration priority) |
 
-**Brain** remains Opus 4.7 for `/brain` and Sonnet 4.6 for `/duo` (no change).
+**Brain** runs on the user's active model (no restriction); `/duo` still recommends Sonnet 4.6 (advisory only).
 
 ### Step-level tier annotations
 
