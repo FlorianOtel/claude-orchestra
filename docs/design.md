@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (claude-code-opus-4-7[1m])
-updated_at: 2026-05-10--20-50
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-11--19-22
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -327,7 +327,7 @@ session_uuid=<UUID>
 **Finalization — `scripts/orchestra-hook.sh` stop mode.**
 The Stop hook fires per response turn. It iterates all `native-*.lck` files and for each runs `kill -0 <cc_pid>`. If the process is dead the session has ended: it invokes `native-session-finalize.py` (T2 cost attribution via the cost-source cascade) and removes the `.lck`. Since `CLAUDE_CODE_SESSION_ID` is not available in hook context, finalization of session N is triggered by the Stop hook of session N+1 — typically within seconds of the user opening a new session. Edge case: if no new session is opened after session N ends, the `.lck` persists until the next CC session starts. `session-report.py` guards against this by calling `os.kill(cc_pid, 0)` in `load_active_native_sessions()` and silently skipping any stale entry whose process is already dead.
 
-**Session IDs.** Native session IDs are `native-<UUID>` (e.g. `native-6dedcd3d-37e5-46a9-958e-fb0a822b5e3a`). This is the value stored in `~/.claude/native-sessions/telemetry.jsonl` and displayed by `session-report.sh`. The UUID is the CC session UUID (`CLAUDE_CODE_SESSION_ID`), making IDs globally unique and stable — they do not embed a timestamp or a PID.
+**Session IDs.** Native session IDs written by `bash-session-init.sh` are `native-<UUID>` (e.g. `native-6dedcd3d-37e5-46a9-958e-fb0a822b5e3a`). The UUID is the CC session UUID (`CLAUDE_CODE_SESSION_ID`), making IDs globally unique and stable. Older sessions (before the UUID-keyed registration refactor, 2026-05-07) used a `native-<timestamp>-<PID>` format; both formats are stored in `~/.claude/native-sessions/telemetry.jsonl` and handled by the report scripts.
 
 **Telemetry record fields** (written to `~/.claude/native-sessions/telemetry.jsonl`):
 
@@ -342,6 +342,12 @@ The Stop hook fires per response turn. It iterates all `native-*.lck` files and 
 | `cost_source` | `sohoai_api` / `litellm` / `pricing_yaml` / `none` |
 | `model` | model name (present when `cost_source == "pricing_yaml"`) |
 | `total_tokens` | token count (present when `cost_source == "pricing_yaml"`) |
+
+**Reporting.** `native-session-report.py` reads from two sources and merges them (deduplicating by `session_id`, telemetry takes precedence, sorted newest-first):
+1. `~/.claude/native-sessions/telemetry.jsonl` — primary; contains all sessions finalized since 2026-05-07.
+2. `~/.claude/usage-data/session-meta/*.json` — legacy; populated by CC < 2.1 (April 2026 and earlier); no longer updated by CC 2.1.132.
+
+For sessions with a `native-<UUID>` session ID, the report also looks up the transcript JSONL to obtain per-type token breakdown and project name. For old-format `native-<timestamp>-<PID>` sessions, `total_tokens` from the telemetry record is used directly and project name shows as `native`.
 
 **Requirement.** `BASH_ENV=/home/florian/.claude/scripts/bash-session-init.sh` must be set in `settings.json` env. This is **not** managed by `deploy.sh` — it must be set manually or persisted in `settings.json`. Without it, `bash-session-init.sh` is never sourced and no `.lck` is written; native sessions appear as `cost_source: "none"` with zero cost.
 
@@ -373,7 +379,8 @@ tail -10 ~/.claude/native-sessions/telemetry.jsonl | jq .
 # Per-tier breakdown + cumulative totals across recent sessions
 ~/.claude/scripts/telemetry-report.sh --last 10 --tier
 
-# Native CC sessions only (reads CC's own usage-data + transcripts, pricing.yaml cost)
+# Native CC sessions only — merges native-sessions/telemetry.jsonl (primary, post-2026-05-07)
+# and legacy usage-data/session-meta/ (pre-2026-05-07); newest sessions at top
 ~/.claude/scripts/native-session-report.sh --last 10
 ~/.claude/scripts/native-session-report.sh --last 10 --tier
 ~/.claude/scripts/native-session-report.sh --since 2026-05-01

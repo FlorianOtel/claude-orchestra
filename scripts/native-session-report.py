@@ -326,8 +326,13 @@ def mangle_project_path(project_path: str) -> str:
     return project_path.replace("/", "-")
 
 
-def load_sessions() -> List[Dict[str, Any]]:
-    """Load all sessions from ~/.claude/usage-data/session-meta/*.json"""
+_UUID_RE = re.compile(
+    r'^native-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$'
+)
+
+
+def _load_sessions_from_session_meta() -> List[Dict[str, Any]]:
+    """Load sessions from ~/.claude/usage-data/session-meta/*.json (legacy CC architecture)."""
     sessions: List[Dict[str, Any]] = []
     session_meta_dir = Path.home() / ".claude" / "usage-data" / "session-meta"
 
@@ -393,6 +398,90 @@ def load_sessions() -> List[Dict[str, Any]]:
     # Sort by start_time descending (most recent first)
     sessions.sort(key=lambda s: s.get("start_time", ""), reverse=True)
     return sessions
+
+
+def _load_sessions_from_telemetry_jsonl() -> List[Dict[str, Any]]:
+    """Load sessions from ~/.claude/native-sessions/telemetry.jsonl."""
+    sessions: List[Dict[str, Any]] = []
+    telemetry_jsonl = Path.home() / ".claude" / "native-sessions" / "telemetry.jsonl"
+
+    if not telemetry_jsonl.exists():
+        return sessions
+
+    try:
+        with open(telemetry_jsonl) as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                session_id = record.get("session_id", "")
+                started_at = record.get("started_at", "")
+                duration_s = record.get("duration_s", 0) or 0
+                cost_usd = record.get("cost_usd_estimate", 0.0) or 0.0
+                model = record.get("model") or "unknown"
+                total_tokens = record.get("total_tokens", 0) or 0
+
+                project_path = ""
+                project_name = "native"
+                tokens: Dict[str, int] = {
+                    "input": total_tokens,
+                    "output": 0,
+                    "cache_creation": 0,
+                    "cache_read": 0,
+                }
+                jsonl_status = "no_jsonl"
+
+                m = _UUID_RE.match(session_id)
+                if m:
+                    uuid = m.group(1)
+                    jsonl_path = get_transcript_path(uuid)
+                    if jsonl_path:
+                        jsonl_status = "from_jsonl"
+                        parsed_model, parsed_tokens = parse_jsonl_tokens(jsonl_path)
+                        if parsed_tokens.get("input", 0) + parsed_tokens.get("output", 0) > 0:
+                            tokens = parsed_tokens
+                        if parsed_model and parsed_model != "<synthetic>":
+                            model = parsed_model
+                        mangled = jsonl_path.parent.name
+                        project_name = get_project_friendly_name(mangled)
+                        project_path = "/" + mangled.replace("-", "/", 1) if mangled else ""
+
+                sessions.append({
+                    "session_id": session_id,
+                    "project_path": project_path,
+                    "project_name": project_name,
+                    "start_time": started_at,
+                    "duration_minutes": round(duration_s / 60, 1),
+                    "model": model,
+                    "tokens": tokens,
+                    "cost_usd": cost_usd,
+                    "jsonl_status": jsonl_status,
+                })
+    except Exception:
+        pass
+
+    return sessions
+
+
+def load_sessions() -> List[Dict[str, Any]]:
+    """Load all sessions from session-meta (legacy) and native-sessions/telemetry.jsonl."""
+    legacy = _load_sessions_from_session_meta()
+    telemetry = _load_sessions_from_telemetry_jsonl()
+
+    seen: Set[str] = set()
+    merged: List[Dict[str, Any]] = []
+    for s in telemetry + legacy:
+        sid = s.get("session_id", "")
+        if sid not in seen:
+            seen.add(sid)
+            merged.append(s)
+
+    merged.sort(key=lambda s: s.get("start_time", ""), reverse=True)
+    return merged
 
 
 def print_table(
@@ -529,7 +618,7 @@ def main():
     all_sessions = load_sessions()
 
     if not all_sessions:
-        print("(no sessions found in ~/.claude/usage-data/session-meta/)")
+        print("(no sessions found in session-meta or native-sessions/telemetry.jsonl)")
         return
 
     # Apply filters
