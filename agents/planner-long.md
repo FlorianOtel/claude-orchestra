@@ -55,7 +55,7 @@ This applies especially to: data model choices, API contract decisions, error ha
 4. **Tier annotations** (optional but recommended for complex plans) — tag each step with one of:
    - `[tier: fast]` — lightweight/local model sufficient; not a blocker if omitted.
    - `[tier: default]` — standard Actor (claude-code-qwen3-coder-next); omit if unsure (defaults to `default`).
-   - `[tier: heavy]` — complex reasoning, multi-file refactor, or algorithmic work; Brain dispatches `actor-heavy` (claude-code-deepseek-v4-pro) instead of standard Actor.
+   - `[tier: heavy]` — complex reasoning, multi-file refactor, or algorithmic work; Brain dispatches `actor-heavy` (claude-code-kimi-k2.6) instead of standard Actor.
    - Tag is emitted inline at the end of the step line, e.g.: `3. Refactor X/Y.py to use new visitor pattern [tier: heavy]`.
 5. **Doc impact** — explicitly consider whether this change affects any project documentation. Scan for: root-level `*.md` files (`CLAUDE.md`, `README*.md`, `TROUBLESHOOTING.md`, `*-strategy.md`, `*-notes.md`), any `docs/` directory, any file referenced from CLAUDE.md's project-file inventory. If any doc needs updating to reflect the change, include explicit numbered step(s) for those updates (these are regular Actor-executable steps alongside the code changes). Default posture: **if the code changes something a human reader of the docs would currently believe is true, the doc must be updated in the same plan.** Out-of-scope deferrals go in the "Out of scope" section below — do not silently drop them.
 6. **Risks / unknowns** — anything you couldn't verify by reading alone. Flag these so Brain can decide whether to research further before approving.

@@ -55,7 +55,7 @@ When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo
 | Agent | Model | File | Tools | Role |
 |---|---|---|---|---|
 | **Brain** | Opus 4.7 (or Sonnet for /duo) | — (main session) | all | Orchestrates; calls `ExitPlanMode` at plan approval (G2) |
-| **Planner** | `claude-code-deepseek-v4-pro` | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md; Sonnet 4.6 via `planner-long` for >30 KB inputs |
+| **Planner** | `claude-code-glm-5.1` | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md; Sonnet 4.6 via `planner-long` for >30 KB inputs |
 | **Planner** (long) | Sonnet 4.6 | `~/.claude/agents/planner-long.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Fallback for large inputs (>30 KB); preserves Anthropic cache discount |
 | **Actor** | `claude-code-qwen3-coder-next` | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
 | **Actor** (heavy) | `claude-code-kimi-k2.6` | `~/.claude/agents/actor-heavy.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Complex multi-file refactors; triggered by `[tier: heavy]` step annotations |
@@ -517,7 +517,7 @@ Reference: [Design history & amendments](design-history.md) §Amendment 2026-05-
 
 | Role | Model | Trigger |
 |---|---|---|
-| Planner (normal) | `claude-code-deepseek-v4-pro` | inputs ≤ 30 KB |
+| Planner (normal) | `claude-code-glm-5.1` | inputs ≤ 30 KB |
 | Planner (long-context fallback) | Sonnet 4.6 | inputs > 30 KB; preserves Anthropic cache discount |
 | Actor (default) | `claude-code-qwen3-coder-next` | all steps unless marked heavy |
 | Actor (heavy) | `claude-code-kimi-k2.6` | `[tier: heavy]` annotation in PLAN.md step |
@@ -529,7 +529,7 @@ Reference: [Design history & amendments](design-history.md) §Amendment 2026-05-
 
 Plan steps may be tagged with optional `[tier: …]` annotations to override tier defaults:
 
-- `[tier: default]` — use default tier (Qwen3 for Actor, DeepSeek for Planner). Usually omitted.
+- `[tier: default]` — use default tier (Qwen3 for Actor, GLM-5.1 for Planner). Usually omitted.
 - `[tier: heavy]` — use heavy tier (Kimi K2.6 for Actor; Sonnet stays for Planner). Used for complex multi-file refactors, architectural changes, or security-sensitive code.
 
 Format: annotation appears on the same line as the step heading (e.g., `### 5. Refactor X [tier: heavy]`). Brain's PLAN parser confirms the annotation exists before dispatching the heavy-tier subagent; if malformed or missing, the step runs at default tier.
@@ -542,7 +542,7 @@ See TODO.md §10e for the deferred automation of this check.
 
 ### Alias stability contract
 
-SoHoAI exposes agents as aliases: `claude-code-deepseek-v4-pro`, `claude-code-qwen3-coder-next`, `claude-code-kimi-k2.6`, etc. These are **stable across deployments** within the SoHoAI domain (as of 2026-05-10, per handoff §1). If the alias routing changes (e.g., DeepSeek → Claude 3.7), SoHoAI commits to rotating the alias URL, not swapping backends silently. Updates will be documented in the design-history.md amendment chain.
+SoHoAI exposes agents as aliases: `claude-code-glm-5.1`, `claude-code-qwen3-coder-next`, `claude-code-kimi-k2.6`, etc. These are **stable across deployments** within the SoHoAI domain (as of 2026-05-11, per handoff §1). If the alias routing changes (e.g., DeepSeek → Claude 3.7), SoHoAI commits to rotating the alias URL, not swapping backends silently. Updates will be documented in the design-history.md amendment chain.
 
 Without this contract, cost + quality tracking would drift silently between deployments.
 

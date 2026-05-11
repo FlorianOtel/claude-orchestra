@@ -1584,3 +1584,13 @@ Session ID: `20260510T180922Z-2575990` (this session). All code + documentation 
 **Rationale:** Operator preference; Kimi K2.6 is available as a SoHoAI alias and is now the preferred model for heavy-tier Actor steps. Planner continues to use `claude-code-deepseek-v4-pro`; no change there.
 
 **Files updated:** `agents/actor-heavy.md` (model + description + body text), `docs/design.md` (agents table, multi-model routing table, tier annotation text, alias stability example list), `docs/design-history.md` (this amendment), `docs/TODO.md` (§10.2 status line).
+
+---
+
+## Amendment 2026-05-11 — planner switched to claude-code-glm-5.1
+
+**Change:** `agents/planner.md` model field updated from `claude-code-deepseek-v4-pro` to `claude-code-glm-5.1`.
+
+**Rationale:** `claude-code-deepseek-v4-pro` has a ~70% failure rate on ollama-cloud per SoHoAI commit `67fd92b` (2026-05-11, `~/Gin-AI/projects/SoHoAI`). That commit introduced HTTP 529 fast-fail guards and a 30-second request timeout for ollama-cloud targets; the documentation in `docs/Model-routing.md` (SoHoAI repo §2.3) flags deepseek-v4-pro as unreliable and recommends `qwen3-coder-next` as an alternative. Given the ~70% abort rate, continuing to use deepseek-v4-pro for the normal-input Planner tier would break `/brain` runs before planning even starts in the majority of sessions. `claude-code-glm-5.1` is the replacement; its entry was already present in `config/pricing.yaml` and `config/context-windows.yaml` (128 K context window). This follows the same pattern as Amendment 2026-05-10(b) which switched `actor-heavy` from deepseek to `claude-code-kimi-k2.6`.
+
+**Files updated:** `agents/planner.md` (model field; `[tier: heavy]` description corrected to kimi-k2.6 — stale from 2026-05-10(b)), `agents/planner-long.md` (same `[tier: heavy]` description fix), `commands/brain.md` (pipeline rules summary), `docs/design.md` (agents table, model assignments table, tier annotations text, alias stability example list), `docs/design-history.md` (this amendment), `docs/TODO.md` (§10.4 four inline references), `memory/project_state.md` (Tier model assignments).

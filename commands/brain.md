@@ -10,7 +10,7 @@ No separate sessions. No `claude -p` subprocesses. No multi-run registry. If the
 
 ## Pipeline rules — READ FIRST
 
-`/brain` orchestrates **subagents**: Planner (Sonnet 4.6 or `claude-code-deepseek-v4-pro` for large inputs via `planner-long`) produces the plan, Actor (`claude-code-qwen3-coder-next` or `claude-code-deepseek-v4-pro` for `[tier: heavy]` steps) makes code changes, Reviewer (Sonnet 4.6) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
+`/brain` orchestrates **subagents**: Planner (`claude-code-glm-5.1` or Sonnet 4.6 for large inputs via `planner-long`) produces the plan, Actor (`claude-code-qwen3-coder-next` or `claude-code-kimi-k2.6` for `[tier: heavy]` steps) makes code changes, Reviewer (Sonnet 4.6) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
 
 ### Override of plan-mode's plan-file directive
 
