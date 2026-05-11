@@ -110,24 +110,32 @@ The Claude Code status line is extended by `status-line/orchestra-block.sh`, inj
 
 #### What it displays
 
-The block renders one of the following badge formats, in descending priority:
+The orchestra block produces a **full status line layout** (not just a badge). It replaces the CC-native progress bar and token-count fields and inserts its own fields immediately after the model name:
+
+```
+model | ctx ▓▓░░░░░░░░ 21% 210K/1M | ~$X.YZ | ◆ project | ⎇ branch | [♪ badge]
+```
+
+Fields injected by the orchestra block:
+
+**`ctx`** — context window utilization (always shown). Colored 10-cell bar (1 cell = 10%), percentage, and token usage. Example: `ctx ▓░░░░░░░░░ 12% 24K/200K` (green). Color thresholds:
+- **Green**: < 50% utilization
+- **Yellow**: 50–79% utilization
+- **Orange**: ≥ 80% utilization
+
+The utilization denominator is looked up from `context-windows.yaml` per model ID, with fallback to Claude Code's native `context_window.context_window_size`. Model ID normalization strips `[1m]`, `[200k]`, and date suffixes before lookup. Models with `[1m]` in their ID force a 1,000,000 denominator.
+
+**`~$X.YZ`** — live running cost (shown when cost > 0; absent for zero-cost models). Source: SoHoAI API (primary, TTL=8 min cache) or JSONL estimate fallback. Stale cache marked with `*`; pure JSONL estimate marked with `(est)`. Works for both orchestra sessions and native sessions. Native sessions read `started_at` from the `.lck` file (converted from ISO 8601 to Unix epoch).
+
+**`♪ badge`** — orchestra session badge (shown only during active /duo or /brain sessions, or when a subagent is running). Badge formats in descending priority:
 
 | Condition | Badge |
 |---|---|
-| `/duo` session active (one) | `♪ orchestra -> plan <title>  [▶ stage]  [ctx ...]  [~$X.YZ]` |
-| `/duo` sessions active (many) | `♪ orchestra -> plan #N  [ctx ...]` |
-| `/brain` session active | `♪ orchestra -> brain <title>  [▶ stage]  [ctx ...]  [~$X.YZ]` |
-| Subagent running (no /brain or /duo context) | `♪ orchestra  ▶ stage  [ctx ...]  [~$X.YZ]` |
-| No orchestra activity | *(nothing — orchestra block is silent)* |
-
-`[ctx ...]` shows context window utilization: colored bar (green/yellow/orange), percentage, and token usage (e.g., `ctx ░░░░░░░░ 12% 24K/200K` in green). Color thresholds:
-- **Green**: < 50% utilization
-- **Yellow**: 50-79% utilization
-- **Orange**: ≥ 80% utilization
-
-The utilization denominator is looked up from `context-windows.yaml` per model ID, with fallback to Claude Code's native `context_window.context_window_size`. Model ID normalization strips `[1m]`, `[200k]`, and date suffixes before lookup.
-
-`[~$X.YZ]` is the live running cost from SoHoAI (primary) or JSONL estimate fallback (stale cache marked with `*`, pure estimate marked with `(est)`).
+| `/duo` session active (one) | `♪ orchestra -> plan <title>  [▶ stage]` |
+| `/duo` sessions active (many) | `♪ orchestra -> plan #N` |
+| `/brain` session active | `♪ orchestra -> brain <title>  [▶ stage]` |
+| Subagent running (no /brain or /duo context) | `♪ orchestra  ▶ stage` |
+| No orchestra activity | *(nothing — orchestra block is silent for badge)* |
 
 #### When it updates
 
@@ -148,6 +156,8 @@ The status line script is called by Claude Code on each render tick — after ev
 #### ctx segment implementation details
 
 The ctx segment uses `scripts/ctx-segment.sh` which reads `context-windows.yaml` from `~/.claude/orchestra/`. Model ID normalisation strips `[1m]`, `[200k]`, and `-YYYYMMDD` suffixes before lookup. If the original ID contains `[1m]`, the denominator is forced to 1,000,000 regardless of the map entry.
+
+Bar: 10 cells, each representing 10% of the context window (filled `▓`, empty `░`). Prior to 2026-05-11 the bar was 8 cells at 12.5% each.
 
 Token formatting: values ≥ 1,000,000 show as `XM` (e.g., `1.2M`), values ≥ 1,000 show as `XK`, otherwise raw `XK`.
 

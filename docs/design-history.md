@@ -3,7 +3,7 @@ title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design not
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-10--20-28
+updated_at: 2026-05-11--18-00
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1594,3 +1594,28 @@ Session ID: `20260510T180922Z-2575990` (this session). All code + documentation 
 **Rationale:** `claude-code-deepseek-v4-pro` has a ~70% failure rate on ollama-cloud per SoHoAI commit `67fd92b` (2026-05-11, `~/Gin-AI/projects/SoHoAI`). That commit introduced HTTP 529 fast-fail guards and a 30-second request timeout for ollama-cloud targets; the documentation in `docs/Model-routing.md` (SoHoAI repo §2.3) flags deepseek-v4-pro as unreliable and recommends `qwen3-coder-next` as an alternative. Given the ~70% abort rate, continuing to use deepseek-v4-pro for the normal-input Planner tier would break `/brain` runs before planning even starts in the majority of sessions. `claude-code-glm-5.1` is the replacement; its entry was already present in `config/pricing.yaml` and `config/context-windows.yaml` (128 K context window). This follows the same pattern as Amendment 2026-05-10(b) which switched `actor-heavy` from deepseek to `claude-code-kimi-k2.6`.
 
 **Files updated:** `agents/planner.md` (model field; `[tier: heavy]` description corrected to kimi-k2.6 — stale from 2026-05-10(b)), `agents/planner-long.md` (same `[tier: heavy]` description fix), `commands/brain.md` (pipeline rules summary), `docs/design.md` (agents table, model assignments table, tier annotations text, alias stability example list), `docs/design-history.md` (this amendment), `docs/TODO.md` (§10.4 four inline references), `memory/project_state.md` (Tier model assignments).
+
+---
+
+## Amendment 2026-05-11 (b) — status-line redesign: ctx at position 2, standalone cost field
+
+**Change:** The orchestra status-line block now strips CC-native fields 2 (20-segment progress bar) and 3 (↯ token count) and replaces them with a `ctx` segment and a live cost field inserted at position 2 (immediately after the model name). The orchestra badge no longer carries the cost — it is a standalone field visible for all session types.
+
+**New layout:**
+```
+model | ctx ▓▓░░░░░░░░ 21% 210K/1M | ~$X.YZ | ◆ project | ⎇ branch | [♪ badge]
+```
+
+**Key implementation details:**
+
+1. **Field stripping (sed):** CC-native fields contain a mix of literal `\033` (bar segments passed via `%s` printf arg) and raw ESC bytes (colors/resets in format-string position). The field 2 sed anchor uses `\\\\033` (bash double-quote processing → `\\033` → sed sees `\\033` → matches literal backslash+033). Field 3 uses `${_ESC}` (raw ESC) because TOKEN_COLOR is in the format string.
+
+2. **Position insert:** `status_line="${status_line/ | / | ${_insert} | }"` — bash parameter substitution replaces only the FIRST ` | ` separator, placing ctx+cost between the model and project fields.
+
+3. **ctx bar expansion:** 10 cells at 10% each (was 8 cells at 12.5%). `scripts/ctx-segment.sh` updated.
+
+4. **Native session cost:** `.lck` file stores `started_at` in ISO 8601 format (`2026-05-11T15:31:19Z`). `sohoai-live-cost.sh` passes it to Python `float()` → `ValueError`. Fix: detect `*T*` pattern and convert via `date -d` to Unix epoch before calling the script.
+
+5. **Cost for all sessions:** Previously cost was only shown during active orchestra (/duo or /brain) sessions. Now shown for native sessions too via the `native-*` lck path in the cost query block.
+
+**Files updated:** `status-line/orchestra-block.sh`, `scripts/ctx-segment.sh`, `docs/design.md` (§Status-line badge, §ctx segment implementation), `CLAUDE.md` (smoke test expected outputs), `docs/design-history.md` (this amendment), `memory/project_state.md` (Status-line layout section).
