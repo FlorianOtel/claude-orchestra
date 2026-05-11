@@ -67,9 +67,10 @@ def parse_iso8601(timestamp_str: str) -> datetime:
 
 
 def load_native_telemetry() -> List[Dict[str, Any]]:
-    """Load telemetry from ~/.claude/native-sessions/telemetry.jsonl."""
+    """Load telemetry from ~/.claude/native-sessions/telemetry.jsonl.
+    Deduplicates by session_id, keeping the last record (re-runs are authoritative)."""
     path = Path.home() / ".claude" / "native-sessions" / "telemetry.jsonl"
-    records = []
+    seen: Dict[str, Dict[str, Any]] = {}  # session_id -> record, last wins
     if path.exists():
         try:
             with open(path) as f:
@@ -77,10 +78,10 @@ def load_native_telemetry() -> List[Dict[str, Any]]:
                     if line.strip():
                         record = json.loads(line)
                         record["source"] = "native"
-                        records.append(record)
+                        seen[record.get("session_id", "")] = record
         except Exception:
             pass
-    return records
+    return list(seen.values())
 
 
 def load_orchestra_telemetry() -> List[Dict[str, Any]]:
