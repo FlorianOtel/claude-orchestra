@@ -102,6 +102,14 @@ def main():
                     jsonl_path, max(0.0, started_at_unix - 3600), ended_at_unix
                 )
                 if first_ts is not None:
+                    # Always record model + tokens when transcript is parsed successfully.
+                    # Don't gate on t2_cost > 0 — non-Anthropic models have $0 cost but
+                    # still need correct model name recorded.
+                    if t2_model:
+                        model = t2_model
+                    if t2_tokens:
+                        total_tokens = sum(t2_tokens.values())
+                    cost_source = "pricing_yaml"
                     pricing_data = ts_mod.load_pricing_yaml()
                     if pricing_data:
                         warnings: list = []
@@ -109,9 +117,6 @@ def main():
                         t2_cost = ts_mod.compute_cost(parent, [], pricing_data, warnings)
                         if t2_cost > 0:
                             cost_usd_estimate = t2_cost
-                            cost_source = "pricing_yaml"
-                            model = t2_model
-                            total_tokens = sum(t2_tokens.values())
         except Exception:
             pass
 

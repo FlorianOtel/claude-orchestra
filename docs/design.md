@@ -338,10 +338,12 @@ The Stop hook fires per response turn. It iterates all `native-*.lck` files and 
 | `started_at` | ISO8601 timestamp from `.lck` creation |
 | `ended_at` | ISO8601 timestamp at finalization |
 | `duration_s` | wall-clock seconds |
-| `cost_usd_estimate` | from cost-source cascade |
+| `cost_usd_estimate` | from cost-source cascade; `0.0` for non-Anthropic (zero-rate) models |
 | `cost_source` | `sohoai_api` / `litellm` / `pricing_yaml` / `none` |
-| `model` | model name (present when `cost_source == "pricing_yaml"`) |
-| `total_tokens` | token count (present when `cost_source == "pricing_yaml"`) |
+| `model` | model name (present when transcript was parsed — both Anthropic and non-Anthropic) |
+| `total_tokens` | token count (present when transcript was parsed) |
+
+**Non-Anthropic models.** Sessions using SoHoAI proxy models not in `pricing.yaml` (e.g. `claude-code-qwen3-coder-next`, `claude-code-kimi-k2.6`) are recorded with `cost_usd_estimate: 0.0` and `cost_source: "pricing_yaml"` — the transcript was successfully parsed and the model identified, but no pricing rate is available. `session-report.py` renders these as `$0.0000` to distinguish them from sessions where cost attribution failed entirely (`cost_source: "none"`, displayed as `-`). For past records already in `telemetry.jsonl` with a missing `model` field (written before the 2026-05-11 finalize-script fix), `session-report.py` retroactively re-reads the JSONL transcript at display time to fill in the model name.
 
 **Reporting.** `native-session-report.py` reads from two sources and merges them (deduplicating by `session_id`, telemetry takes precedence, sorted newest-first):
 1. `~/.claude/native-sessions/telemetry.jsonl` — primary; contains all sessions finalized since 2026-05-07.
