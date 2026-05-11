@@ -18,6 +18,8 @@
 # regardless of map lookup — displayed as 1.0M or 1M depending on values.
 #
 # last_updated: YYYY-MM-DD
+updated_at: 2026-05-11--18-00
+updated_by: Claude Code (Claude Sonnet 4.6)
 last_updated: 2026-05-10
 models:
   claude-opus-4-7:            200000
@@ -28,6 +30,6 @@ models:
   # SoHoAI / LiteLLM-routed aliases (orchestra)
   claude-code-gemma-4-e4b:     128000
   claude-code-deepseek-v4-pro: 128000
-  claude-code-kimi-k2.6:       131072
+  claude-code-kimi-k2.6:       262144
   claude-code-glm-5.1:         128000
   claude-code-qwen3-coder-next: 131072
