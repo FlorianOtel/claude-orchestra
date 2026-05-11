@@ -106,7 +106,6 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     # DEBUG: uncomment to capture input JSON for troubleshooting model_id extraction
     # echo "$input" > "$HOME/.claude/orchestra/logs/status-line-input-debug.json" 2>/dev/null || true
     ctx_seg=$(~/.claude/scripts/ctx-segment.sh "${used_percentage:-0}" "${tokens_used:-0}" "${context_window_size:-200000}" "${model_id:-}" 2>/dev/null || true)
-    [ -n "$ctx_seg" ] && status_line+=$(printf " | %s" "$ctx_seg")
 
     # --- live cost from SoHoAI (orchestra sessions + native session JSONL fallback) ---
     live_cost=""
@@ -118,13 +117,23 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
                 "$live_session_id" "$started_at" "$cost_cache" 2>/dev/null || true)
         elif [[ "$live_session_id" == native-* ]]; then
             _lck="$HOME/.claude/active-sessions/${live_session_id}.lck"
-            _started=$(grep '^started_at=' "$_lck" 2>/dev/null | cut -d= -f2-)
+            _started_raw=$(grep '^started_at=' "$_lck" 2>/dev/null | cut -d= -f2-)
+            # lck stores ISO 8601 (e.g. 2026-05-11T15:31:19Z); convert to Unix epoch
+            [[ "$_started_raw" == *T* ]] \
+                && _started=$(date -d "$_started_raw" +%s 2>/dev/null || echo "0") \
+                || _started="${_started_raw:-0}"
             cost_cache="$HOME/.claude/active-sessions/${live_session_id}.cost-cache"
             live_cost=$(~/.claude/scripts/sohoai-live-cost.sh \
                 "$live_session_id" "${_started:-0}" "$cost_cache" 2>/dev/null || true)
         fi
     fi
-    [ -n "$live_cost" ] && status_line+=$(printf " | %s" "$live_cost")
+
+    # Insert ctx+cost at position 2: right after model field, before project/branch.
+    # ${var/ | / | INSERT | } replaces only the FIRST ' | ' separator in $status_line.
+    _insert=""
+    [ -n "$ctx_seg"   ] && _insert="${ctx_seg}"
+    [ -n "$live_cost" ] && { [ -n "$_insert" ] && _insert+=" | ${live_cost}" || _insert="${live_cost}"; }
+    [ -n "$_insert"   ] && status_line="${status_line/ | / | ${_insert} | }"
 
     # --- badge rendering (priority: duo > brain > plain subagent) ---
     if [ "$duo_count" -gt 0 ]; then
