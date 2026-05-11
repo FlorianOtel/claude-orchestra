@@ -275,3 +275,100 @@ The 2026-04-26 migration to Option A (`claude -p` subprocesses on `main`) makes 
 | Model check is LLM-enforced, not runtime-enforced | No `$CLAUDE_MODEL` env var in Claude Code v1; check is instruction-based (same trust level as plan-mode gate) | v2 PreToolUse hook when env var becomes available — see "Hook-based model enforcement" section above |
 | Window counter is tmux-session-wide, not per-project | A `plan` window from one project blocks `plan` in another until it auto-closes | Acceptable; window names include stage, not project; 120 s auto-close limits overlap |
 | Hook writes a stale state.env entry that persists indefinitely | Each `start` appends a new `LAST_WINDOW_<STAGE>=…` line; `state.env` grows | Low-impact; later lines shadow earlier when sourced; a `state.env.tmp`+rename rewrite could be added if the file grows uncomfortably large |
+
+---
+
+## §14. SoHoAI attribution gap: orchestra subagents and native sessions
+
+**Written after:** session `fix-telemetry-for-subagents` (2026-05-11), following
+implementation of native session subagent cost tracking (Stage A: live display via
+JSONL walking; Stage B: T2 finalization parity).
+
+### What was implemented (context)
+
+Stage A+B closes the native session gap: the status-line now adds subagent costs
+(from `agent-*.jsonl` JSONL walking) to the parent's `cost.total_cost_usd`, and
+`native-session-finalize.py` now calls `compute_cost(parent, subagents_list, ...)`
+instead of `compute_cost(parent, [], ...)`. Both stages use `_walk_jsonl_for_tokens()`
+and `compute_cost()` from `telemetry-summarize.py` via importlib — no new logic.
+
+The convergence goal (T2 JSONL as single authoritative source for both native and
+orchestra) is partially achieved: native T2 is now at parity with orchestra T2.
+
+### What was left out of scope and why
+
+**Orchestra subagent SoHoAI attribution** — the live cost for orchestra sessions comes
+from `sohoai-live-cost.sh` which queries SoHoAI's `/v1/usage/stats?session_id=<id>`.
+This returns costs attributed to the orchestra session ID via the
+`inject_orchestra_session_id` FastAPI middleware in SoHoAI. However, it is unclear
+whether **subagent** API requests (planner, actor, reviewer — each a separate CC process)
+are correctly attributed to the **parent** orchestra session_id.
+
+Left out of scope because:
+1. Answering this requires live traffic inspection (SoHoAI logs or the `usage_events`
+   table in `chats.db`) during an actual /brain or /duo run.
+2. Fixing it requires changes in the SoHoAI repo (`inject_orchestra_session_id`
+   middleware or a parent-child session registry) — a cross-project change.
+3. The JSONL-based T2 fallback (`process_transcript()`) already gives correct totals
+   post-session, so the live SoHoAI gap is a display-lag issue, not a data-loss issue.
+
+**Native session SoHoAI attribution** — `otelHeadersHelper` is not called by
+CC 2.1.132/2.1.139, so native sessions (both parent and their subagents) send no
+`X-Orchestra-Session-ID` header. SoHoAI sees all native traffic as anonymous
+`claude_code_native`. The SoHoAI middleware reads `.lck` files to attribute requests,
+but with multiple concurrent native sessions or subagents registering their own `.lck`
+files, attribution is ambiguous. Left out of scope for the same reasons as above.
+
+### Checks to perform before implementing
+
+1. **Verify orchestra subagent attribution (current state):**
+   - Run a short `/brain` session
+   - During subagent execution, query SoHoAI directly:
+     `curl "http://192.168.1.93:8000/v1/usage/stats?session_id=<orchestra-session-id>&since=<start>&until=<now>"`
+   - Compare returned `cost_usd` with the T2 telemetry record's `cost_usd_estimate`
+   - If they match → SoHoAI is already attributing subagents correctly → no fix needed
+   - If SoHoAI shows only parent cost → subagents are not attributed → fix needed
+
+2. **Inspect SoHoAI `usage_events` table:**
+   ```bash
+   sqlite3 ~/Gin-AI/projects/SoHoAI/chats.db \
+     "SELECT orchestra_session_id, model, cost_usd FROM usage_events
+      WHERE orchestra_session_id LIKE '%<session-basename>%'
+      ORDER BY created_at;"
+   ```
+   Check whether subagent API calls have the same `orchestra_session_id` as the parent.
+
+3. **Check `inject_orchestra_session_id` middleware logic:**
+   - Does it match subagent CC processes to the parent `.lck` file?
+   - Does it have a way to distinguish "this CC process is a subagent of session X"?
+
+### What needs to be implemented (if checks show attribution is broken)
+
+**Option A — Parent-child session registry (SoHoAI-side):**
+- When `orchestra-hook.sh start` fires (PreToolUse for Agent), write a sidecar that maps
+  the subagent CC process's PID (or expected session UUID) to the parent orchestra
+  session_id. SoHoAI middleware reads this sidecar to attribute subagent requests.
+- Requires: PID walk in `orchestra-hook.sh start` to identify the spawned CC process,
+  writing a `~/.claude/active-sessions/<subagent-uuid>.parent` file, and updating
+  SoHoAI's middleware to follow parent links when attributing.
+
+**Option B — Native session attribution (both parent and subagents):**
+- The `otelHeadersHelper` approach is blocked (CC 2.1.x doesn't call it).
+- Alternative: write a per-request header injection via a custom `BASH_ENV` approach
+  that sets a shell variable read by some proxy shim. Complex, fragile.
+- More realistic: fix SoHoAI middleware to enumerate ALL active `.lck` files and
+  attribute traffic from their cc_pid processes to those session_ids, using the most
+  recently registered `.lck` as the best match for anonymous `claude_code_native`
+  traffic. Ambiguous with multiple concurrent native sessions.
+
+**Option C — Converge entirely on T2, drop SoHoAI live cost for native sessions:**
+- Use JSONL walking (already implemented in Stage A) as the definitive live-cost source.
+- Remove the SoHoAI query path for native sessions entirely.
+- Live cost accuracy: ±30 s (TTL cache). Acceptable for a status bar.
+- Leaves orchestra sessions still on SoHoAI for live cost (no change there).
+- This is the pragmatic path if attribution fixes prove too invasive.
+
+**Recommended order:** perform the checks first (§ above). If orchestra subagent
+attribution is already working → only the native attribution gap remains, and Option C
+is the pragmatic fix. If orchestra attribution is also broken → Option A is needed,
+and Option C covers native while Option A covers orchestra.

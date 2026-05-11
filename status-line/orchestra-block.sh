@@ -130,8 +130,27 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
                 "$live_session_id" "$started_at" "$cost_cache" 2>/dev/null || true)
         elif [[ "$live_session_id" == native-* ]]; then
             _cc_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null)
-            if [ -n "$_cc_cost" ] && [ "$_cc_cost" != "0" ] && [ "$_cc_cost" != "null" ]; then
-                live_cost=$(LC_ALL=C printf '~$%.2f' "$_cc_cost" 2>/dev/null || true)
+
+            # Subagent costs — walk agent JSONLs, TTL-cached 30 s
+            _parent_uuid="${live_session_id#native-}"
+            _sub_cache="$HOME/.claude/active-sessions/${live_session_id}.subcost-cache"
+            _sub_age=$(( $(date +%s) - $(stat -c %Y "$_sub_cache" 2>/dev/null || echo 0) ))
+            if [ "$_sub_age" -gt 30 ]; then
+                _sub_cost=$(~/.claude/scripts/native-subagent-cost.sh \
+                    "$_parent_uuid" 2>/dev/null || echo "")
+                printf '%s' "${_sub_cost:-0}" > "$_sub_cache.tmp" 2>/dev/null \
+                    && mv -f "$_sub_cache.tmp" "$_sub_cache" 2>/dev/null || true
+            else
+                _sub_cost=$(cat "$_sub_cache" 2>/dev/null || echo "")
+            fi
+
+            # Combine parent + subagent costs and format
+            _total=$(${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3 \
+                -c "print(f'{float(\"${_cc_cost:-0}\")+float(\"${_sub_cost:-0}\"):.4f}')" \
+                2>/dev/null || echo "${_cc_cost:-0}")
+            if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$' \
+               && [ "$(printf '%.0f' "$_total" 2>/dev/null || echo 0)" != "0" ]; then
+                live_cost=$(LC_ALL=C printf '~$%.2f' "$_total" 2>/dev/null || true)
             fi
         fi
     fi
