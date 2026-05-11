@@ -88,16 +88,14 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     if [ -n "$active_session_dir" ]; then
         live_session_id=$(basename "$active_session_dir")
     fi
-    # Native session fallback (when no orchestra session active)
-    if [ -z "$live_session_id" ] && [ -d "$HOME/.claude/active-sessions" ]; then
-        for lck in "$HOME/.claude/active-sessions/native-"*.lck; do
-            [ -f "$lck" ] || continue
-            lck_pid=$(grep '^cc_pid=' "$lck" 2>/dev/null | cut -d= -f2-)
-            if [ -n "$lck_pid" ] && kill -0 "$lck_pid" 2>/dev/null; then
-                live_session_id=$(basename "$lck" .lck)
-                break
-            fi
-        done
+    # Native session fallback: CC provides session_id directly in the JSON input.
+    # No env vars, no PID lookups — the JSON is the authoritative source.
+    if [ -z "$live_session_id" ]; then
+        _json_sid=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null)
+        if [ -n "$_json_sid" ]; then
+            _lck="$HOME/.claude/active-sessions/native-${_json_sid}.lck"
+            [ -f "$_lck" ] && live_session_id="native-${_json_sid}"
+        fi
     fi
 
     # --- ctx segment (model context window + token usage bar) ---
@@ -117,11 +115,12 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     # Round to integer — ctx-segment.sh validates used_percentage with ^[0-9]+$ (integers only)
     used_percentage=$(printf "%.0f" "$used_percentage")
     model_id=$(echo "$input" | jq -r '.model.id // .model.display_name // ""' 2>/dev/null)
-    # DEBUG: uncomment to capture input JSON for troubleshooting model_id extraction
-    # echo "$input" > "$HOME/.claude/orchestra/logs/status-line-input-debug.json" 2>/dev/null || true
     ctx_seg=$(~/.claude/scripts/ctx-segment.sh "${used_percentage:-0}" "${tokens_used:-0}" "${context_window_size:-200000}" "${model_id:-}" 2>/dev/null || true)
 
-    # --- live cost from SoHoAI (orchestra sessions + native session JSONL fallback) ---
+    # --- live cost ---
+    # Orchestra sessions: query SoHoAI (has per-subagent attribution).
+    # Native sessions: CC provides cost.total_cost_usd directly in JSON — precise,
+    # always current, no SoHoAI query or JSONL parsing needed.
     live_cost=""
     if [ -n "$live_session_id" ]; then
         if [ -n "$active_session_dir" ]; then
@@ -130,15 +129,10 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
             live_cost=$(~/.claude/scripts/sohoai-live-cost.sh \
                 "$live_session_id" "$started_at" "$cost_cache" 2>/dev/null || true)
         elif [[ "$live_session_id" == native-* ]]; then
-            _lck="$HOME/.claude/active-sessions/${live_session_id}.lck"
-            _started_raw=$(grep '^started_at=' "$_lck" 2>/dev/null | cut -d= -f2-)
-            # lck stores ISO 8601 (e.g. 2026-05-11T15:31:19Z); convert to Unix epoch
-            [[ "$_started_raw" == *T* ]] \
-                && _started=$(date -d "$_started_raw" +%s 2>/dev/null || echo "0") \
-                || _started="${_started_raw:-0}"
-            cost_cache="$HOME/.claude/active-sessions/${live_session_id}.cost-cache"
-            live_cost=$(~/.claude/scripts/sohoai-live-cost.sh \
-                "$live_session_id" "${_started:-0}" "$cost_cache" 2>/dev/null || true)
+            _cc_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null)
+            if [ -n "$_cc_cost" ] && [ "$_cc_cost" != "0" ] && [ "$_cc_cost" != "null" ]; then
+                live_cost=$(LC_ALL=C printf '~$%.2f' "$_cc_cost" 2>/dev/null || true)
+            fi
         fi
     fi
 
