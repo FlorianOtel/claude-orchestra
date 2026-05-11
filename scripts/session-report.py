@@ -27,6 +27,37 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+_NATIVE_UUID_RE = re.compile(
+    r'^native-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$'
+)
+
+
+def _read_model_from_jsonl(uuid: str) -> Optional[str]:
+    """Return first non-synthetic model from transcript JSONL, or None."""
+    projects_root = Path.home() / ".claude" / "projects"
+    try:
+        for proj_dir in sorted(projects_root.iterdir()):
+            if not proj_dir.is_dir():
+                continue
+            p = proj_dir / f"{uuid}.jsonl"
+            if p.exists():
+                with open(p) as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        try:
+                            r = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if r.get("type") == "assistant" and "message" in r:
+                            m = r["message"].get("model")
+                            if m and m != "<synthetic>":
+                                return m
+    except Exception:
+        pass
+    return None
+
+
 def parse_iso8601(timestamp_str: str) -> datetime:
     """Parse ISO-8601 timestamp to datetime."""
     try:
@@ -103,10 +134,12 @@ def get_session_telemetry_json(session_dir: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def format_cost(cost: float) -> str:
-    """Format cost as $X.XXXX or '-' if zero/absent."""
-    if cost is None or cost == 0:
+def format_cost(cost: float, cost_source: str = "") -> str:
+    """Format cost as $X.XXXX, '$0.0000' for known-zero (non-Anthropic), or '-' if unknown."""
+    if cost is None:
         return "-"
+    if cost == 0:
+        return "$0.0000" if cost_source == "pricing_yaml" else "-"
     return f"${cost:.4f}"
 
 
@@ -252,6 +285,17 @@ def main():
         tok = rec.get("total_tokens")
         tok_str = f"{tok:,}" if tok else "-"
         raw_model = rec.get("model") or "-"
+        cost_source = rec.get("cost_source", "")
+        # Retroactively resolve model for native sessions with missing model field.
+        # Handles past records written before the finalize-script fix (cost_source="none").
+        if raw_model == "-" and rec.get("source") == "native":
+            m = _NATIVE_UUID_RE.match(rec.get("session_id", ""))
+            if m:
+                jsonl_model = _read_model_from_jsonl(m.group(1))
+                if jsonl_model:
+                    raw_model = jsonl_model
+                    if cost_source != "pricing_yaml":
+                        cost_source = "pricing_yaml"
         if raw_model != "-":
             raw_model = re.sub(r'\[.*?\]$', '', raw_model)
             raw_model = re.sub(r'-\d{8}$', '', raw_model)
@@ -261,7 +305,7 @@ def main():
             "project": extract_project_name(rec.get("session_dir", "")) if rec.get("session_dir") else "-",
             "model": raw_model,
             "tokens": tok_str,
-            "cost": format_cost(rec.get("cost_usd_estimate", 0)),
+            "cost": format_cost(rec.get("cost_usd_estimate", 0), cost_source),
             "duration": format_duration(rec.get("duration_s", 0)),
             "outcome": rec.get("outcome", "-"),
         })
