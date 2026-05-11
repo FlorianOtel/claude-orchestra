@@ -92,9 +92,23 @@ for f in "$REPO"/commands/*.md; do
     copy_file "$f" "$CLAUDE/commands/$(basename "$f")"
 done
 
-# ── 5. Hook script ────────────────────────────────────────────────────────────
+# ── 5. Hook scripts + telemetry tools ────────────────────────────────────────
+# All shell scripts below are deployed to ~/.claude/scripts/ and marked +x.
+#   orchestra-hook.sh        — PreToolUse/SubagentStop/PreCompact/Stop dispatcher
+#   telemetry-summarize.sh   — T2 transcript-parser wrapper (calls .py)
+#   telemetry-report.sh      — orchestra session cost report
+#   otel-headers-helper.sh   — OTEL session-ID header injection helper
+#   bash-session-init.sh     — native session registration (sourced via BASH_ENV)
+#   ctx-segment.sh           — status-line context-window bar renderer
+#   sohoai-live-cost.sh      — live cost query: SoHoAI primary + JSONL fallback
+#   native-subagent-cost.sh  — native session: walks subagent JSONLs, returns cost
+#                              float; called by the status-line orchestra block to
+#                              add subagent spend to the parent's cost.total_cost_usd
 echo "Scripts:"
-for s in orchestra-hook.sh telemetry-summarize.sh telemetry-report.sh otel-headers-helper.sh bash-session-init.sh ctx-segment.sh sohoai-live-cost.sh; do
+for s in \
+    orchestra-hook.sh telemetry-summarize.sh telemetry-report.sh \
+    otel-headers-helper.sh bash-session-init.sh ctx-segment.sh \
+    sohoai-live-cost.sh native-subagent-cost.sh; do
     if [ -f "$REPO/scripts/$s" ]; then
         copy_file "$REPO/scripts/$s" "$CLAUDE/scripts/$s"
         $DRY_RUN || chmod +x "$CLAUDE/scripts/$s"

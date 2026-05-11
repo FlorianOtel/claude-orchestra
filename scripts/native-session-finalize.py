@@ -113,8 +113,30 @@ def main():
                     pricing_data = ts_mod.load_pricing_yaml()
                     if pricing_data:
                         warnings: list = []
+
+                        # Walk subagent JSONLs — same pattern as process_transcript()
+                        subagents_list = []
+                        _subagents_dir = Path(str(jsonl_path)).with_suffix("") / "subagents"
+                        if _subagents_dir.is_dir():
+                            for _meta_path in sorted(_subagents_dir.glob("agent-*.meta.json")):
+                                try:
+                                    _meta = json.loads(_meta_path.read_text())
+                                except Exception:
+                                    continue
+                                _sub_jsonl = _meta_path.with_suffix("").with_suffix(".jsonl")
+                                _sm, _st, _sf, _ = ts_mod._walk_jsonl_for_tokens(
+                                    _sub_jsonl, 0.0, ended_at_unix
+                                )
+                                if _sf is None:
+                                    continue
+                                subagents_list.append({
+                                    "type": _meta.get("agentType", "unknown"),
+                                    "model": _sm,
+                                    "tokens": _st,
+                                })
+
                         parent = {"model": t2_model, "tokens": t2_tokens}
-                        t2_cost = ts_mod.compute_cost(parent, [], pricing_data, warnings)
+                        t2_cost = ts_mod.compute_cost(parent, subagents_list, pricing_data, warnings)
                         if t2_cost > 0:
                             cost_usd_estimate = t2_cost
         except Exception:
