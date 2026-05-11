@@ -18,18 +18,19 @@
 # regardless of map lookup — displayed as 1.0M or 1M depending on values.
 #
 # last_updated: YYYY-MM-DD
-updated_at: 2026-05-11--18-00
+updated_at: 2026-05-11--00-01
 updated_by: Claude Code (Claude Sonnet 4.6)
-last_updated: 2026-05-10
+last_updated: 2026-05-11
 models:
-  claude-opus-4-7:            200000
+  claude-opus-4-7:            1000000
   claude-opus-4-7[1m]:        1000000
   claude-sonnet-4-6:          200000
   claude-sonnet-4-5:          200000
   claude-haiku-4-5:           200000
-  # SoHoAI / LiteLLM-routed aliases (orchestra)
-  claude-code-gemma-4-e4b:     128000
-  claude-code-deepseek-v4-pro: 128000
-  claude-code-kimi-k2.6:       262144
-  claude-code-glm-5.1:         128000
-  claude-code-qwen3-coder-next: 131072
+  # SoHoAI / LiteLLM-routed aliases — values sourced from SoHoAI config.yaml
+  # model_info.context_window (advertised via /proxy/v1/model/info to clients)
+  claude-code-gemma-4-e4b:     110024   # llama-server: -c 220048 --parallel 2 = 220048/2
+  claude-code-deepseek-v4-pro: 1000000  # Ollama Cloud; 1M context
+  claude-code-kimi-k2.6:       256000   # Ollama Cloud; 256K (not binary 262144)
+  claude-code-glm-5.1:         200000   # Ollama Cloud; 200K
+  claude-code-qwen3-coder-next: 262000  # Ollama Cloud; 262K
