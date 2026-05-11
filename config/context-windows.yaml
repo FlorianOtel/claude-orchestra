@@ -1,0 +1,33 @@
+# ---
+# title: "Context window sizes — model → advertised tokens map"
+# created_at: 2026-05-10--20-45
+# created_by: Claude Code (Claude Opus 4.7 1M, via /brain actor)
+# updated_by: Claude Code (Claude Opus 4.7 1M, via /brain fix iteration)
+# updated_at: 2026-05-10--21-10
+# context: >
+#   Used by scripts/ctx-segment.sh as the denominator for the status-line
+#   ctx fill segment. Lookup is normalised + [1m]-aware. Fallback when a
+#   model_id isn't here: CC's own context_window.context_window_size.
+# ---
+# context-windows.yaml — advertised context window sizes per model ID
+# Used by scripts/ctx-segment.sh for the status-line ctx denominator.
+# Fallback: CC's own context_window.context_window_size if model_id absent.
+#
+# Model ID normalisation: strip trailing [1m], [200k], -YYYYMMDD patterns
+# before lookup. If original (unstripped) ID contains [1m], use 1000000
+# regardless of map lookup — displayed as 1.0M or 1M depending on values.
+#
+# last_updated: YYYY-MM-DD
+last_updated: 2026-05-10
+models:
+  claude-opus-4-7:            200000
+  claude-opus-4-7[1m]:        1000000
+  claude-sonnet-4-6:          200000
+  claude-sonnet-4-5:          200000
+  claude-haiku-4-5:           200000
+  # SoHoAI / LiteLLM-routed aliases (orchestra)
+  claude-code-gemma-4-e4b:     128000
+  claude-code-deepseek-v4-pro: 128000
+  claude-code-kimi-k2.6:       131072
+  claude-code-glm-5.1:         128000
+  claude-code-qwen3-coder-next: 131072

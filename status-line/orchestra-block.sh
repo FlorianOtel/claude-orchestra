@@ -9,6 +9,9 @@
 #   - $tokens_used  (from your existing token-usage calculation)
 #   - $status_line  (the running status string to append to)
 #   - $RESET        (ANSI reset code)
+#   - $input        (JSON for model_id extraction via jq)
+#   - $used_percentage (Ctx segment: fill percentage 0-100)
+#   - $context_window_size (Ctx segment: model's context window in tokens)
 
 # ORCHESTRA_BLOCK_START — do not remove; deploy.sh uses this as presence sentinel
 
@@ -58,12 +61,7 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         fi
     fi
 
-    # --- live cost approximation from parent session tokens_used ---
-    # $tokens_used is parsed from Claude Code's status-line input JSON by the host script.
-    # T1 hook events (telemetry-events.jsonl) always have usage=null — hook payloads don't
-    # expose token counts — so we use the parent context directly instead.
-    # Shown only while a /duo or /brain session is active. $9/M Sonnet blend; T2 supersedes.
-    live_cost=""
+    # --- live session ID resolution (orchestra + native fallback) ---
     active_session_dir=""
     if [ "$duo_count" -gt 0 ]; then
         active_session_dir=$(find "$sessions_root" -maxdepth 2 -name ".duo-inflight" 2>/dev/null \
@@ -74,14 +72,38 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
                             | sort -rn | head -n 1 | cut -d' ' -f2-)
         [ -f "$active_session_dir/telemetry.json" ] && active_session_dir=""
     fi
-    # Claude Code reports used_percentage=0 while a subagent is running (parent context
-    # is not the active turn). Cache the last known cost so it persists through subagent
-    # execution rather than blanking out.
-    if [ -n "$active_session_dir" ] && [ "${tokens_used:-0}" -gt 0 ]; then
-        live_cost=$(awk -v t="${tokens_used}" 'BEGIN { printf "~$%.2f", t * 9 / 1000000 }')
-        printf '%s' "$live_cost" > "${active_session_dir}/.live-cost-cache" 2>/dev/null || true
-    elif [ -n "$active_session_dir" ] && [ -f "${active_session_dir}/.live-cost-cache" ]; then
-        live_cost=$(cat "${active_session_dir}/.live-cost-cache" 2>/dev/null || true)
+
+    live_session_id=""
+    if [ -n "$active_session_dir" ]; then
+        live_session_id=$(basename "$active_session_dir")
+    fi
+    # Native session fallback (when no orchestra session active)
+    if [ -z "$live_session_id" ] && [ -d "$HOME/.claude/active-sessions" ]; then
+        for lck in "$HOME/.claude/active-sessions/native-"*.lck; do
+            [ -f "$lck" ] || continue
+            lck_pid=$(grep '^cc_pid=' "$lck" 2>/dev/null | cut -d= -f2-)
+            if [ -n "$lck_pid" ] && kill -0 "$lck_pid" 2>/dev/null; then
+                live_session_id=$(basename "$lck" .lck)
+                break
+            fi
+        done
+    fi
+
+    # --- ctx segment (model context window + token usage bar) ---
+    # $used_percentage, $tokens_used, $context_window_size are set by the host script.
+    model_id=$(echo "$input" | jq -r '.model.id // .model.display_name // ""' 2>/dev/null)
+    # DEBUG: uncomment to capture input JSON for troubleshooting model_id extraction
+    # echo "$input" > "$HOME/.claude/orchestra/logs/status-line-input-debug.json" 2>/dev/null || true
+    ctx_seg=$(~/.claude/scripts/ctx-segment.sh "${used_percentage:-0}" "${tokens_used:-0}" "${context_window_size:-200000}" "${model_id:-}" 2>/dev/null || true)
+    [ -n "$ctx_seg" ] && status_line+=$(printf " | %s" "$ctx_seg")
+
+    # --- live cost from SoHoAI (with JSONL fallback) ---
+    live_cost=""
+    if [ -n "$live_session_id" ] && [ -n "$active_session_dir" ]; then
+        cost_cache="${active_session_dir}/.live-cost-sohoai"
+        started_at=$(stat -c %Y "$active_session_dir" 2>/dev/null || echo "0")
+        live_cost=$(~/.claude/scripts/sohoai-live-cost.sh \
+            "$live_session_id" "$started_at" "$cost_cache" 2>/dev/null || true)
     fi
 
     # --- badge rendering (priority: duo > brain > plain subagent) ---
@@ -105,11 +127,6 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         fi
     elif [ -n "$active_indicator" ]; then
         status_line+=$(printf " | ${ORCHESTRA_COLOR}♪ orchestra${RESET} %s%s" "$active_indicator" "${live_cost:+ $live_cost}")
-    fi
-
-    # Subagent context-overflow warning: Brain context >180K risks truncation
-    if [ "$tokens_used" -gt 180000 ]; then
-        status_line+=$(printf " ${WARNING_COLOR}⚠ >200K${RESET}")
     fi
 fi
 

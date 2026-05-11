@@ -82,7 +82,7 @@ done
 
 # ── 5. Hook script ────────────────────────────────────────────────────────────
 echo "Scripts:"
-for s in orchestra-hook.sh telemetry-summarize.sh telemetry-report.sh otel-headers-helper.sh bash-session-init.sh; do
+for s in orchestra-hook.sh telemetry-summarize.sh telemetry-report.sh otel-headers-helper.sh bash-session-init.sh ctx-segment.sh sohoai-live-cost.sh; do
     if [ -f "$REPO/scripts/$s" ]; then
         copy_file "$REPO/scripts/$s" "$CLAUDE/scripts/$s"
         $DRY_RUN || chmod +x "$CLAUDE/scripts/$s"
@@ -153,6 +153,7 @@ fi
 # ── 6. Orchestra config ───────────────────────────────────────────────────────
 echo "Config:"
 copy_file "$REPO/config/config.yaml" "$CLAUDE/orchestra/config.yaml"
+copy_file "$REPO/config/context-windows.yaml" "$CLAUDE/orchestra/context-windows.yaml"
 copy_file "$REPO/config/pricing.yaml" "$CLAUDE/orchestra/pricing.yaml"
 
 # ── 7. Merge orchestra hooks into settings.json ───────────────────────────────

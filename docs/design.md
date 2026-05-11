@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-07--18-20
+updated_by: Claude Code (claude-code-opus-4-7[1m])
+updated_at: 2026-05-10--20-50
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -55,8 +55,10 @@ When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo
 | Agent | Model | File | Tools | Role |
 |---|---|---|---|---|
 | **Brain** | Opus 4.7 (or Sonnet for /duo) | — (main session) | all | Orchestrates; calls `ExitPlanMode` at plan approval (G2) |
-| **Planner** | Sonnet 4.6 | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md |
-| **Actor** | Haiku 4.5 | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
+| **Planner** | `claude-code-deepseek-v4-pro` | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md; Sonnet 4.6 via `planner-long` for >30 KB inputs |
+| **Planner** (long) | Sonnet 4.6 | `~/.claude/agents/planner-long.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Fallback for large inputs (>30 KB); preserves Anthropic cache discount |
+| **Actor** | `claude-code-qwen3-coder-next` | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
+| **Actor** (heavy) | `claude-code-kimi-k2.6` | `~/.claude/agents/actor-heavy.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Complex multi-file refactors; triggered by `[tier: heavy]` step annotations |
 | **Reviewer** | Sonnet 4.6 | `~/.claude/agents/reviewer.md` | Read, Grep, Glob, TodoWrite (read-only) | Reviews diff against PLAN.md; returns PASS / FIX / BLOCK |
 
 ### Model requirements
@@ -113,17 +115,20 @@ The block renders one of the following badge formats, in descending priority:
 
 | Condition | Badge |
 |---|---|
-| `/duo` session active (one) | `♪ orchestra -> plan <title>  [▶ stage]  [~$X.YZ]` |
-| `/duo` sessions active (many) | `♪ orchestra -> plan #N` |
-| `/brain` session active | `♪ orchestra -> brain <title>  [▶ stage]  [~$X.YZ]` |
-| Subagent running (no /brain or /duo context) | `♪ orchestra  ▶ stage` |
+| `/duo` session active (one) | `♪ orchestra -> plan <title>  [▶ stage]  [ctx ...]  [~$X.YZ]` |
+| `/duo` sessions active (many) | `♪ orchestra -> plan #N  [ctx ...]` |
+| `/brain` session active | `♪ orchestra -> brain <title>  [▶ stage]  [ctx ...]  [~$X.YZ]` |
+| Subagent running (no /brain or /duo context) | `♪ orchestra  ▶ stage  [ctx ...]  [~$X.YZ]` |
 | No orchestra activity | *(nothing — orchestra block is silent)* |
 
-Plus a context-overflow warning appended to any badge: `⚠ >200K` when the parent's `tokens_used` exceeds 180 000 (truncation risk threshold).
+`[ctx ...]` shows context window utilization: colored bar (green/yellow/orange), percentage, and token usage (e.g., `ctx ░░░░░░░░ 12% 24K/200K` in green). Color thresholds:
+- **Green**: < 50% utilization
+- **Yellow**: 50-79% utilization
+- **Orange**: ≥ 80% utilization
 
-`[▶ stage]` shows the current active subagent stage (`plan`, `implement`, `review`, `research`). It appears while the subagent is running and disappears once it completes.
+The utilization denominator is looked up from `context-windows.yaml` per model ID, with fallback to Claude Code's native `context_window.context_window_size`. Model ID normalization strips `[1m]`, `[200k]`, and date suffixes before lookup.
 
-`[~$X.YZ]` is the live running cost from `telemetry-events.jsonl` (T1 approximation; finalised by T2 at session end).
+`[~$X.YZ]` is the live running cost from SoHoAI (primary) or JSONL estimate fallback (stale cache marked with `*`, pure estimate marked with `(est)`).
 
 #### When it updates
 
@@ -137,7 +142,27 @@ The status line script is called by Claude Code on each render tick — after ev
 | `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
 | `/brain` inflight marker (session-discovery for `/brain-abandon` and explicit CMD-classification by Stop-hook) | `${SESSION_DIR}/.brain-inflight` | `/brain` command setup |
 | Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
-| Live cost | `tokens_used` from Claude Code status-line input JSON × $9/M Sonnet blend | Claude Code (always available) |
+| Live cost (orchestra) | SoHoAI LiteLLM proxy via `telemetry-events.jsonl` session lookup | T2 via SoHoAI or JSONL estimate |
+| Live cost (ctx segment) | `context_windows.yaml` + CC context width | ctx-segment.sh |
+| SoHoAI cost source | `~/.claude/scripts/sohoai-live-cost.sh` | SoHoAI query (TTL=8,min cache; JSONL fallback) |
+
+#### ctx segment implementation details
+
+The ctx segment uses `scripts/ctx-segment.sh` which reads `context-windows.yaml` from `~/.claude/orchestra/`. Model ID normalisation strips `[1m]`, `[200k]`, and `-YYYYMMDD` suffixes before lookup. If the original ID contains `[1m]`, the denominator is forced to 1,000,000 regardless of the map entry.
+
+Token formatting: values ≥ 1,000,000 show as `XM` (e.g., `1.2M`), values ≥ 1,000 show as `XK`, otherwise raw `XK`.
+
+#### SoHoAI live cost implementation details
+
+SoHoAI cost is retrieved via `scripts/sohoai-live-cost.sh` with:
+- **TTL**: 8 minutes (cache hit < 50ms wall time)
+- **Stale marker**: trailing `*` when cache is stale and SoHoAI failed
+- **JSONL fallback marker**: trailing `(est)` when JSONL estimate is used
+- **TTL header**: SoHoAI query has 1s timeout; JSONL lookback is 1 hour
+
+Model ID lookup in `context-windows.yaml` uses:
+- Primary: exact `model.id` match
+- Fallback: `display_name` (lowercase, hyphenated, sans parentheses)
 
 #### Deploy / portability
 
@@ -161,9 +186,9 @@ commands/
   brain.md, brain-abandon.md
   duo-plan.md, duo-act.md, duo-abandon.md
 scripts/
-  orchestra-hook.sh
+  orchestra-hook.sh, ctx-segment.sh, sohoai-live-cost.sh
 orchestra/
-  config.yaml
+  config.yaml, context-windows.yaml
   invocations.log (append-only)
 CLAUDE.md  (sentinel-bracketed orchestra-guard block injected by deploy.sh
             from claude-md-block/orchestra-guard.md in the repo)
@@ -475,6 +500,66 @@ The `--tier` flag on `telemetry-report.sh` reads per-session `telemetry.json` fi
 3. **1-hour TTL caching** — activate per-tier when TTL-miss rate exceeds 33%.
 4. **Reviewer skip** — only if FIX-verdict rate drops below 10% over ≥ 50 sessions (quality risk).
 5. **Opus vs Sonnet for Brain** — compare `regret_flag` rate at different model tiers once sufficient data exists.
+
+---
+
+## Multi-model routing (SoHoAI graduated rollout)
+
+### Rationale: from marginal cost to flat-rate pricing
+
+Prior to May 2026, multi-model routing in the orchestra was rejected based on a per-token marginal cost model: switching from Sonnet to a cheaper tier would save money linearly. The analysis assumed all cost differences flowed to the operator. Under that assumption, tiering complexity was not justified.
+
+Ollama Cloud Pro changed the equation: it operates on a **flat-rate subscription model** rather than per-token billing. This means the marginal cost of a Planner replan or an Actor redo is now zero (within the subscription cap), while the **quality risk** of using an untested model remains real. The decision matrix inverted: we now optimize for **quality and capability per subscription dollar**, not token efficiency.
+
+Reference: [Design history & amendments](design-history.md) §Amendment 2026-05-10 — this section documents the decision; see `design-history.md` for the historical context.
+
+### Model assignments and tier annotations
+
+| Role | Model | Trigger |
+|---|---|---|
+| Planner (normal) | `claude-code-deepseek-v4-pro` | inputs ≤ 30 KB |
+| Planner (long-context fallback) | Sonnet 4.6 | inputs > 30 KB; preserves Anthropic cache discount |
+| Actor (default) | `claude-code-qwen3-coder-next` | all steps unless marked heavy |
+| Actor (heavy) | `claude-code-kimi-k2.6` | `[tier: heavy]` annotation in PLAN.md step |
+| Reviewer | Sonnet 4.6 | all reviews (unchanged; calibration priority) |
+
+**Brain** remains Opus 4.7 for `/brain` and Sonnet 4.6 for `/duo` (no change).
+
+### Step-level tier annotations
+
+Plan steps may be tagged with optional `[tier: …]` annotations to override tier defaults:
+
+- `[tier: default]` — use default tier (Qwen3 for Actor, DeepSeek for Planner). Usually omitted.
+- `[tier: heavy]` — use heavy tier (Kimi K2.6 for Actor; Sonnet stays for Planner). Used for complex multi-file refactors, architectural changes, or security-sensitive code.
+
+Format: annotation appears on the same line as the step heading (e.g., `### 5. Refactor X [tier: heavy]`). Brain's PLAN parser confirms the annotation exists before dispatching the heavy-tier subagent; if malformed or missing, the step runs at default tier.
+
+### Planner long-context fallback
+
+When RESEARCH + constraints + prior artifacts exceed ~30 KB, Brain runs Sonnet 4.6 via the `planner-long` agent instead of `planner`. This preserves Anthropic's prompt cache discount on large inputs (30× savings on repetitive prefix tokens) while staying in the flat-rate economy via `planner-long` as a documented SoHoAI alias. The 30 KB threshold is approximate; Brain is instructed to `wc -c` the combined input and pick the tier accordingly.
+
+See TODO.md §10e for the deferred automation of this check.
+
+### Alias stability contract
+
+SoHoAI exposes agents as aliases: `claude-code-deepseek-v4-pro`, `claude-code-qwen3-coder-next`, `claude-code-kimi-k2.6`, etc. These are **stable across deployments** within the SoHoAI domain (as of 2026-05-10, per handoff §1). If the alias routing changes (e.g., DeepSeek → Claude 3.7), SoHoAI commits to rotating the alias URL, not swapping backends silently. Updates will be documented in the design-history.md amendment chain.
+
+Without this contract, cost + quality tracking would drift silently between deployments.
+
+### Reviewer remains Sonnet 4.6
+
+Reviewer stays Sonnet 4.6 (no multi-model routing). Rationale:
+- Reviewer is a calibration touchstone — if it starts rejecting code that Sonnet previously accepted, review-loop iteration counts will spike, signaling a model regression.
+- Reviewer is called ≤ 3 times per step (review loop cap); its cost is < 15% of typical sessions.
+- Code review is a high-stakes task where Sonnet's consistency is proven; evaluation of GLM-5.1 as a second-pass cross-check is deferred (see TODO.md §10b).
+
+### Cross-reference
+
+- Agents table (this document, §How the workflow works): file paths and role descriptions.
+- design-history.md §Amendment 2026-05-10: historical context, operator caveats, deferred follow-ups.
+- TODO.md §10b–10f: deferred items (GLM-5.1 second-pass, 429 fallback, PLAN schema validator, 30 KB threshold automation, max_tokens knob).
+- Handoff §1: SoHoAI alias stability contract.
+- Handoff §3: max_tokens ≥ 500 requirement for reasoning models.
 
 ---
 
