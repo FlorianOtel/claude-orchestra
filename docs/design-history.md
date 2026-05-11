@@ -2,8 +2,8 @@
 title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design notes & open questions"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Haiku 4.5)
-updated_at: 2026-05-06--11-27
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-11--18-00
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1495,3 +1495,127 @@ The one-liner `[ -z "$_uuid" ] && return 0 2>/dev/null || exit 0` is subtly wron
 ### Files
 
 Modified: `scripts/bash-session-init.sh` (complete rewrite), `scripts/orchestra-hook.sh` (removed registration block), `scripts/native-session-finalize.py` (dropped `cc_pid` from output record), `CLAUDE.md` (updated telemetry flow), `docs/design.md` (new §Native session tracking, updated SoHoAI section), `docs/design-history.md` (this note). Data: `~/.claude/native-sessions/telemetry.jsonl` scrubbed; `~/.claude/active-sessions/uuid-*` sidecar files deleted. Commits: `40b536c` (UUID-keyed registration), `8b29f70` (cc_pid removal).
+
+---
+
+## Amendment 2026-05-10 — multi-model routing (SoHoAI graduated rollout)
+
+### Problem
+
+Prior multi-model routing analysis rejected tiering as unjustified: the cost savings from using cheaper models (Haiku vs Sonnet per token) did not outweigh the operational complexity of maintaining multiple agent configurations. This analysis assumed **per-token marginal cost** — i.e., each token saved is a token not billed.
+
+Ollama Cloud Pro broke that assumption by introducing **flat-rate subscription pricing**. Under flat-rate, the marginal cost of a Planner replan or Actor iteration is zero (within the subscription cap). Cost-per-outcome remains fixed whether Planner replans once or ten times; the quality risk of the new models is now the limiting factor. The decision matrix inverted: we now optimize for **outcome quality per subscription dollar**, not token efficiency.
+
+The canonical ADR statement is in `docs/design.md §Multi-model routing (SoHoAI graduated rollout)`; this amendment is the historical audit trail.
+
+### Root cause
+
+The original analysis was sound given per-token billing. It assumed:
+1. Switching Planner from Sonnet to Haiku saves X tokens per invocation.
+2. X tokens cost Y dollars; therefore switching saves Y dollars per plan.
+3. Y dollars < operational complexity cost → don't tier.
+
+This breaks under flat-rate: step 2 no longer holds. Planner replan cost is zero; only quality matters. Outcome: tiering is now justified if the new models (DeepSeek Planner, Qwen3 Actor) produce comparable quality to Sonnet — a quality question, not a cost question.
+
+### Solution
+
+**Graduated model rollout within SoHoAI aliases:**
+
+1. **Planner: `claude-code-deepseek-v4-pro`** (DeepSeek V4 Pro) — strong at multi-step reasoning, better cost profile under flat-rate. Falls back to **`planner-long` (Sonnet 4.6)** for inputs > 30 KB to preserve Anthropic prompt cache discount on large contexts.
+
+2. **Actor: `claude-code-qwen3-coder-next`** (Qwen3 Coder Next) — strong at code generation, fast iteration. All steps by default. Heavy steps (complex refactors, security-sensitive) override with **`actor-heavy` (`claude-code-deepseek-v4-pro`)** via `[tier: heavy]` step annotation.
+
+3. **Reviewer: Sonnet 4.6** — unchanged. Acts as calibration touchstone; any regression in review quality is immediately visible in increased fix-loop iterations.
+
+4. **Brain: Opus 4.7 / Sonnet 4.6** — unchanged. Orchestration cost dominates; no benefit from model swap.
+
+**Agent files deployed:** `~/.claude/agents/{planner.md, planner-long.md, actor.md, actor-heavy.md, reviewer.md}`.
+
+**Tier annotation schema:** Plan steps may carry optional `[tier: default|heavy]` to override Actor tier. Planner 30 KB threshold is automatic (Brain inspects input size and picks the agent).
+
+**SoHoAI alias stability:** The aliases (`claude-code-deepseek-v4-pro`, etc.) are stable per handoff §1. If SoHoAI retires a model, the alias URL will rotate, not the backend behind an alias. Design-history.md amendment chain tracks backend changes.
+
+### Files
+
+Created: `agents/planner-long.md`, `agents/actor-heavy.md`.
+Modified: `agents/planner.md`, `agents/actor.md`, `agents/reviewer.md` (no changes needed; already deployed in session 20260510T180922Z-2575990, step 1–7).
+Updated: `docs/design.md` (new Agents table rows + top-level "§Multi-model routing" section), `docs/design-history.md` (this amendment), `docs/TODO.md` (closed §10.2 per-step tier annotation item; added §10b–10f deferred follow-ups).
+
+### Verification
+
+**Smoke 1 (this session):** `/duo-plan` + `/duo-act` with mixed-tier steps → confirm Actor dispatches with correct model per tier annotation.
+
+**Smoke 2 (this session):** `/brain` + full Phase 0–3 with ≥ 1 heavy step → confirm Planner uses DeepSeek, Actor uses Qwen3 or DeepSeek per tier, Reviewer uses Sonnet. Telemetry confirms model field is populated correctly.
+
+See §Verification in PLAN.md (session 20260510T180922Z-2575990) for complete checks.
+
+### Operator caveats
+
+1. **Per-token max_tokens minimum:** Reasoning models (DeepSeek, Qwen3) require `max_tokens ≥ 500` to function reliably (handoff §3). Subagent frontmatter sets this; do not reduce.
+
+2. **No prompt-cache discount on LiteLLM path:** If `ANTHROPIC_BASE_URL` routes to Ollama Cloud Pro, Anthropic's prompt cache headers are not preserved by LiteLLM. Only direct Anthropic API calls (or SoHoAI) get cache benefits. The planner-long Sonnet fallback is a workaround: routes through SoHoAI where cache is preserved.
+
+3. **Ollama Cloud Pro subscription caps:** DeepSeek + Qwen3 usage counts against Ollama's token budget. Weekly/monthly caps may trigger 429. No graceful fallback yet (deferred to TODO.md §10c).
+
+4. **Model ID self-identification:** Claude system prompts state "You are [model]." Reasoning models (DeepSeek, Qwen3) may have different self-identification conventions. Subagent prompts are agnostic; no hand-baked model references.
+
+### Open follow-ups
+
+1. **TODO §10b: Reviewer GLM-5.1 second-pass cross-check** — evaluate `claude-code-glm-5.1` as second-pass Reviewer after primary Sonnet 4.6 pass. Trigger: ≥ 20 sessions with new multi-model routing show consistent FIX-verdict patterns.
+
+2. **TODO §10c: SoHoAI 429-fallback path** — when Ollama Cloud Pro cap is hit, fall back to Anthropic Haiku/Sonnet. Today a 429 mid-`/brain` aborts the pipeline. Trigger: first observed 429, or proactive if Ollama caps tighten.
+
+3. **TODO §10d: PLAN.md schema validator** — DeepSeek's format discipline is weaker than Sonnet's. Add post-Planner parse check before Brain persists PLAN.md. Trigger: first malformed PLAN.md from DeepSeek.
+
+4. **TODO §10e: automate the 30 KB Planner threshold** — Brain is currently instructed to `wc -c` and pick tier manually. Implement as small Bash helper in `commands/brain.md` Phase 1. Trigger: cost telemetry shows manual check is being skipped.
+
+5. **TODO §10f: agent-frontmatter `max_tokens` knob** — monitor smoke 2 + first 5 real `/brain` runs for empty-output `stop_reason: max_tokens` failures. If observed, surface workaround in design.md.
+
+### Session reference
+
+Session ID: `20260510T180922Z-2575990` (this session). All code + documentation changes staged for review in Phase 4.
+
+---
+
+## Amendment 2026-05-10 (b) — actor-heavy switched to claude-code-kimi-k2.6
+
+**Change:** `agents/actor-heavy.md` model field updated from `claude-code-deepseek-v4-pro` to `claude-code-kimi-k2.6`.
+
+**Rationale:** Operator preference; Kimi K2.6 is available as a SoHoAI alias and is now the preferred model for heavy-tier Actor steps. Planner continues to use `claude-code-deepseek-v4-pro`; no change there.
+
+**Files updated:** `agents/actor-heavy.md` (model + description + body text), `docs/design.md` (agents table, multi-model routing table, tier annotation text, alias stability example list), `docs/design-history.md` (this amendment), `docs/TODO.md` (§10.2 status line).
+
+---
+
+## Amendment 2026-05-11 — planner switched to claude-code-glm-5.1
+
+**Change:** `agents/planner.md` model field updated from `claude-code-deepseek-v4-pro` to `claude-code-glm-5.1`.
+
+**Rationale:** `claude-code-deepseek-v4-pro` has a ~70% failure rate on ollama-cloud per SoHoAI commit `67fd92b` (2026-05-11, `~/Gin-AI/projects/SoHoAI`). That commit introduced HTTP 529 fast-fail guards and a 30-second request timeout for ollama-cloud targets; the documentation in `docs/Model-routing.md` (SoHoAI repo §2.3) flags deepseek-v4-pro as unreliable and recommends `qwen3-coder-next` as an alternative. Given the ~70% abort rate, continuing to use deepseek-v4-pro for the normal-input Planner tier would break `/brain` runs before planning even starts in the majority of sessions. `claude-code-glm-5.1` is the replacement; its entry was already present in `config/pricing.yaml` and `config/context-windows.yaml` (128 K context window). This follows the same pattern as Amendment 2026-05-10(b) which switched `actor-heavy` from deepseek to `claude-code-kimi-k2.6`.
+
+**Files updated:** `agents/planner.md` (model field; `[tier: heavy]` description corrected to kimi-k2.6 — stale from 2026-05-10(b)), `agents/planner-long.md` (same `[tier: heavy]` description fix), `commands/brain.md` (pipeline rules summary), `docs/design.md` (agents table, model assignments table, tier annotations text, alias stability example list), `docs/design-history.md` (this amendment), `docs/TODO.md` (§10.4 four inline references), `memory/project_state.md` (Tier model assignments).
+
+---
+
+## Amendment 2026-05-11 (b) — status-line redesign: ctx at position 2, standalone cost field
+
+**Change:** The orchestra status-line block now strips CC-native fields 2 (20-segment progress bar) and 3 (↯ token count) and replaces them with a `ctx` segment and a live cost field inserted at position 2 (immediately after the model name). The orchestra badge no longer carries the cost — it is a standalone field visible for all session types.
+
+**New layout:**
+```
+model | ctx ▓▓░░░░░░░░ 21% 210K/1M | ~$X.YZ | ◆ project | ⎇ branch | [♪ badge]
+```
+
+**Key implementation details:**
+
+1. **Field stripping (sed):** CC-native fields contain a mix of literal `\033` (bar segments passed via `%s` printf arg) and raw ESC bytes (colors/resets in format-string position). The field 2 sed anchor uses `\\\\033` (bash double-quote processing → `\\033` → sed sees `\\033` → matches literal backslash+033). Field 3 uses `${_ESC}` (raw ESC) because TOKEN_COLOR is in the format string.
+
+2. **Position insert:** `status_line="${status_line/ | / | ${_insert} | }"` — bash parameter substitution replaces only the FIRST ` | ` separator, placing ctx+cost between the model and project fields.
+
+3. **ctx bar expansion:** 10 cells at 10% each (was 8 cells at 12.5%). `scripts/ctx-segment.sh` updated.
+
+4. **Native session cost:** `.lck` file stores `started_at` in ISO 8601 format (`2026-05-11T15:31:19Z`). `sohoai-live-cost.sh` passes it to Python `float()` → `ValueError`. Fix: detect `*T*` pattern and convert via `date -d` to Unix epoch before calling the script.
+
+5. **Cost for all sessions:** Previously cost was only shown during active orchestra (/duo or /brain) sessions. Now shown for native sessions too via the `native-*` lck path in the cost query block.
+
+**Files updated:** `status-line/orchestra-block.sh`, `scripts/ctx-segment.sh`, `docs/design.md` (§Status-line badge, §ctx segment implementation), `CLAUDE.md` (smoke test expected outputs), `docs/design-history.md` (this amendment), `memory/project_state.md` (Status-line layout section).

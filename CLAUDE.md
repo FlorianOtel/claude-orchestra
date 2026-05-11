@@ -91,19 +91,20 @@ Verify T1 (hook events) and T2 (transcript parse) after any /duo or /brain run.
 1. Deploy: `./deploy.sh`
 2. Test ctx segment (low fill, expect green):
    `~/.claude/scripts/ctx-segment.sh 12 24000 200000 claude-sonnet-4-6`
-   → colored `ctx ░░░░░░░░ 12% 24K/200K`
+   → colored `ctx ▓░░░░░░░░░ 12% 24K/200K`
 3. Test ctx segment (high fill, expect orange):
    `~/.claude/scripts/ctx-segment.sh 85 170000 200000 claude-sonnet-4-6`
-   → `ctx ▓▓▓▓▓▓░░ 85% 170K/200K` in orange
+   → `ctx ▓▓▓▓▓▓▓▓░░ 85% 170K/200K` in orange
 4. Test ctx 1M variant:
    `~/.claude/scripts/ctx-segment.sh 12 120000 1000000 'claude-opus-4-7[1m]'`
-   → `ctx ░░░░░░░░ 12% 120K/1M`
+   → `ctx ▓░░░░░░░░░ 12% 120K/1M`
 5. Test SoHoAI helper (replace SESSION_ID with active orchestra dir
    basename or `native-<UUID>` from `~/.claude/active-sessions/`):
    `~/.claude/scripts/sohoai-live-cost.sh SESSION_ID $(date +%s) /tmp/test-cost-cache`
    → `~$X.YZ` or empty; <2s wall time
 6. Live render: send any message to CC; observe status bar shows
-   `ctx ... | ♪ orchestra... ~$X.YZ` with no `⚠ >200K`.
+   `model | ctx ▓▓░░░░░░░░ N% XK/YM | ~$X.YZ | ◆ project | ⎇ branch`
+   (cost shown for paid models; absent for zero-cost claude-code-* models)
 
 ### Native session telemetry smoke test
 1. Open a fresh CC session (no /brain or /duo).
