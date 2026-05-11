@@ -157,14 +157,32 @@ def main():
     if total_tokens:
         record["total_tokens"] = total_tokens
 
-    # Write to telemetry.jsonl (atomic append)
+    # Write to telemetry.jsonl — replace existing entry for this session_id if present,
+    # else append. Mirrors orchestra telemetry-summarize.py dedup behaviour: re-runs
+    # (e.g. Stop hook firing after a manual finalize) produce one authoritative record.
     native_sessions_dir = Path.home() / ".claude" / "native-sessions"
     native_sessions_dir.mkdir(parents=True, exist_ok=True)
     telemetry_jsonl = native_sessions_dir / "telemetry.jsonl"
 
     try:
-        with open(telemetry_jsonl, "a") as f:
+        existing_lines: list = []
+        if telemetry_jsonl.exists():
+            with open(telemetry_jsonl) as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        rec = json.loads(line)
+                        if rec.get("session_id") == args.session_id:
+                            continue  # drop old record; new one written below
+                    except Exception:
+                        pass
+                    existing_lines.append(line if line.endswith("\n") else line + "\n")
+        tmp = telemetry_jsonl.with_suffix(".tmp")
+        with open(tmp, "w") as f:
+            f.writelines(existing_lines)
             f.write(json.dumps(record) + "\n")
+        tmp.replace(telemetry_jsonl)
     except Exception as e:
         print(f"native-session-finalize: failed to write telemetry.jsonl: {e}", file=sys.stderr)
         sys.exit(1)
