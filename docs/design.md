@@ -350,6 +350,8 @@ session_uuid=<UUID>
 **Finalization — `scripts/orchestra-hook.sh` stop mode.**
 The Stop hook fires per response turn. It iterates all `native-*.lck` files and for each runs `kill -0 <cc_pid>`. If the process is dead the session has ended: it invokes `native-session-finalize.py` (T2 cost attribution via the cost-source cascade) and removes the `.lck`. Since `CLAUDE_CODE_SESSION_ID` is not available in hook context, finalization of session N is triggered by the Stop hook of session N+1 — typically within seconds of the user opening a new session. Edge case: if no new session is opened after session N ends, the `.lck` persists until the next CC session starts. `session-report.py` guards against this by calling `os.kill(cc_pid, 0)` in `load_active_native_sessions()` and silently skipping any stale entry whose process is already dead.
 
+**Re-finalization and dedup (2026-05-12).** `native-session-finalize.py` writes atomically via a `.tmp` rename and strips any prior record for the same `session_id` before writing, so a re-run (e.g. manual finalize followed by a Stop-hook finalize) produces exactly one authoritative record. `session-report.py`'s `load_native_telemetry()` additionally deduplicates on read (last record per `session_id` wins) as a safety net for records written before this fix.
+
 **Session IDs.** Native session IDs written by `bash-session-init.sh` are `native-<UUID>` (e.g. `native-6dedcd3d-37e5-46a9-958e-fb0a822b5e3a`). The UUID is the CC session UUID (`CLAUDE_CODE_SESSION_ID`), making IDs globally unique and stable. Older sessions (before the UUID-keyed registration refactor, 2026-05-07) used a `native-<timestamp>-<PID>` format; both formats are stored in `~/.claude/native-sessions/telemetry.jsonl` and handled by the report scripts.
 
 **Telemetry record fields** (written to `~/.claude/native-sessions/telemetry.jsonl`):
@@ -361,10 +363,10 @@ The Stop hook fires per response turn. It iterates all `native-*.lck` files and 
 | `started_at` | ISO8601 timestamp from `.lck` creation |
 | `ended_at` | ISO8601 timestamp at finalization |
 | `duration_s` | wall-clock seconds |
-| `cost_usd_estimate` | from cost-source cascade; `0.0` for non-Anthropic (zero-rate) models |
+| `cost_usd_estimate` | parent + all subagent costs (from cost-source cascade); `0.0` for non-Anthropic (zero-rate) models |
 | `cost_source` | `sohoai_api` / `litellm` / `pricing_yaml` / `none` |
-| `model` | model name (present when transcript was parsed — both Anthropic and non-Anthropic) |
-| `total_tokens` | token count (present when transcript was parsed) |
+| `model` | parent session model name (present when transcript was parsed — both Anthropic and non-Anthropic) |
+| `total_tokens` | parent session token count (present when transcript was parsed; excludes subagent tokens) |
 
 **Non-Anthropic models.** Sessions using SoHoAI proxy models not in `pricing.yaml` (e.g. `claude-code-qwen3-coder-next`, `claude-code-kimi-k2.6`) are recorded with `cost_usd_estimate: 0.0` and `cost_source: "pricing_yaml"` — the transcript was successfully parsed and the model identified, but no pricing rate is available. `session-report.py` renders these as `$0.0000` to distinguish them from sessions where cost attribution failed entirely (`cost_source: "none"`, displayed as `-`). For past records already in `telemetry.jsonl` with a missing `model` field (written before the 2026-05-11 finalize-script fix), `session-report.py` retroactively re-reads the JSONL transcript at display time to fill in the model name.
 
