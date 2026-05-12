@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-12--09-30
+updated_at: 2026-05-12--11-00
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -126,7 +126,7 @@ Fields injected by the orchestra block:
 
 The utilization denominator is looked up from `context-windows.yaml` per model ID, with fallback to Claude Code's native `context_window.context_window_size`. Model ID normalization strips `[1m]`, `[200k]`, and date suffixes before lookup. Models with `[1m]` in their ID force a 1,000,000 denominator.
 
-**`~$X.YZ`** — live running cost (shown when cost > 0; absent for zero-cost models). Source differs by session type:
+**`~$X.YZ`** — live running cost (always shown, including `~$0.00` from the very first render so the display is visibly live from session start). Source differs by session type:
 - **Orchestra sessions**: SoHoAI API query (TTL=8 s cache); stale cache marked `*`; JSONL estimate fallback marked `(est)`.
 - **Native sessions**: `cost.total_cost_usd` from CC's own `statusLine` JSON input — precise, always current, no external query needed. Last non-zero total (parent + subagents) is written to `active-sessions/<session>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead, keeping the field continuously visible.
 
@@ -170,7 +170,7 @@ CC passes a rich JSON object to the `statusLine` command on every render. Key fi
 
 | Field | Type | Notes |
 |---|---|---|
-| `session_id` | string | CC session UUID — primary key for `.lck` lookup |
+| `session_id` | string | CC session UUID — used directly for native cost display; no `.lck` check |
 | `transcript_path` | string | Absolute path to this session's JSONL transcript |
 | `session_name` | string | Human-readable session name (set via `/rename`) |
 | `cost.total_cost_usd` | float | Precise accumulated session cost (all subagents included) |
@@ -179,7 +179,7 @@ CC passes a rich JSON object to the `statusLine` command on every render. Key fi
 | `workspace.current_dir` | string | Session working directory |
 | `version` | string | CC version string |
 
-`session_id` is used to identify the native session for the `.lck` existence check. `cost.total_cost_usd` is used directly as the live cost for native sessions — precise, always current, no SoHoAI query needed.
+`session_id` identifies the native session for cost display directly — no `.lck` file check. The `.lck` is only for session finalization (Stop hook → `native-session-finalize.py` → T2 record); removing it from the cost gate fixes resumed sessions (Stop hook removes the old lck at end of each turn; no new lck until the first Bash call). `cost.total_cost_usd` is used as the live cost — precise, always current, no SoHoAI query needed.
 
 #### SoHoAI live cost (orchestra sessions only)
 
