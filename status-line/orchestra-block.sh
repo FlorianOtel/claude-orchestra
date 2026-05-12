@@ -88,14 +88,14 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     if [ -n "$active_session_dir" ]; then
         live_session_id=$(basename "$active_session_dir")
     fi
-    # Native session fallback: CC provides session_id directly in the JSON input.
-    # No env vars, no PID lookups — the JSON is the authoritative source.
+    # Native session: session_id from CC JSON is always the current session's UUID.
+    # No .lck check needed — .lck is for finalization, not cost display. Removing
+    # the .lck gate fixes: (a) resumed sessions before first Bash call (Stop hook
+    # removes the old lck at end of prior turn; no new lck until bash-session-init
+    # runs), (b) any render that fires before the first Bash tool call.
     if [ -z "$live_session_id" ]; then
         _json_sid=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null)
-        if [ -n "$_json_sid" ]; then
-            _lck="$HOME/.claude/active-sessions/native-${_json_sid}.lck"
-            [ -f "$_lck" ] && live_session_id="native-${_json_sid}"
-        fi
+        [ -n "$_json_sid" ] && live_session_id="native-${_json_sid}"
     fi
 
     # --- ctx segment (model context window + token usage bar) ---
@@ -160,8 +160,9 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
                 _total=$(cat "$_cost_cache" 2>/dev/null || echo "${_total:-0}")
             fi
 
-            if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$' \
-               && [ "$(printf '%.0f' "$_total" 2>/dev/null || echo 0)" != "0" ]; then
+            # Always show cost (including ~$0.00 at session start) so the field is
+            # visible from the first render as a live-display sanity check.
+            if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$'; then
                 live_cost=$(LC_ALL=C printf '~$%.2f' "$_total" 2>/dev/null || true)
             fi
         fi
