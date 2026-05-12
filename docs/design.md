@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-11--19-22
+updated_at: 2026-05-12--09-30
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -113,12 +113,12 @@ The Claude Code status line is extended by `status-line/orchestra-block.sh`, inj
 The orchestra block produces a **full status line layout** (not just a badge). It replaces the CC-native progress bar and token-count fields and inserts its own fields immediately after the model name:
 
 ```
-model | ctx ▓▓░░░░░░░░ 21% 210K/1M | ~$X.YZ | ◆ project | ⎇ branch | [♪ badge]
+model | ctx ▓▓▓▓░░░░░░░░░░░░░░░░ 21% 210K/1M | ~$X.YZ | ◆ project | ⎇ branch | [♪ badge]
 ```
 
 Fields injected by the orchestra block:
 
-**`ctx`** — context window utilization (always shown). Colored 10-cell bar (1 cell = 10%), percentage, and token usage. Example: `ctx ▓░░░░░░░░░ 12% 24K/200K` (green). Color thresholds:
+**`ctx`** — context window utilization (always shown). Colored 20-cell bar (1 cell = 5%), percentage, and token usage. Example: `ctx ▓▓░░░░░░░░░░░░░░░░░░ 12% 24K/200K` (green). Color thresholds:
 - **Green**: < 50% utilization
 - **Yellow**: 50–79% utilization
 - **Orange**: ≥ 80% utilization
@@ -127,7 +127,7 @@ The utilization denominator is looked up from `context-windows.yaml` per model I
 
 **`~$X.YZ`** — live running cost (shown when cost > 0; absent for zero-cost models). Source differs by session type:
 - **Orchestra sessions**: SoHoAI API query (TTL=8 s cache); stale cache marked `*`; JSONL estimate fallback marked `(est)`.
-- **Native sessions**: `cost.total_cost_usd` from CC's own `statusLine` JSON input — precise, always current, no external query needed.
+- **Native sessions**: `cost.total_cost_usd` from CC's own `statusLine` JSON input — precise, always current, no external query needed. Last non-zero total (parent + subagents) is written to `active-sessions/<session>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead, keeping the field continuously visible.
 
 **`♪ badge`** — orchestra session badge (shown only during active /duo or /brain sessions, or when a subagent is running). Badge formats in descending priority:
 
