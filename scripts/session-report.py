@@ -331,6 +331,7 @@ def main():
 
     # Print rows with alignment
     total_cost = 0.0
+    total_tokens = 0
     session_count = 0
     for rec in display_records:
         date_str = rec["date"].ljust(17)
@@ -343,19 +344,23 @@ def main():
         outcome_str = rec["outcome"]
         print(f"{date_str} {source_str} {project_str} {model_str} {tokens_str}  {cost_str}  {dur_str}  {outcome_str}")
 
-        # Accumulate cost (skip active markers)
+        # Accumulate cost and tokens (skip active markers)
         if rec["outcome"] != "(active)":
             try:
                 if rec["cost"] != "-" and rec["cost"].startswith("$"):
                     total_cost += float(rec["cost"][1:])
+                if rec["tokens"] != "-":
+                    total_tokens += int(rec["tokens"].replace(",", ""))
                 session_count += 1
             except Exception:
                 pass
 
-    # Print aggregates
+    # Print aggregates — one item per line
     print()
     print("--- Aggregates ---")
-    print(f"Sessions: {session_count}  Total cost: ${total_cost:.4f}")
+    print(f"Sessions : {session_count}")
+    print(f"Tokens   : {total_tokens:,}")
+    print(f"Cost     : ${total_cost:.4f}")
     print()
 
 
