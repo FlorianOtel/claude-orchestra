@@ -148,6 +148,18 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
             _total=$(${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3 \
                 -c "print(f'{float(\"${_cc_cost:-0}\")+float(\"${_sub_cost:-0}\"):.4f}')" \
                 2>/dev/null || echo "${_cc_cost:-0}")
+
+            # Cache last non-zero total; fall back to it when CC reports 0 at turn boundaries
+            # (CC resets cost.total_cost_usd to 0 briefly after each tool-call completes)
+            _cost_cache="$HOME/.claude/active-sessions/${live_session_id}.cost-cache"
+            if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$' \
+               && [ "$(printf '%.0f' "$_total" 2>/dev/null || echo 0)" != "0" ]; then
+                printf '%s' "$_total" > "$_cost_cache.tmp" 2>/dev/null \
+                    && mv -f "$_cost_cache.tmp" "$_cost_cache" 2>/dev/null || true
+            elif [ -f "$_cost_cache" ]; then
+                _total=$(cat "$_cost_cache" 2>/dev/null || echo "${_total:-0}")
+            fi
+
             if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$' \
                && [ "$(printf '%.0f' "$_total" 2>/dev/null || echo 0)" != "0" ]; then
                 live_cost=$(LC_ALL=C printf '~$%.2f' "$_total" 2>/dev/null || true)
