@@ -306,7 +306,7 @@ are correctly attributed to the **parent** orchestra session_id.
 
 Left out of scope because:
 1. Answering this requires live traffic inspection (SoHoAI logs or the `usage_events`
-   table in `chats.db`) during an actual /brain or /duo run.
+   table in `telemetry.db`) during an actual /brain or /duo run.
 2. Fixing it requires changes in the SoHoAI repo (`inject_orchestra_session_id`
    middleware or a parent-child session registry) — a cross-project change.
 3. The JSONL-based T2 fallback (`process_transcript()`) already gives correct totals
@@ -331,7 +331,7 @@ files, attribution is ambiguous. Left out of scope for the same reasons as above
 
 2. **Inspect SoHoAI `usage_events` table:**
    ```bash
-   sqlite3 ~/Gin-AI/projects/SoHoAI/chats.db \
+   sqlite3 ~/Gin-AI/projects/SoHoAI/telemetry.db \
      "SELECT orchestra_session_id, model, cost_usd FROM usage_events
       WHERE orchestra_session_id LIKE '%<session-basename>%'
       ORDER BY created_at;"
