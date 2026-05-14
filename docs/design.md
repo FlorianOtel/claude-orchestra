@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-14--20-10
+updated_at: 2026-05-14--20-30
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -127,7 +127,8 @@ The utilization denominator is looked up from `context-windows.yaml` per model I
 
 **`~$X.YZ`** — live running cost (always shown, including `~$0.00` from the very first render so the display is visibly live from session start). Source differs by session type:
 - **Orchestra sessions**: SoHoAI `usage_events` table query via SQLite direct read (primary, NFS-accessible) or HTTP API fallback (TTL=8 s cache). Stale cache marked `*`. No `(est)` fallback — JSONL is not used (SoHoAI-proxied sessions do not write `costUSD` to JSONL entries).
-- **Native sessions**: `cost.total_cost_usd` from CC's own `statusLine` JSON input — precise, always current, no external query needed. Last non-zero total (parent + subagents) is written to `active-sessions/<session>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead, keeping the field continuously visible.
+- **Native sessions (no recent orchestra)**: `cost.total_cost_usd` from CC's own `statusLine` JSON input — precise, always current, no external query needed. Last non-zero total (parent + subagents) is written to `active-sessions/<session>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead, keeping the field continuously visible.
+- **Native sessions (after orchestra session ends in same project)**: `cost_usd_estimate` from the most recent `telemetry.json`, shown instead of the CC JSON estimate — authoritative (SoHoAI subagents + T2 parent). Guard: `telemetry.json` mtime must be strictly greater than the native session's `.lck` mtime (proves the pipeline ended *during* this session, not before). If the `.lck` does not exist yet (`mtime=0`), falls back to CC JSON. This prevents false positives when a new session is opened after an orchestra session ends.
 
 **`♪ badge`** — orchestra session badge (shown only during active /duo or /brain sessions, or when a subagent is running). Badge formats in descending priority:
 
