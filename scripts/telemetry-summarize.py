@@ -530,17 +530,34 @@ def main():
     # Compute cost via priority cascade
     cost_usd = None
     cost_source = "none"
+    # These are set only when SoHoAI is used, so downstream code can report the split.
+    _subagent_cost_usd: Optional[float] = None
+    _parent_cost_usd: Optional[float] = None
 
     # Source 1: SoHoAI API
+    # SoHoAI only captures subagent costs: subagents inherit ANTHROPIC_CUSTOM_HEADERS
+    # (which carries X-Orchestra-Session-ID), but the parent Brain's API calls go to
+    # SoHoAI without that header (env var is written after parent starts).  Augment the
+    # SoHoAI subagent figure with a parent cost estimate from T2 JSONL + pricing.yaml.
     sohoai_base = os.environ.get("ANTHROPIC_BASE_URL", "").rstrip("/")
     sohoai_cfg = _load_sohoai_config()
     if sohoai_cfg.get("enabled", True) and sohoai_base:
-        cost_usd = query_sohoai_cost(
+        sohoai_cost = query_sohoai_cost(
             session_dir.name, started_at_unix, ended_at_unix,
             sohoai_base, int(sohoai_cfg.get("timeout_s", 5))
         )
-        if cost_usd is not None:
-            cost_source = "sohoai_api"
+        if sohoai_cost is not None:
+            # Compute parent-only cost from T2 tokens; pass empty subagents list.
+            # Use a scratch warnings list so a missing pricing entry doesn't pollute
+            # the main warnings (SoHoAI is the primary source; T2 parent is additive).
+            _parent_scratch: List[str] = []
+            parent_cost = compute_cost(parent, [], pricing_data, _parent_scratch)
+            _subagent_cost_usd = sohoai_cost
+            _parent_cost_usd = parent_cost
+            cost_usd = round(sohoai_cost + parent_cost, 4)
+            cost_source = "sohoai_api+t2_parent" if parent_cost > 0 else "sohoai_api"
+            if not pricing_data.get("models") and parent_cost == 0:
+                warnings.append("parent cost unavailable (no pricing.yaml): sohoai_api subagent cost only")
 
     # Source 2: litellm (with cache-token rates)
     if cost_usd is None:
@@ -577,6 +594,11 @@ def main():
         "iterations": iterations,
         "cost_usd_estimate": cost_usd,
         "cost_source": cost_source,
+        # Present only when SoHoAI is the primary source so readers can see the split.
+        **({
+            "subagent_cost_usd": _subagent_cost_usd,
+            "parent_cost_usd": _parent_cost_usd,
+        } if _subagent_cost_usd is not None else {}),
         "blast_radius": blast_radius,
         "pricing_snapshot_date": str(pricing_data.get("last_updated") or datetime.now(timezone.utc).strftime("%Y-%m-%d")),
     }
@@ -615,6 +637,10 @@ def main():
         "outcome": telemetry["outcome"],
         "cost_usd_estimate": cost_usd,
         "cost_source": cost_source,
+        **({
+            "subagent_cost_usd": _subagent_cost_usd,
+            "parent_cost_usd": _parent_cost_usd,
+        } if _subagent_cost_usd is not None else {}),
         "total_tokens": total_tokens,
         "regret_flag": regret_flag,
         "pricing_snapshot_date": telemetry["pricing_snapshot_date"],
@@ -632,7 +658,12 @@ def main():
                 with open(str(telemetry_jsonl) + ".tmp", "w") as f:
                     f.writelines(updated)
                 os.replace(str(telemetry_jsonl) + ".tmp", str(telemetry_jsonl))
-                print(f"telemetry: cost=${cost_usd:.4f} tokens={total_tokens} outcome={telemetry['outcome']} session={session_dir.name} (updated global log)", flush=True)
+                cost_detail = (
+                    f"${cost_usd:.4f} (parent=${_parent_cost_usd:.4f} + subagents=${_subagent_cost_usd:.4f})"
+                    if _subagent_cost_usd is not None and _parent_cost_usd
+                    else f"${cost_usd:.4f}"
+                )
+                print(f"telemetry: cost={cost_detail} tokens={total_tokens} outcome={telemetry['outcome']} session={session_dir.name} (updated global log)", flush=True)
                 return
         except Exception:
             pass
@@ -645,7 +676,12 @@ def main():
         # Don't exit; the session record was written
 
     # Print summary
-    print(f"telemetry: cost=${cost_usd} tokens={total_tokens} outcome={telemetry['outcome']} session={session_dir.name}")
+    cost_detail = (
+        f"${cost_usd:.4f} (parent=${_parent_cost_usd:.4f} + subagents=${_subagent_cost_usd:.4f})"
+        if _subagent_cost_usd is not None and _parent_cost_usd
+        else f"${cost_usd:.4f}"
+    )
+    print(f"telemetry: cost={cost_detail} tokens={total_tokens} outcome={telemetry['outcome']} session={session_dir.name}")
 
 
 if __name__ == "__main__":
