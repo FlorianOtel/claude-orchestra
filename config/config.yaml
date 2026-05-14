@@ -65,3 +65,4 @@ housekeeping:
 sohoai:
   enabled: true
   timeout_s: 5
+  db_path: "/mnt/nfs/__Backups/SoHoAI--databases/sqlite/chats.db"
