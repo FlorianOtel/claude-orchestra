@@ -129,6 +129,32 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
             live_cost=$(~/.claude/scripts/sohoai-live-cost.sh \
                 "$live_session_id" "$started_at" "$cost_cache" 2>/dev/null || true)
         elif [[ "$live_session_id" == native-* ]]; then
+            # Prefer authoritative telemetry.json from the most recent completed
+            # orchestra session, but only when it was written AFTER this native
+            # session started (.lck mtime is the session-start lower bound).
+            # Guard: _lck_mtime > 0 ensures .lck exists; _tel_mtime > _lck_mtime
+            # ensures the orchestra session ended during this session, not before.
+            # This eliminates false positives for new sessions opened after a
+            # pipeline ends in the same project.
+            if [ -d "$sessions_root" ]; then
+                _recent_dir=$(find "$sessions_root" -mindepth 1 -maxdepth 1 -type d \
+                    -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)
+                _tel_file="${_recent_dir}/telemetry.json"
+                if [ -f "$_tel_file" ]; then
+                    _lck_mtime=$(stat -c %Y \
+                        "$HOME/.claude/active-sessions/${live_session_id}.lck" \
+                        2>/dev/null || echo 0)
+                    _tel_mtime=$(stat -c %Y "$_tel_file" 2>/dev/null || echo 0)
+                    if [ "$_lck_mtime" -gt 0 ] && [ "$_tel_mtime" -gt "$_lck_mtime" ]; then
+                        _tel_cost=$(jq -r '.cost_usd_estimate // empty' \
+                            "$_tel_file" 2>/dev/null || true)
+                        if printf '%s' "$_tel_cost" | grep -qE '^[0-9]+\.?[0-9]*$'; then
+                            live_cost=$(LC_ALL=C printf '~$%.2f' "$_tel_cost" 2>/dev/null || true)
+                        fi
+                    fi
+                fi
+            fi
+            if [ -z "$live_cost" ]; then
             _cc_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null)
 
             # Subagent costs — walk agent JSONLs, TTL-cached 30 s
@@ -165,6 +191,7 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
             if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$'; then
                 live_cost=$(LC_ALL=C printf '~$%.2f' "$_total" 2>/dev/null || true)
             fi
+            fi  # telemetry fallback
         fi
     fi
 
