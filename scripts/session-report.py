@@ -58,6 +58,39 @@ def _read_model_from_jsonl(uuid: str) -> Optional[str]:
     return None
 
 
+def _get_project_friendly_name(mangled: str) -> str:
+    """Return friendly project name from mangled ~/.claude/projects/ dir name.
+    Checks *.project-name sidecar first; falls back to last path component."""
+    projects_root = Path.home() / ".claude" / "projects"
+    project_dir = projects_root / mangled
+    if project_dir.exists():
+        try:
+            for sidecar in project_dir.glob("*.project-name"):
+                return sidecar.read_text().strip()
+        except Exception:
+            pass
+    # NFS mangled paths: -mnt-nfs-Florian-Gin-AI-projects-<name> → <name>
+    if mangled.startswith("-mnt-nfs-"):
+        parts = mangled.split("-")
+        if len(parts) > 4:
+            return parts[-1]
+    return mangled
+
+
+def _read_project_from_jsonl(uuid: str) -> str:
+    """Locate transcript JSONL for uuid; return friendly project name, or ''."""
+    projects_root = Path.home() / ".claude" / "projects"
+    try:
+        for proj_dir in sorted(projects_root.iterdir()):
+            if not proj_dir.is_dir():
+                continue
+            if (proj_dir / f"{uuid}.jsonl").exists():
+                return _get_project_friendly_name(proj_dir.name)
+    except Exception:
+        pass
+    return ""
+
+
 def parse_iso8601(timestamp_str: str) -> datetime:
     """Parse ISO-8601 timestamp to datetime."""
     try:
@@ -85,22 +118,22 @@ def load_native_telemetry() -> List[Dict[str, Any]]:
 
 
 def load_orchestra_telemetry() -> List[Dict[str, Any]]:
-    """Load telemetry from ~/.claude/orchestra/telemetry.jsonl."""
+    """Load telemetry from ~/.claude/orchestra/telemetry.jsonl.
+    Deduplicates by session_id, keeping the last record (re-runs are authoritative)."""
     path = Path.home() / ".claude" / "orchestra" / "telemetry.jsonl"
-    records = []
+    seen: Dict[str, Dict[str, Any]] = {}  # session_id -> record, last wins
     if path.exists():
         try:
             with open(path) as f:
                 for line in f:
                     if line.strip():
                         record = json.loads(line)
-                        # Extract command as source (brain / duo / other)
                         source = record.get("command", "unknown")
                         record["source"] = source
-                        records.append(record)
+                        seen[record.get("session_id", "")] = record
         except Exception:
             pass
-    return records
+    return list(seen.values())
 
 
 def extract_project_name(session_dir: str) -> str:
@@ -251,6 +284,16 @@ def main():
     # Load all records
     native_records = load_native_telemetry()
     orchestra_records = load_orchestra_telemetry()
+
+    # Suppress native sessions that are the parent process of an orchestra run.
+    # When /brain or /duo runs, the parent CC process is registered as a native session
+    # AND finalized as an orchestra session — same started_at, different session_id formats.
+    orchestra_start_times = {r.get("started_at") for r in orchestra_records if r.get("started_at")}
+    native_records = [
+        r for r in native_records
+        if r.get("started_at") not in orchestra_start_times
+    ]
+
     all_records = native_records + orchestra_records
 
     # Apply filters
@@ -300,10 +343,18 @@ def main():
         if raw_model != "-":
             raw_model = re.sub(r'\[.*?\]$', '', raw_model)
             raw_model = re.sub(r'-\d{8}$', '', raw_model)
+        # Derive project name: orchestra sessions use session_dir; native sessions look up JSONL
+        if rec.get("session_dir"):
+            project = extract_project_name(rec["session_dir"])
+        elif rec.get("source") == "native":
+            m2 = _NATIVE_UUID_RE.match(rec.get("session_id", ""))
+            project = (_read_project_from_jsonl(m2.group(1)) or "-") if m2 else "-"
+        else:
+            project = "-"
         display_records.append({
             "date": parse_iso8601(rec.get("started_at", "")).strftime("%Y-%m-%d--%H-%M"),
             "source": rec.get("source", "-"),
-            "project": extract_project_name(rec.get("session_dir", "")) if rec.get("session_dir") else "-",
+            "project": project,
             "model": raw_model,
             "tokens": tok_str,
             "cost": format_cost(rec.get("cost_usd_estimate", 0), cost_source),

@@ -603,7 +603,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Cost report for all Claude Code sessions (not just orchestra)"
     )
-    parser.add_argument("--last", type=int, default=20, help="Show last N sessions (default 20)")
+    parser.add_argument("--last", type=int, default=None,
+        help="Show last N sessions (default 20; unlimited when --since/--month is set)")
     parser.add_argument("--since", help="Show sessions from YYYY-MM-DD onwards")
     parser.add_argument("--month", help="Show sessions in YYYY-MM")
     parser.add_argument("--project", help="Filter by project path prefix")
@@ -630,8 +631,12 @@ def main():
         min_cost=args.min_cost,
     )
 
-    # Limit to --last N
-    filtered = filtered[: args.last]
+    # Apply --last limit: default to 20 only when no date-range filter is active
+    last_n = args.last
+    if last_n is None and args.since is None and args.month is None:
+        last_n = 20
+    if last_n is not None:
+        filtered = filtered[:last_n]
 
     # Load orchestra UUIDs if needed
     orchestra_uuids = set()

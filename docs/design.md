@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-14--14-30
+updated_at: 2026-05-14--14-48
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -364,6 +364,11 @@ The Stop hook fires per response turn. It iterates all `native-*.lck` files and 
 
 **Re-finalization and dedup (2026-05-12).** `native-session-finalize.py` writes atomically via a `.tmp` rename and strips any prior record for the same `session_id` before writing, so a re-run (e.g. manual finalize followed by a Stop-hook finalize) produces exactly one authoritative record. `session-report.py`'s `load_native_telemetry()` additionally deduplicates on read (last record per `session_id` wins) as a safety net for records written before this fix.
 
+**Cross-source dedup — orchestra-parent suppression (2026-05-14).** When `/brain` or `/duo` runs, the parent CC process registers as a native session (via `bash-session-init.sh`) AND is finalized as an orchestra session. Both have the same `started_at` timestamp (the orchestra session ID encodes the start time; `bash-session-init.sh` records the same value in the `.lck`). Two fixes prevent double-counting:
+- `native-session-finalize.py` skips writing a native record if `started_at` already appears in `~/.claude/orchestra/telemetry.jsonl` — prevents future duplicates from accumulating in source files.
+- `session-report.py` filters out native records whose `started_at` matches any orchestra record at display time — retroactively fixes historical duplicates already in the JSONL files.
+`session-report.py`'s `load_orchestra_telemetry()` also deduplicates by `session_id` (last record wins), mirroring the same pattern in `load_native_telemetry()`.
+
 **Session IDs.** Native session IDs written by `bash-session-init.sh` are `native-<UUID>` (e.g. `native-6dedcd3d-37e5-46a9-958e-fb0a822b5e3a`). The UUID is the CC session UUID (`CLAUDE_CODE_SESSION_ID`), making IDs globally unique and stable. Older sessions (before the UUID-keyed registration refactor, 2026-05-07) used a `native-<timestamp>-<PID>` format; both formats are stored in `~/.claude/native-sessions/telemetry.jsonl` and handled by the report scripts.
 
 **Telemetry record fields** (written to `~/.claude/native-sessions/telemetry.jsonl`):
@@ -386,7 +391,7 @@ The Stop hook fires per response turn. It iterates all `native-*.lck` files and 
 1. `~/.claude/native-sessions/telemetry.jsonl` — primary; contains all sessions finalized since 2026-05-07.
 2. `~/.claude/usage-data/session-meta/*.json` — legacy; populated by CC < 2.1 (April 2026 and earlier); no longer updated by CC 2.1.132.
 
-For sessions with a `native-<UUID>` session ID, the report also looks up the transcript JSONL to obtain per-type token breakdown and project name. For old-format `native-<timestamp>-<PID>` sessions, `total_tokens` from the telemetry record is used directly and project name shows as `native`.
+For sessions with a `native-<UUID>` session ID, the report also looks up the transcript JSONL to obtain per-type token breakdown and project name. For old-format `native-<timestamp>-<PID>` sessions, `total_tokens` from the telemetry record is used directly and project name shows as `native`. `session-report.py` (unified report) applies the same project-name lookup for native sessions, using `*.project-name` sidecar files and NFS path unmangling. `native-session-report.py` defaults to 20 sessions when no date filter is given; when `--since` or `--month` is active and `--last` is not explicitly set, no cap is applied (all matching sessions are shown).
 
 **Requirement.** `BASH_ENV=/home/florian/.claude/scripts/bash-session-init.sh` must be set in `settings.json` env. This is **not** managed by `deploy.sh` — it must be set manually or persisted in `settings.json`. Without it, `bash-session-init.sh` is never sourced and no `.lck` is written; native sessions appear as `cost_source: "none"` with zero cost.
 
