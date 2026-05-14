@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-12--11-00
+updated_at: 2026-05-14--14-30
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -127,7 +127,7 @@ Fields injected by the orchestra block:
 The utilization denominator is looked up from `context-windows.yaml` per model ID, with fallback to Claude Code's native `context_window.context_window_size`. Model ID normalization strips `[1m]`, `[200k]`, and date suffixes before lookup. Models with `[1m]` in their ID force a 1,000,000 denominator.
 
 **`~$X.YZ`** — live running cost (always shown, including `~$0.00` from the very first render so the display is visibly live from session start). Source differs by session type:
-- **Orchestra sessions**: SoHoAI API query (TTL=8 s cache); stale cache marked `*`; JSONL estimate fallback marked `(est)`.
+- **Orchestra sessions**: SoHoAI `usage_events` table query via SQLite direct read (primary, NFS-accessible) or HTTP API fallback (TTL=8 s cache). Stale cache marked `*`. No `(est)` fallback — JSONL is not used (SoHoAI-proxied sessions do not write `costUSD` to JSONL entries).
 - **Native sessions**: `cost.total_cost_usd` from CC's own `statusLine` JSON input — precise, always current, no external query needed. Last non-zero total (parent + subagents) is written to `active-sessions/<session>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead, keeping the field continuously visible.
 
 **`♪ badge`** — orchestra session badge (shown only during active /duo or /brain sessions, or when a subagent is running). Badge formats in descending priority:
@@ -152,7 +152,7 @@ The status line script is called by Claude Code on each render tick — after ev
 | `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
 | `/brain` inflight marker (session-discovery for `/brain-abandon` and explicit CMD-classification by Stop-hook) | `${SESSION_DIR}/.brain-inflight` | `/brain` command setup |
 | Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
-| Live cost (orchestra) | SoHoAI API via `sohoai-live-cost.sh` (TTL=8 s cache; JSONL fallback) | T2 via SoHoAI or JSONL estimate |
+| Live cost (orchestra) | SoHoAI `usage_events` SQLite (direct) → HTTP API fallback via `sohoai-live-cost.sh` (TTL=8 s) | T2 via SoHoAI API |
 | Live cost (native) | `cost.total_cost_usd` from CC `statusLine` JSON input | CC accumulates cost internally |
 | Live cost (ctx segment) | `context_windows.yaml` + CC context width | ctx-segment.sh |
 
@@ -183,11 +183,24 @@ CC passes a rich JSON object to the `statusLine` command on every render. Key fi
 
 #### SoHoAI live cost (orchestra sessions only)
 
-SoHoAI cost is retrieved via `scripts/sohoai-live-cost.sh` for orchestra sessions:
-- **TTL**: 8 seconds (cache hit < 50ms wall time)
-- **Stale marker**: trailing `*` when cache is stale and SoHoAI failed
-- **JSONL fallback marker**: trailing `(est)` when JSONL estimate is used
-- **SoHoAI timeout**: 1s; JSONL lookback is 1 hour
+SoHoAI cost for orchestra sessions is retrieved via `scripts/sohoai-live-cost.sh`:
+
+**Primary: SQLite direct read**
+- Reads `usage_events` table from SoHoAI's SQLite DB at `sohoai.db_path` in `config.yaml` (or `SOHOAI_DB_PATH` env var)
+- Query: `SELECT SUM(cost_usd) FROM usage_events WHERE orchestra_session_id = ?`
+- No time filter needed — `orchestra_session_id` uniquely identifies the session
+- Instant (<5 ms), no HTTP overhead, no timeout risk
+- Returns the running accumulated cost (same data as SoHoAI HTTP API)
+
+**Fallback: SoHoAI HTTP API**
+- Fires only when SQLite DB is unavailable/unconfigured
+- `started_at` is derived from `.transcript-path` mtime (written once at session init), NOT from the passed `started_at_unix` (which is the session dir mtime — updated on every file write, effectively always near-now, which caused the original oscillation)
+- 1s timeout; stale cache returned with trailing `*` on failure
+
+**Why `costUSD` JSONL is not used**
+Sessions routed through SoHoAI proxy do not receive a `costUSD` field in JSONL entries (CC only writes this when calling Anthropic directly). Token-based estimation from pricing.yaml overcounts by ~55% because SoHoAI/LiteLLM applies different effective cache_read rates. The SQLite DB contains SoHoAI's own billing records and is the authoritative source.
+
+**TTL**: 8 s (cache hit < 50 ms). Stale cache marked `*`.
 
 Native sessions bypass this path entirely and use `cost.total_cost_usd` from the JSON input instead.
 

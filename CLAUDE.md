@@ -1,15 +1,10 @@
 # Claude Orchestra — project instructions
 
-This repo contains the orchestra source files. Claude Code running here uses
-`~/.claude/` exclusively — there are no project-level agents or commands active
-automatically. Deploying is an explicit, conscious step.
-
-## Key workflows
+## Project workflows
 
 ```bash
 ./deploy.sh          # deploy to ~/.claude/ (system-wide, all machines via NFS)
 ./collect.sh         # sync ~/.claude/ changes back to repo before committing
-git add agents/ commands/ scripts/ config/ && git commit && git push
 ```
 
 ## Branch policy — main → litellm-gateway

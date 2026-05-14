@@ -130,6 +130,10 @@ case "$MODE" in
 
     # T1 telemetry: append start-event to active session's telemetry-events.jsonl
     ACTIVE_SESSION_DIR="$(find_active_session_dir)"
+    # Override STAMP_SESSION with the actual transcript UUID if available
+    if [ -n "$ACTIVE_SESSION_DIR" ] && [ -f "${ACTIVE_SESSION_DIR}/.transcript-uuid" ]; then
+        STAMP_SESSION="$(cat "${ACTIVE_SESSION_DIR}/.transcript-uuid" 2>/dev/null | tr -d '[:space:]' || true)"
+    fi
     if [ -n "$ACTIVE_SESSION_DIR" ]; then
       USAGE_JSON="$(printf '%s' "$INPUT_JSON" \
         | jq -c '.tool_input.usage // .params.usage // null' 2>/dev/null \
@@ -166,6 +170,17 @@ case "$MODE" in
       rm -f "$LAST_LOGFILE_REF" 2>/dev/null || true
     fi
 
+    # Derive subagent type from logfile name when SubagentStop JSON omits it
+    if [ "$SUBAGENT" = "unknown" ] && [ -n "$LOGFILE" ]; then
+        case "$(basename "$LOGFILE")" in
+            plan-*)      SUBAGENT="planner"  ;;
+            implement-*) SUBAGENT="actor"    ;;
+            review-*)    SUBAGENT="reviewer" ;;
+            research-*)  SUBAGENT="Explore"  ;;
+        esac
+        STAGE="$(stage_for_subagent "$SUBAGENT")"
+    fi
+
     if [ -n "$LOGFILE" ] && [ -f "$LOGFILE" ]; then
       {
         echo ""
@@ -182,6 +197,10 @@ case "$MODE" in
 
     # T1 telemetry: append end-event to active session's telemetry-events.jsonl
     ACTIVE_SESSION_DIR="$(find_active_session_dir)"
+    # Override STAMP_SESSION with the actual transcript UUID if available
+    if [ -n "$ACTIVE_SESSION_DIR" ] && [ -f "${ACTIVE_SESSION_DIR}/.transcript-uuid" ]; then
+        STAMP_SESSION="$(cat "${ACTIVE_SESSION_DIR}/.transcript-uuid" 2>/dev/null | tr -d '[:space:]' || true)"
+    fi
     if [ -n "$ACTIVE_SESSION_DIR" ]; then
       USAGE_JSON="$(printf '%s' "$INPUT_JSON" \
         | jq -c '.usage // .tool_input.usage // .params.usage // null' 2>/dev/null \
