@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-14--14-48
+updated_at: 2026-05-14--20-10
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -331,7 +331,7 @@ Two layers instrument every orchestra session:
 **T2 — transcript parsing, authoritative.** Runs once at cleanup. `telemetry-summarize.py` walks all `*.jsonl` files in the project's transcripts directory whose records fall within the session time window — capturing content split across multiple JSONLs by `--fork-session` or `/clear`-induced UUID rotation. For each in-window parent JSONL, it walks `<uuid>/subagents/agent-*.jsonl` (subagent transcripts), attributed via `agent-*.meta.json` sidecars (`{"agentType": "…"}`). Token counts accumulate across all contributing JSONLs; USD cost is computed via the cost-source cascade (see §Cost-source cascade).
 
 T2 writes:
-- `${SESSION_DIR}/telemetry.json` — rich per-session record: parent + subagent tokens per tier, USD cost estimate, iteration counts, outcome, `cost_source`, `parser_warnings`.
+- `${SESSION_DIR}/telemetry.json` — rich per-session record: parent + subagent tokens per tier, USD cost estimate (`cost_usd_estimate` = `subagent_cost_usd` + `parent_cost_usd` when source is SoHoAI), iteration counts, outcome, `cost_source`, `parser_warnings`.
 - `~/.claude/orchestra/telemetry.jsonl` — global append-only trend log; one line per session (includes `session_dir` for cross-project lookup).
 - T2 supersedes T1 for all cost figures.
 
@@ -453,11 +453,11 @@ At T2 cleanup, `telemetry-summarize.py` queries:
 GET {ANTHROPIC_BASE_URL}/v1/usage/stats?session_id=<ID>&since=<ISO8601>&until=<ISO8601>
 ```
 
-with a ±60s buffer around the session time window. If SoHoAI returns a non-zero `totals.cost_usd`, that value is used and `cost_source` is set to `"sohoai_api"`. Otherwise the system falls back to litellm or pricing.yaml (see §Cost-source cascade).
+with a ±60s buffer around the session time window. If SoHoAI returns a non-zero `totals.cost_usd`, that value is used as the **subagent cost** and `cost_source` is set to `"sohoai_api+t2_parent"`. The parent Brain's cost (not visible to SoHoAI — see below) is computed from the T2 JSONL token counts using `pricing.yaml` and added to the SoHoAI subagent figure. Both components are stored in `telemetry.json` as `subagent_cost_usd` and `parent_cost_usd`; `cost_usd_estimate` is their sum. If pricing.yaml is unavailable the parent component is zero and `cost_source` falls back to `"sohoai_api"`. Otherwise the system falls back to litellm or pricing.yaml (see §Cost-source cascade).
 
 For native sessions, `native-session-finalize.py` performs the same SoHoAI query at finalization time. In practice (CC 2.1.132), SoHoAI returns zero for native sessions (no header injected), so cost attribution falls back to `pricing_yaml`. The result is written to `~/.claude/native-sessions/telemetry.jsonl`.
 
-**Known limitation:** `ANTHROPIC_CUSTOM_HEADERS` is read by Claude Code at startup. The parent process's own initial API calls (before the setup block writes the header) do not carry the session ID. Subagents inherit the already-written header via `settings.local.json` and are correctly attributed.
+**Why SoHoAI misses the parent Brain cost.** `ANTHROPIC_CUSTOM_HEADERS` (which carries `X-Orchestra-Session-ID`) is written to `settings.local.json` by the session setup block. The parent Brain process reads settings at startup — before the setup block executes — so the parent's own API calls go to SoHoAI *without* the session header. Subagents are spawned after the header is written and inherit it correctly. The T2 parent cost augmentation (above) compensates for this gap.
 
 #### Inspecting per-session data
 
@@ -502,7 +502,8 @@ T2 applies sources in priority order; first non-zero value wins:
 
 | Priority | Source | `cost_source` value | Condition |
 |---|---|---|---|
-| 1 | SoHoAI API | `"sohoai_api"` | `ANTHROPIC_BASE_URL` set; `GET /v1/usage/stats` returns non-zero |
+| 1 | SoHoAI API + T2 parent | `"sohoai_api+t2_parent"` | `ANTHROPIC_BASE_URL` set; SoHoAI returns non-zero; pricing.yaml provides parent rate |
+| 1a | SoHoAI API only | `"sohoai_api"` | SoHoAI returns non-zero; pricing.yaml unavailable (parent cost = 0) |
 | 2 | litellm | `"litellm"` | litellm installed; `completion_cost()` returns non-zero for session models |
 | 3 | pricing.yaml | `"pricing_yaml"` | `config/pricing.yaml` present with model rates |
 | — | none (0.0) | `"none"` | All three unavailable or return zero |
