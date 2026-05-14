@@ -142,6 +142,30 @@ def main():
         except Exception:
             pass
 
+    # Skip if this session is the parent process of an orchestra run.
+    # The orchestra Stop-hook writes the orchestra record first; we check for a matching
+    # started_at before writing the native record to avoid double-counting in reports.
+    _orch_jsonl = Path.home() / ".claude" / "orchestra" / "telemetry.jsonl"
+    if _orch_jsonl.exists():
+        try:
+            with open(_orch_jsonl) as _f:
+                for _line in _f:
+                    if not _line.strip():
+                        continue
+                    try:
+                        _r = json.loads(_line)
+                        if _r.get("started_at") == args.started_at_iso:
+                            print(
+                                f"native-session-finalize: skipping {args.session_id} "
+                                f"— parent of orchestra session at {args.started_at_iso}",
+                                file=sys.stderr,
+                            )
+                            sys.exit(0)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
     # Build telemetry record
     record = {
         "session_id": args.session_id,
