@@ -98,6 +98,18 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         [ -n "$_json_sid" ] && live_session_id="native-${_json_sid}"
     fi
 
+    # --- started_at for native sessions (needed for SoHoAI time-scoped queries) ---
+    _real_started_at=""
+    if [[ "$live_session_id" == native-* ]]; then
+        _lck="$HOME/.claude/active-sessions/${live_session_id}.lck"
+        if [ -f "$_lck" ]; then
+            _sat_raw=$(grep '^started_at=' "$_lck" 2>/dev/null | cut -d= -f2-)
+            if [ -n "$_sat_raw" ]; then
+                _real_started_at=$(date -d "$_sat_raw" +%s 2>/dev/null || echo "")
+            fi
+        fi
+    fi
+
     # --- ctx segment (model context window + token usage bar) ---
     # Self-fix: host status-line.sh may set tokens_used=0 when used_percentage=0
     # (CC reports 0% usage for non-Anthropic models even when tokens were consumed).
@@ -115,6 +127,52 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     # Round to integer — ctx-segment.sh validates used_percentage with ^[0-9]+$ (integers only)
     used_percentage=$(printf "%.0f" "$used_percentage")
     model_id=$(echo "$input" | jq -r '.model.id // .model.display_name // ""' 2>/dev/null)
+
+    # Non-Anthropic models (claude-code-*, local/*) — CC gives no token counts.
+    # Soften forced-zero cost: only local/qwen3* models are truly $0.
+    _is_non_anthropic=false
+    case "$model_id" in
+        local/qwen3*|claude-code-qwen3*)
+            _is_non_anthropic=true ;;
+        claude-code-*)
+            _is_non_anthropic=true ;;
+    esac
+
+    # --- SoHoAI live token fallback for non-Anthropic models ---
+    # When CC reports zero tokens, reach into SoHoAI telemetry.  Scope by
+    # .lck started_at so concurrent sessions with the same model don't collide.
+    if [ "$_is_non_anthropic" = true ] && [ "$_total" -eq 0 ] \
+       && [ -n "$live_session_id" ] && [ -n "$_real_started_at" ]; then
+        _sohoai_cache="$HOME/.claude/active-sessions/${live_session_id}.sohoai"
+        # Derive bare model name from CC model_id for SoHoAI LIKE query
+        _model_filter="${model_id#claude-code-}"
+        if [ -z "$_model_filter" ]; then
+            _model_filter="${model_id#local/}"
+        fi
+        [ -z "$_model_filter" ] && _model_filter="$model_id"
+
+        _sohoai_tok=$(~/.claude/scripts/sohoai-live-cost.sh \
+            "$live_session_id" "$_real_started_at" "$_sohoai_cache" \
+            "$_model_filter" "tokens" 2>/dev/null || echo "")
+
+        # Monotonic: never decrease the displayed token count
+        _max_cache="$HOME/.claude/active-sessions/${live_session_id}.max-tokens"
+        _max=0
+        [ -f "$_max_cache" ] && _max=$(cat "$_max_cache" 2>/dev/null || echo 0)
+        if [ -n "$_sohoai_tok" ] && [ "$_sohoai_tok" -gt "$_max" ] 2>/dev/null; then
+            _max="$_sohoai_tok"
+            printf '%s' "$_max" > "$_max_cache.tmp" 2>/dev/null \
+                && mv -f "$_max_cache.tmp" "$_max_cache" 2>/dev/null || true
+        fi
+        if [ "$_max" -gt 0 ] 2>/dev/null; then
+            tokens_used="$_max"
+            if [ "$context_window_size" -gt 0 ]; then
+                used_percentage=$(echo "scale=2; 100 * $_max / $context_window_size" | bc)
+            fi
+            used_percentage=$(printf "%.0f" "$used_percentage")
+        fi
+    fi
+
     ctx_seg=$(~/.claude/scripts/ctx-segment.sh "${used_percentage:-0}" "${tokens_used:-0}" "${context_window_size:-200000}" "${model_id:-}" 2>/dev/null || true)
 
     # --- live cost ---
@@ -156,6 +214,9 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
             fi
             if [ -z "$live_cost" ]; then
             _cc_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null)
+            if [ "$_is_non_anthropic" = true ]; then
+                _cc_cost=0
+            fi
 
             # Subagent costs — walk agent JSONLs, TTL-cached 30 s
             _parent_uuid="${live_session_id#native-}"
@@ -176,13 +237,14 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
                 2>/dev/null || echo "${_cc_cost:-0}")
 
             # Cache last non-zero total; fall back to it when CC reports 0 at turn boundaries
-            # (CC resets cost.total_cost_usd to 0 briefly after each tool-call completes)
+            # (CC resets cost.total_cost_usd to 0 briefly after each tool-call completes).
+            # Skip cache read for non-Anthropic models — cost is intentionally $0 for them.
             _cost_cache="$HOME/.claude/active-sessions/${live_session_id}.cost-cache"
             if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$' \
                && [ "$(printf '%.0f' "$_total" 2>/dev/null || echo 0)" != "0" ]; then
                 printf '%s' "$_total" > "$_cost_cache.tmp" 2>/dev/null \
                     && mv -f "$_cost_cache.tmp" "$_cost_cache" 2>/dev/null || true
-            elif [ -f "$_cost_cache" ]; then
+            elif [ "$_is_non_anthropic" != true ] && [ -f "$_cost_cache" ]; then
                 _total=$(cat "$_cost_cache" 2>/dev/null || echo "${_total:-0}")
             fi
 

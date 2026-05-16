@@ -181,6 +181,15 @@ def main():
     if total_tokens:
         record["total_tokens"] = total_tokens
 
+    # Clean up per-session live caches
+    for _suffix in ".cost-cache", ".subcost-cache", ".max-tokens", ".sohoai":
+        _cache_path = Path.home() / ".claude" / "active-sessions" / f"{args.session_id}{_suffix}"
+        if _cache_path.exists():
+            try:
+                _cache_path.unlink()
+            except Exception:
+                pass
+
     # Write to telemetry.jsonl — replace existing entry for this session_id if present,
     # else append. Mirrors orchestra telemetry-summarize.py dedup behaviour: re-runs
     # (e.g. Stop hook firing after a manual finalize) produce one authoritative record.
