@@ -136,28 +136,116 @@ def _load_sohoai_config() -> Dict[str, Any]:
     return {"enabled": True, "timeout_s": 5}
 
 
-def query_sohoai_cost(
+def query_sohoai_usage(
     session_id: str,
     started_at_unix: float,
     ended_at_unix: float,
     base_url: str,
     timeout_s: int,
-) -> Optional[float]:
-    """Query SoHoAI API for cost_usd and token counts.
+    model_filter: Optional[str] = None,
+) -> Optional[dict]:
+    """Query SoHoAI for cost_usd and token counts.
 
-    Returns tuple of (cost_usd, token_counts_dict) or (None, None) on failure.
+    For native sessions (session_id starts with 'native-'):
+      Queries by model_filter + time window.  Source filter is intentionally
+      omitted: SoHoAI assigns 'unknown' source to non-Anthropic LiteLLM-routed
+      models, so only model name + started_at window are reliable for scoping.
+    For orchestra sessions:
+      Queries by orchestra_session_id.
+
+    Returns dict with keys:
+      cost_usd, input_tokens, output_tokens,
+      cache_creation_tokens, cache_read_tokens
+    Or None on failure / no matching records.
     """
     if not base_url or not session_id:
         return None
 
-    try:
-        since = datetime.fromtimestamp(started_at_unix - 60, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        until = datetime.fromtimestamp(ended_at_unix + 60, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    is_native = session_id.startswith("native-")
 
-        url = (f"{base_url}/v1/usage/stats?"
-               f"session_id={urllib.parse.quote(session_id)}&"
-               f"since={urllib.parse.quote(since)}&"
-               f"until={urllib.parse.quote(until)}")
+    # Build time bounds
+    since_iso = datetime.fromtimestamp(started_at_unix - 60, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    until_iso = datetime.fromtimestamp(ended_at_unix + 60, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Try 1: SoHoAI SQLite DB (direct, fast, no HTTP timeout)
+    try:
+        import sqlite3
+        from pathlib import Path
+    except ImportError:
+        sqlite3 = None
+        Path = None
+
+    if sqlite3 is not None and Path is not None:
+        cfg = _load_sohoai_config()
+        db_path = os.environ.get("SOHOAI_DB_PATH", "") or cfg.get("db_path", "")
+        if db_path and Path(db_path).exists():
+            try:
+                uri = Path(db_path).as_uri() + "?mode=ro"
+                with sqlite3.connect(uri, uri=True) as conn:
+                    session_started_iso = datetime.fromtimestamp(
+                        started_at_unix, tz=timezone.utc
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if is_native:
+                        if not model_filter:
+                            return None
+                        row = conn.execute(
+                            "SELECT SUM(cost_usd), SUM(input_tokens), SUM(output_tokens), "
+                            "SUM(cache_creation_tokens), SUM(cache_read_tokens) "
+                            "FROM usage_events WHERE (model = ? OR model LIKE ?) "
+                            "AND created_at >= ?",
+                            (model_filter, f"%{model_filter}%", session_started_iso),
+                        ).fetchone()
+                        latest = conn.execute(
+                            "SELECT input_tokens, output_tokens "
+                            "FROM usage_events WHERE (model = ? OR model LIKE ?) "
+                            "AND created_at >= ? ORDER BY created_at DESC LIMIT 1",
+                            (model_filter, f"%{model_filter}%", session_started_iso),
+                        ).fetchone()
+                    else:
+                        row = conn.execute(
+                            "SELECT SUM(cost_usd), SUM(input_tokens), SUM(output_tokens), "
+                            "SUM(cache_creation_tokens), SUM(cache_read_tokens) "
+                            "FROM usage_events WHERE orchestra_session_id = ?",
+                            (session_id,),
+                        ).fetchone()
+                        latest = conn.execute(
+                            "SELECT input_tokens, output_tokens "
+                            "FROM usage_events WHERE orchestra_session_id = ? "
+                            "ORDER BY created_at DESC LIMIT 1",
+                            (session_id,),
+                        ).fetchone()
+                    if row and (row[0] is not None or row[1] or row[2]):
+                        return {
+                            "cost_usd": float(row[0] or 0.0),
+                            "input_tokens": int(row[1] or 0),
+                            "output_tokens": int(row[2] or 0),
+                            "cache_creation_tokens": int(row[3] or 0),
+                            "cache_read_tokens": int(row[4] or 0),
+                            "latest_total_tokens": int(
+                                ((latest[0] or 0) + (latest[1] or 0)) if latest else 0
+                            ),
+                        }
+            except Exception:
+                pass
+
+    # Try 2: SoHoAI HTTP API fallback
+    try:
+        if is_native:
+            if not model_filter:
+                return None
+            url = (
+                f"{base_url}/v1/usage/stats?"
+                f"model={urllib.parse.quote(model_filter)}&"
+                f"since={urllib.parse.quote(since_iso)}&"
+                f"until={urllib.parse.quote(until_iso)}"
+            )
+        else:
+            url = (
+                f"{base_url}/v1/usage/stats?"
+                f"session_id={urllib.parse.quote(session_id)}&"
+                f"since={urllib.parse.quote(since_iso)}&"
+                f"until={urllib.parse.quote(until_iso)}"
+            )
 
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=timeout_s) as response:
@@ -166,11 +254,43 @@ def query_sohoai_cost(
             data = json.loads(response.read().decode("utf-8"))
             totals = data.get("totals", {})
             cost_usd = totals.get("cost_usd", 0.0)
+            input_tokens = totals.get("input_tokens", 0)
+            output_tokens = totals.get("output_tokens", 0)
+            cache_creation_tokens = totals.get("cache_creation_tokens", 0)
+            cache_read_tokens = totals.get("cache_read_tokens", 0)
             if cost_usd and cost_usd > 0:
-                return float(cost_usd)
+                return {
+                    "cost_usd": float(cost_usd),
+                    "input_tokens": int(input_tokens or 0),
+                    "output_tokens": int(output_tokens or 0),
+                    "cache_creation_tokens": int(cache_creation_tokens or 0),
+                    "cache_read_tokens": int(cache_read_tokens or 0),
+                }
             return None
-    except (urllib.error.URLError, json.JSONDecodeError, KeyError, Exception):
+    except Exception:
         return None
+
+
+def query_sohoai_cost(
+    session_id: str,
+    started_at_unix: float,
+    ended_at_unix: float,
+    base_url: str,
+    timeout_s: int,
+    model_filter: Optional[str] = None,
+) -> Optional[float]:
+    """Backward-compatible cost-only wrapper around query_sohoai_usage().
+
+    Returns cost_usd float or None on failure.
+    """
+    result = query_sohoai_usage(
+        session_id, started_at_unix, ended_at_unix, base_url, timeout_s, model_filter
+    )
+    if result is not None:
+        cost = result.get("cost_usd")
+        if cost and cost > 0:
+            return float(cost)
+    return None
 
 
 def query_litellm_cost(parent: Dict, subagents: List[Dict], warnings: List[str]) -> Optional[float]:

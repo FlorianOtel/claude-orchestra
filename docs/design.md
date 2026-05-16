@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-14--20-30
+updated_by: Claude Code (claude-code-kimi-k2.6)
+updated_at: 2026-05-16--17-06
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -125,6 +125,13 @@ Fields injected by the orchestra block:
 - **Orange**: ≥ 80% utilization
 
 The utilization denominator is looked up from `context-windows.yaml` per model ID, with fallback to Claude Code's native `context_window.context_window_size`. Model ID normalization strips `[1m]`, `[200k]`, and date suffixes before lookup. Models with `[1m]` in their ID force a 1,000,000 denominator.
+
+**Non-Anthropic models (`claude-code-*`).** Claude Code does not report token counts for non-Anthropic models (e.g. `claude-code-kimi-k2.6`). A SoHoAI fallback reaches into `usage_events` via `query_sohoai_usage()` in `scripts/telemetry-summarize.py` and `sohoai-live-cost.sh`. Key constraints:
+- **Latest request only**: the fallback reads `latest_total_tokens` (size of the most recent API request), NOT cumulative tokens across all turns — cumulative would produce absurd percentages (14M/256K ≈ 5500%).
+- **Model-scoped**: query uses `model = ? OR model LIKE ?` (e.g. `kimi-k2.6` matches `kimi-k2.6:cloud` in the DB). Source filter is intentionally omitted because SoHoAI's LiteLLM callback tags non-Anthropic models with `source='unknown'`.
+- **Time-scoped**: `created_at >=` from the `.lck` `started_at` field isolates this session's requests from other concurrent or prior sessions with the same model.
+- **Monotonic cache**: `.max-tokens` file tracks the maximum ever seen per session; once a request exceeds the previous peak, the display advances and never retreats.
+- **TTL**: 8 s, so the token bar updates every ~8 s rather than continuously (sufficient for a progress indicator).
 
 **`~$X.YZ`** — live running cost (always shown, including `~$0.00` from the very first render so the display is visibly live from session start). Source differs by session type:
 - **Orchestra sessions**: SoHoAI `usage_events` table query via SQLite direct read (primary, NFS-accessible) or HTTP API fallback (TTL=8 s cache). Stale cache marked `*`. No `(est)` fallback — JSONL is not used (SoHoAI-proxied sessions do not write `costUSD` to JSONL entries).
