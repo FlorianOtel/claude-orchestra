@@ -182,7 +182,7 @@ def main():
         record["total_tokens"] = total_tokens
 
     # Clean up per-session live caches
-    for _suffix in ".cost-cache", ".subcost-cache", ".max-tokens", ".sohoai":
+    for _suffix in ".cost-cache", ".subcost-cache", ".sohoai":
         _cache_path = Path.home() / ".claude" / "active-sessions" / f"{args.session_id}{_suffix}"
         if _cache_path.exists():
             try:

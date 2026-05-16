@@ -155,19 +155,14 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
             "$live_session_id" "$_real_started_at" "$_sohoai_cache" \
             "$_model_filter" "tokens" 2>/dev/null || echo "")
 
-        # Monotonic: never decrease the displayed token count
-        _max_cache="$HOME/.claude/active-sessions/${live_session_id}.max-tokens"
-        _max=0
-        [ -f "$_max_cache" ] && _max=$(cat "$_max_cache" 2>/dev/null || echo 0)
-        if [ -n "$_sohoai_tok" ] && [ "$_sohoai_tok" -gt "$_max" ] 2>/dev/null; then
-            _max="$_sohoai_tok"
-            printf '%s' "$_max" > "$_max_cache.tmp" 2>/dev/null \
-                && mv -f "$_max_cache.tmp" "$_max_cache" 2>/dev/null || true
-        fi
-        if [ "$_max" -gt 0 ] 2>/dev/null; then
-            tokens_used="$_max"
+        # sohoai-live-cost returns latest_total_tokens (most recent request's
+        # input+output), not cumulative. latest_total_tokens is inherently
+        # monotonic (context only grows), and the 8-second TTL in the .sohoai
+        # cache prevents jitter. No separate .max-tokens cache needed.
+        if [ -n "$_sohoai_tok" ] && [ "$_sohoai_tok" -gt 0 ] 2>/dev/null; then
+            tokens_used="$_sohoai_tok"
             if [ "$context_window_size" -gt 0 ]; then
-                used_percentage=$(echo "scale=2; 100 * $_max / $context_window_size" | bc)
+                used_percentage=$(echo "scale=2; 100 * $_sohoai_tok / $context_window_size" | bc)
             fi
             used_percentage=$(printf "%.0f" "$used_percentage")
         fi
