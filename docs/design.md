@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (claude-code-kimi-k2.6)
-updated_at: 2026-05-16--23-42
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-17--00-00
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -130,7 +130,7 @@ The utilization denominator is looked up from `context-windows.yaml` per model I
 - **Latest request only**: the fallback reads `latest_total_tokens` (size of the most recent API request), NOT cumulative tokens across all turns — cumulative would produce absurd percentages (14M/256K ≈ 5500%).
 - **Model-scoped**: query uses `model = ? OR model LIKE ?` (e.g. `kimi-k2.6` matches `kimi-k2.6:cloud` in the DB). Source filter is intentionally omitted because SoHoAI's LiteLLM callback tags non-Anthropic models with `source='unknown'`.
 - **Time-scoped**: `created_at >=` from the `.lck` `started_at` field isolates this session's requests from other concurrent or prior sessions with the same model.
-- **Monotonic cache**: `.max-tokens` file tracks the maximum ever seen per session; once a request exceeds the previous peak, the display advances and never retreats.
+- **Denominator consistency**: percentage and display both use `context-windows.yaml` as the denominator. Without this fix CC's `context_window_size` for non-Anthropic models would report ~200K for a 256K-window model, inflating the percentage to 101%.
 - **TTL**: 8 s, so the token bar updates every ~8 s rather than continuously (sufficient for a progress indicator).
 
 **`~$X.YZ`** — live running cost (always shown, including `~$0.00` from the very first render so the display is visibly live from session start). Source differs by session type:

@@ -19,3 +19,4 @@ logs/
 .DS_Store
 *~
 *.swp
+utils/codebase_snapshot.md

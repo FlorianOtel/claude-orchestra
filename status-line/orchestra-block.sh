@@ -139,9 +139,11 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     esac
 
     # --- SoHoAI live token fallback for non-Anthropic models ---
-    # When CC reports zero tokens, reach into SoHoAI telemetry.  Scope by
-    # .lck started_at so concurrent sessions with the same model don't collide.
-    if [ "$_is_non_anthropic" = true ] && [ "$_total" -eq 0 ] \
+    # CC's token counts for non-Anthropic models are unreliable (cumulative,
+    # inflated, or simply wrong). Always query SoHoAI and override CC when a
+    # value is returned. Scope by .lck started_at so concurrent sessions with
+    # the same model don't collide.
+    if [ "$_is_non_anthropic" = true ] \
        && [ -n "$live_session_id" ] && [ -n "$_real_started_at" ]; then
         _sohoai_cache="$HOME/.claude/active-sessions/${live_session_id}.sohoai"
         # Derive bare model name from CC model_id for SoHoAI LIKE query
@@ -161,8 +163,43 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         # cache prevents jitter. No separate .max-tokens cache needed.
         if [ -n "$_sohoai_tok" ] && [ "$_sohoai_tok" -gt 0 ] 2>/dev/null; then
             tokens_used="$_sohoai_tok"
-            if [ "$context_window_size" -gt 0 ]; then
-                used_percentage=$(echo "scale=2; 100 * $_sohoai_tok / $context_window_size" | bc)
+
+            # Use the same denominator ctx-segment.sh will display.
+            # CC's context_window_size is wrong for non-Anthropic models
+            # (reports ~200K for kimi-k2.6 whose real window is 256K).
+            _denom="$context_window_size"
+            _yaml_denom=$("${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3" -c "
+import sys, yaml, re
+model = '${model_id}'.lower()
+yaml_path = '${HOME}/.claude/orchestra/context-windows.yaml'
+try:
+    with open(yaml_path) as f:
+        cfg = yaml.safe_load(f)
+    models = cfg.get('models', {})
+    # [1m] force 1M
+    if '[1m]' in model:
+        print(1000000)
+        sys.exit(0)
+    # Direct lookup
+    if model in models:
+        print(models[model])
+        sys.exit(0)
+    # Normalise: strip [..], -YYYYMMDD
+    norm = re.sub(r'\[.*\]$', '', model)
+    norm = re.sub(r'-[0-9]{8}$', '', norm)
+    if norm in models:
+        print(models[norm])
+    else:
+        print('')
+except Exception:
+    print('')
+" 2>/dev/null || true)
+            if [ -n "$_yaml_denom" ] && [ "$_yaml_denom" -gt 0 ] 2>/dev/null; then
+                _denom="$_yaml_denom"
+            fi
+
+            if [ "$_denom" -gt 0 ]; then
+                used_percentage=$(echo "scale=2; 100 * $_sohoai_tok / $_denom" | bc)
             fi
             used_percentage=$(printf "%.0f" "$used_percentage")
         fi
