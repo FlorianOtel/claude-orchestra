@@ -128,6 +128,33 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     used_percentage=$(printf "%.0f" "$used_percentage")
     model_id=$(echo "$input" | jq -r '.model.id // .model.display_name // ""' 2>/dev/null)
 
+    # Restore [1m] suffix when settings.json configures a 1M model but the API
+    # response strips it. [1m] is CC-local routing — the Anthropic API returns
+    # the plain model ID (e.g., "claude-sonnet-4-6") regardless of the context
+    # tier, so ctx-segment.sh's forced_1m branch never fires after the first
+    # API call unless we re-inject it here.
+    _settings_model=""
+    for _sf in "$cwd/.claude/settings.json" "$HOME/.claude/settings.json"; do
+        if [ -f "$_sf" ]; then
+            _sm=$(jq -r '.model // ""' "$_sf" 2>/dev/null)
+            if [ -n "$_sm" ]; then
+                _settings_model="$_sm"
+                break
+            fi
+        fi
+    done
+    if [[ "$_settings_model" == *"[1m]"* ]] && [[ "$model_id" != *"[1m]"* ]] && [[ -n "$model_id" ]]; then
+        _settings_base=$(echo "$_settings_model" | sed 's/\[1m\]//g; s/\[.*\]//g')
+        case "$_settings_base" in
+            sonnet) _settings_base="claude-sonnet-4-6" ;;
+            opus)   _settings_base="claude-opus-4-7"   ;;
+            haiku)  _settings_base="claude-haiku-4-5"  ;;
+        esac
+        if [[ "$model_id" == "$_settings_base" ]] || [[ "$model_id" == "$_settings_base"-* ]]; then
+            model_id="${model_id}[1m]"
+        fi
+    fi
+
     # Non-Anthropic models (claude-code-*, local/*) — CC gives no token counts.
     # Soften forced-zero cost: only local/qwen3* models are truly $0.
     _is_non_anthropic=false
@@ -206,6 +233,13 @@ except Exception:
     fi
 
     ctx_seg=$(~/.claude/scripts/ctx-segment.sh "${used_percentage:-0}" "${tokens_used:-0}" "${context_window_size:-200000}" "${model_id:-}" 2>/dev/null || true)
+
+    # Fix model display name: when [1m] was restored above, CC's display_name
+    # no longer says "(1M context)". Re-inject it via literal text substitution
+    # on status_line. model_name is in scope from the host script (status-line.sh).
+    if [[ "$model_id" == *"[1m]"* ]] && [[ -n "${model_name:-}" ]] && [[ "$model_name" != *"(1M"* ]]; then
+        status_line="${status_line/✦ ${model_name}/✦ ${model_name} (1M context)}"
+    fi
 
     # --- live cost ---
     # Orchestra sessions: query SoHoAI (has per-subagent attribution).

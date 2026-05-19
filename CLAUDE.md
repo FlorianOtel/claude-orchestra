@@ -80,6 +80,9 @@ git checkout litellm-gateway && git merge main --no-edit && git push origin lite
 - **Timestamp:** 2026-05-10T20:45:52Z
 - **Model:** claude-opus-4-7[1m] (Brain) + claude-code-kimi-k2.6 (actor-heavy) + claude-sonnet-4-6 (reviewer-long)
 - **Reason:** status-line ctx + SoHoAI live-cost segments — implemented via /brain heavy-tier workflow, deployed, all smoke tests pass (ctx bar colors, 1M denominator, SoHoAI query, JSONL fallback).
+- **Timestamp:** 2026-05-19T00-00
+- **Model:** claude-sonnet-4-6[1m]
+- **Reason:** fix(status-line): restore [1m] ctx window after first API call — CC's API response strips the [1m] CC-local routing marker; orchestra-block.sh now reads settings.json to re-inject it, restoring 1M denominator and "(1M context)" display name in projects configured with sonnet[1m].
 
 ## Telemetry Smoke Tests
 
