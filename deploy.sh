@@ -77,7 +77,7 @@ done
 # Frontmatter and Role preamble differ by design; everything from
 # "You are the **<Tier>**" onward must be byte-identical.
 if ! $DRY_RUN && ! $SHOW_DIFF; then
-    for pair in "actor:actor-heavy" "planner:planner-long"; do
+    for pair in "actor:actor-heavy"; do
         base="${pair%:*}"; var="${pair#*:}"
         diff <(awk '/^You are the/,0' "$REPO/agents/$base.md") \
              <(awk '/^You are the/,0' "$REPO/agents/$var.md") \
@@ -154,6 +154,13 @@ if ! $DRY_RUN; then
     if [ -d "$CLAUDE/agents/.stripped" ]; then
         rm -rf "$CLAUDE/agents/.stripped"
         ok "cleaned orphan: $CLAUDE/agents/.stripped/"
+    fi
+
+    # 7b-ii. Planner-long agent variant (removed in non-Anthropic pipeline transition).
+    if [ -f "$CLAUDE/agents/planner-long.md" ]; then
+        echo "  Removing orphaned planner-long.md"
+        rm "$CLAUDE/agents/planner-long.md"
+        ok "cleaned orphan: $CLAUDE/agents/planner-long.md"
     fi
 
     # 7c. Obsolete commands (Step 6 of the revert plan, plus the duo session-bracketing redesign).

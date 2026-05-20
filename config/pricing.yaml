@@ -1,14 +1,12 @@
-last_updated: 2026-04-30
+last_updated: 2026-05-20
 source: https://docs.anthropic.com/en/docs/about-claude/models/all-models
 notes: |
-  Rates are USD per 1M tokens. cache_creation here = 5-minute TTL (1.25x input);
-  long-cache (1h TTL, 2x input) is not yet tracked separately. Verify against
-  the source URL above on every bump and update last_updated.
+  Anthropic entries retained for historical T2 fallback (sessions predating the non-Anthropic switch).
+  Non-Anthropic entries serve current flat-rate SoHoAI pipelines (marginal cost = $0 per invocation).
+  Authoritative cost for non-Anthropic sessions is the SoHoAI API (cost_source=sohoai_api).
+  Verify against https://docs.anthropic.com/en/docs/about-claude/models/all-models on every bump.
 models:
-  # NOTE: LiteLLM's internal model database under-prices claude-opus-4-7 — it appears
-  # to omit or zero-out cache_creation and cache_read rates, reporting only input+output.
-  # When cost_source=litellm, expect a ~$29 undercount per 689K cache-creation tokens
-  # relative to these rates. pricing_yaml is the authoritative fallback for full cost.
+  # ── Anthropic models (historical T2 fallback, retained for legacy sessions) ──
   claude-opus-4-7:
     input: 15.00
     output: 75.00
@@ -19,7 +17,7 @@ models:
     output: 15.00
     cache_creation: 3.75
     cache_read: 0.30
-  claude-sonnet-4-5:            # legacy alias — appears in transcripts before agents were corrected to 4.6
+  claude-sonnet-4-5:
     input: 3.00
     output: 15.00
     cache_creation: 3.75
@@ -29,24 +27,22 @@ models:
     output: 5.00
     cache_creation: 1.25
     cache_read: 0.10
-  # ── SoHoAI / LiteLLM-routed aliases ─────────────────────────────────────────
-  # Served via the SoHoAI gateway (ANTHROPIC_BASE_URL=http://192.168.1.93:8000).
-  # Ollama Cloud Pro is a flat $20/mo subscription; no per-token marginal cost.
-  # Cache discounts do not apply (LiteLLM strips cache_control markers).
-  # Rates are 0.00 so the pricing_yaml T2 fallback contributes $0 — correct.
-  # Authoritative cost for these models is the SoHoAI API (cost_source=sohoai_api).
-  claude-code-gemma-4-e4b:
+  # ── SoHoAI / LiteLLM-routed non-Anthropic aliases (flat-rate, marginal = $0) ──
+  claude-code-glm-5.1:
     input: 0.00
     output: 0.00
-  claude-code-deepseek-v4-pro:
+  claude-code-qwen3-coder-next:
     input: 0.00
     output: 0.00
   claude-code-kimi-k2.6:
     input: 0.00
     output: 0.00
-  claude-code-glm-5.1:
+  claude-code-deepseek-v4-pro:
     input: 0.00
     output: 0.00
-  claude-code-qwen3-coder-next:
+  claude-code-qwen3-4b-q6:
+    input: 0.00
+    output: 0.00
+  claude-code-qwen3-9b-q4:
     input: 0.00
     output: 0.00

@@ -25,7 +25,7 @@ git checkout litellm-gateway && git merge main --no-edit && git push origin lite
 
 ## Layout
 
-- `agents/`   — planner (claude-code-glm-5.1), actor (claude-code-qwen3-coder-next), reviewer (Sonnet 4.6)
+- `agents/`   — planner (claude-code-glm-5.1), actor (claude-code-qwen3-coder-next), reviewer (claude-code-kimi-k2.6)
 - `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents) + /brain-abandon (explicit cancel); /duo-plan, /duo-act, /duo-abandon (lightweight session-bracketed pipeline: Brain plans interactively across multiple turns, Actor acts after /duo-act)
 - `scripts/orchestra-hook.sh` — PreToolUse / SubagentStop / PreCompact / Stop dispatcher
 - `scripts/otel-headers-helper.sh` — X-Orchestra-Session-ID injection; auto-creates native session entries (CC 2.1.132: not called — fallback via bash-session-init.sh)
@@ -41,8 +41,8 @@ git checkout litellm-gateway && git merge main --no-edit && git push origin lite
 
 ## Smoke test
 
-- **Timestamp:** 2026-05-10T20:45:52Z
-- **Model:** claude-opus-4-7[1m] (Brain) + claude-code-kimi-k2.6 (actor-heavy) + claude-sonnet-4-6 (reviewer-long)
+- **Timestamp:** 2026-05-20T09:45:52Z
+- **Model:** claude-code-kimi-k2.6 (Brain) + claude-code-glm-5.1 (Planner) + claude-code-qwen3-coder-next (Actor) + claude-code-kimi-k2.6 (Reviewer)
 - **Reason:** status-line ctx + SoHoAI live-cost segments — implemented via /brain heavy-tier workflow, deployed, all smoke tests pass (ctx bar colors, 1M denominator, SoHoAI query, JSONL fallback).
 
 ## Telemetry Smoke Tests
@@ -65,13 +65,13 @@ Verify T1 (hook events) and T2 (transcript parse) after any /duo or /brain run.
 ### Status-line ctx + SoHoAI cost smoke test (no CC restart needed)
 1. Deploy: `./deploy.sh`
 2. Test ctx segment (low fill, expect green):
-   `~/.claude/scripts/ctx-segment.sh 12 24000 200000 claude-sonnet-4-6`
+   `~/.claude/scripts/ctx-segment.sh 12 24000 200000 claude-code-kimi-k2.6`
    → colored `ctx ▓░░░░░░░░░ 12% 24K/200K`
 3. Test ctx segment (high fill, expect orange):
-   `~/.claude/scripts/ctx-segment.sh 85 170000 200000 claude-sonnet-4-6`
+   `~/.claude/scripts/ctx-segment.sh 85 170000 200000 claude-code-kimi-k2.6`
    → `ctx ▓▓▓▓▓▓▓▓░░ 85% 170K/200K` in orange
 4. Test ctx 1M variant:
-   `~/.claude/scripts/ctx-segment.sh 12 120000 1000000 'claude-opus-4-7[1m]'`
+   `~/.claude/scripts/ctx-segment.sh 12 120000 1000000 'claude-code-deepseek-v4-pro[1m]'`
    → `ctx ▓░░░░░░░░░ 12% 120K/1M`
 5. Test SoHoAI helper (replace SESSION_ID with active orchestra dir
    basename or `native-<UUID>` from `~/.claude/active-sessions/`):

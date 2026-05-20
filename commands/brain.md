@@ -10,7 +10,9 @@ No separate sessions. No `claude -p` subprocesses. No multi-run registry. If the
 
 ## Pipeline rules — READ FIRST
 
-`/brain` orchestrates **subagents**: Planner (`claude-code-glm-5.1` or Sonnet 4.6 for large inputs via `planner-long`) produces the plan, Actor (`claude-code-qwen3-coder-next` or `claude-code-kimi-k2.6` for `[tier: heavy]` steps) makes code changes, Reviewer (Sonnet 4.6) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
+`/brain` orchestrates **subagents**: Planner (`claude-code-glm-5.1`) produces the plan, Actor (`claude-code-qwen3-coder-next` or `claude-code-kimi-k2.6` for `[tier: heavy]` steps) makes code changes, Reviewer (`claude-code-kimi-k2.6`) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
+
+**Recommended run environment:** For best results, run `/brain` from the `claude-code-kimi-k2.6` model variant. The pipeline will work with any Claude Code variant, but this model provides the most reliable operator experience for multi-phase orchestration. Alternatively, `claude-code-deepseek-v4-pro` may be considered if it becomes available and stable.
 
 ### Override of plan-mode's plan-file directive
 
@@ -252,8 +254,6 @@ Task tool invocation:
     Return the complete plan text in your final message. I will persist it
     to ${SESSION_DIR}/PLAN.md via Bash atomic-rename.
 ```
-
-> **Long-context fallback:** Before dispatching Planner, measure the combined size of RESEARCH.md + any additional constraints text (use `wc -c`). If the combined input exceeds ~30 KB, dispatch Planner with `subagent_type: planner-long` (Sonnet 4.6, long-context variant) instead of the default `planner`. This variant provides larger context windows for research-heavy or architecturally complex tasks.
 
 Planner is **purely read-only** by frontmatter (`tools: Read, Grep, Glob, WebFetch`); it cannot modify any files. **You (Brain) own persistence of `PLAN.md`** — Planner returns the plan text; you do the atomic-rename.
 

@@ -2,8 +2,8 @@
 title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design notes & open questions"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-11--18-00
+updated_by: Claude Code (claude-code-kimi-k2.6)
+updated_at: 2026-05-20--00-00
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1619,3 +1619,23 @@ model | ctx ▓▓░░░░░░░░ 21% 210K/1M | ~$X.YZ | ◆ project | 
 5. **Cost for all sessions:** Previously cost was only shown during active orchestra (/duo or /brain) sessions. Now shown for native sessions too via the `native-*` lck path in the cost query block.
 
 **Files updated:** `status-line/orchestra-block.sh`, `scripts/ctx-segment.sh`, `docs/design.md` (§Status-line badge, §ctx segment implementation), `CLAUDE.md` (smoke test expected outputs), `docs/design-history.md` (this amendment), `memory/project_state.md` (Status-line layout section).
+
+---
+
+## Amendment 2026-05-20 — full non-Anthropic pipeline + reviewer model switch to kimi-k2.6
+
+**Change:** Complete transition to non-Anthropic SoHoAI flat-rate models across all agent tiers.
+
+**Model assignments (final):**
+- **Planner:** `claude-code-glm-5.1` (no planner-long fallback; removed)
+- **Actor (default):** `claude-code-qwen3-coder-next`
+- **Actor (heavy):** `claude-code-kimi-k2.6`
+- **Reviewer:** `claude-code-kimi-k2.6` (switched from Sonnet 4.6)
+
+**Rationale:**
+- **Planner-long removal:** Under non-Anthropic routing, prompt cache benefits don't apply to cached input (LiteLLM strips `cache_control` headers). The planner-long Sonnet fallback was a hedge against per-token costs for large inputs; flat-rate SoHoAI eliminates the cost incentive. Removed the planner-long agent entirely; Planner is now always `claude-code-glm-5.1`.
+- **Reviewer moved to Kimi K2.6:** Under flat-rate, Reviewer's $0 marginal cost means review iterations are economically viable even with cap-3 per step. Sonnet 4.6 remains available as the user's interactive Brain model and via manual `/duo` sessions for cross-checking. Quality calibration is preserved via this heterogeneity (if Kimi K2.6 Reviewer verdicts diverge from Sonnet `/duo` plans, the signal is immediately visible). Documented in design.md §Multi-model routing why this shift is now justified.
+
+**Files updated:** `docs/design.md` (agents table: removed planner-long row, changed reviewer model to kimi-k2.6; multi-model routing section: deleted planner long-context subsection, rewrote "Reviewer is now Kimi K2.6"; cost model updated for flat-rate; file inventory updated), `docs/design-history.md` (this amendment), `CLAUDE.md` (Layout line for agents, Smoke test Model line), `config/pricing.yaml` (retained Anthropic entries for historical T2 fallback; added non-Anthropic SoHoAI entries at $0).
+
+**Metadata:** Updated `docs/design.md` frontmatter `updated_by=Claude Code (claude-code-kimi-k2.6)` and `updated_at=2026-05-20--00-00`.

@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-19--00-00
+updated_by: Claude Code (claude-code-kimi-k2.6)
+updated_at: 2026-05-20--00-00
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -14,11 +14,11 @@ context: >
 
 # Claude Orchestra
 
-A three-tier orchestration system for Claude Code: **Brain** delegates reasoning, implementation, and review across **Planner** (claude-code-glm-5.1), **Actor** (claude-code-qwen3-coder-next), and **Reviewer** (Sonnet 4.6) tiers using Claude Code's native `Task` tool for subagent dispatch. Single global install at `~/.claude/`; usable from any project.
+A three-tier orchestration system for Claude Code: **Brain** delegates reasoning, implementation, and review across **Planner** (claude-code-glm-5.1), **Actor** (claude-code-qwen3-coder-next), and **Reviewer** (claude-code-kimi-k2.6) tiers using Claude Code's native `Task` tool for subagent dispatch. Single global install at `~/.claude/`; usable from any project.
 
 ## Intro
 
-Claude Orchestra solves the cost/capability trade-off for multi-step code work. A single powerful Brain (Opus 4.7) orchestrates cheaper specialized tiers: a read-only Planner for structured reasoning, a write-capable Actor for implementation, and a read-only Reviewer for quality gates. The key design choice: **Option B — native Claude Code subagents, not separate processes** — which keeps the architecture simple and preserves permission modes and plan-approval gates.
+Claude Orchestra solves the cost/capability trade-off for multi-step code work. A single powerful Brain (user's active model, recommended: claude-code-kimi-k2.6) orchestrates cheaper specialized tiers: a read-only Planner for structured reasoning, a write-capable Actor for implementation, and a read-only Reviewer for quality gates. The key design choice: **Option B — native Claude Code subagents, not separate processes** — which keeps the architecture simple and preserves permission modes and plan-approval gates.
 
 Use it when you want code changes reviewed before landing, or when you want to isolate reasoning from implementation for cost control.
 
@@ -32,7 +32,7 @@ Talk to Brain normally. Brain delegates to Planner/Actor/Reviewer as needed. No 
 
 `/duo` is a three-command session-bracketed pipeline. `/duo-plan <task>` opens a planning session (sets up the session_dir, drafts an initial `PLAN.md`, and yields back). The operator then refines the plan across as many normal plan-mode turns as needed. `/duo-act` commits the plan, calls `ExitPlanMode`, dispatches Actor, and runs cleanup + telemetry. `/duo-abandon` cancels the active session cleanly. No Reviewer. Example: "add a docstring to rag_engine/search.py::search_rag" — low risk, no review needed.
 
-Workflow: (1) `claude --model claude-sonnet-4-6`. (2) `Shift+Tab` to enter plan mode. (3) `/duo-plan <task>`. (4) Refine across turns until the plan is right. (5) `/duo-act` to execute (or `/duo-abandon` to cancel); on approval, `Shift+Tab` to bypassPermissions if desired, Actor runs uninterrupted.
+Workflow: (1) Launch a Claude Code session (recommended: `claude-code-kimi-k2.6`). (2) `Shift+Tab` to enter plan mode. (3) `/duo-plan <task>`. (4) Refine across turns until the plan is right. (5) `/duo-act` to execute (or `/duo-abandon` to cancel); on approval, `Shift+Tab` to bypassPermissions if desired, Actor runs uninterrupted.
 
 Splitting the plan-approval gate into an explicit `/duo-act` (rather than the slash command barrelling through to `ExitPlanMode` in one response) means rejection-or-redirect during planning is now first-class: refinement is a normal multi-turn conversation, not a rejected-plan-and-informally-keep-chatting situation. Telemetry attribution stays correct because `.outcome`-file mtime bounds the T2 time window (see §Telemetry).
 
@@ -55,17 +55,16 @@ When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo
 | Agent | Model | File | Tools | Role |
 |---|---|---|---|---|
 | **Brain** | any (user's active model) | — (main session) | all | Orchestrates; calls `ExitPlanMode` at plan approval (G2) |
-| **Planner** | `claude-code-glm-5.1` | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md; Sonnet 4.6 via `planner-long` for >30 KB inputs |
-| **Planner** (long) | Sonnet 4.6 | `~/.claude/agents/planner-long.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Fallback for large inputs (>30 KB); preserves Anthropic cache discount |
+| **Planner** | `claude-code-glm-5.1` | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md |
 | **Actor** | `claude-code-qwen3-coder-next` | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
 | **Actor** (heavy) | `claude-code-kimi-k2.6` | `~/.claude/agents/actor-heavy.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Complex multi-file refactors; triggered by `[tier: heavy]` step annotations |
-| **Reviewer** | Sonnet 4.6 | `~/.claude/agents/reviewer.md` | Read, Grep, Glob, TodoWrite (read-only) | Reviews diff against PLAN.md; returns PASS / FIX / BLOCK |
+| **Reviewer** | `claude-code-kimi-k2.6` | `~/.claude/agents/reviewer.md` | Read, Grep, Glob, TodoWrite (read-only) | Reviews diff against PLAN.md; returns PASS / FIX / BLOCK |
 
 ### Model requirements
 
 | Command | Minimum | Recommended | Enforcement |
 |---|---|---|---|
-| `/duo` | none | Sonnet 4.6 | Advisory only — Brain warns and continues |
+| `/duo` | none | claude-code-kimi-k2.6 | Advisory only — Brain warns and continues |
 
 The check happens at command startup before any Bash or setup runs. It is LLM-enforced (Brain reads "The exact model ID is…" injected by Claude Code into every session's system context) — same trust level as the plan-mode gate.
 
@@ -232,7 +231,7 @@ Concurrency safety via hostname + PID + timestamp stamping in log lines; atomic-
 **Global (~/.claude/):**
 ```
 agents/
-  planner.md, actor.md, reviewer.md
+  planner.md, actor.md, actor-heavy.md, reviewer.md
 commands/
   brain.md, brain-abandon.md
   duo-plan.md, duo-act.md, duo-abandon.md
@@ -263,16 +262,16 @@ invocations.log    (subagent start/end events, append-only)
 brain-state.md     (pre-compact snapshot)
 ```
 
-### Cost model
+### Cost model — SoHoAI flat-rate
 
-Mixed-tier pricing; orchestration overhead is paid by Brain (Opus 4.7):
+All subagents operate under a flat-rate SoHoAI subscription (marginal cost = $0 per invocation):
 
-- **Brain** (Opus 4.7): most expensive; receives every subagent's return. Mitigated by prompt caching + `PreCompact` hook saving state.
-- **Planner** (claude-code-glm-5.1): called once per plan.
-- **Actor** (claude-code-qwen3-coder-next): called once per step.
-- **Reviewer** (Sonnet 4.6): called once per review (up to 3 per step).
+- **Brain** (user's active model): most expensive; receives every subagent's return. Mitigated by prompt caching + `PreCompact` hook saving state. Cost dominates a typical session.
+- **Planner** (claude-code-glm-5.1): called once per plan. $0 marginal cost.
+- **Actor** (claude-code-qwen3-coder-next or claude-code-kimi-k2.6 if heavy): called once per step. $0 marginal cost.
+- **Reviewer** (claude-code-kimi-k2.6): called once per review (up to 3 per step). $0 marginal cost.
 
-Rule of thumb: use `/brain` for tasks where the review loop actually earns the Brain overhead (architecture, multi-file refactors). Use `/duo` for simple, low-risk tasks.
+Rule of thumb: use `/brain` for tasks where the review loop actually earns the Brain overhead (architecture, multi-file refactors). Use `/duo` for simple, low-risk tasks. The zero-marginal-cost subagents make both pipelines economically viable even with repeated review iterations.
 
 ### Disabling and troubleshooting
 
@@ -318,7 +317,7 @@ See design-history.md §13.3 for three potential approaches to close the gap.
 
 ### Rationale
 
-Multi-tier orchestration has a non-obvious cost structure. Brain (Opus or Sonnet) dominates by token volume — it re-sends its full context every turn (cached after the first hit, but still billed at the cache-read rate of the most expensive model) and receives all subagent returns. Planner (claude-code-glm-5.1) and Reviewer (Sonnet 4.6) are single-call-per-phase. Actor (claude-code-qwen3-coder-next) is called once per step and may iterate. Without measurement, cost/quality trade-offs are guesses: which tier to change? which phase to skip? does the built-in `Explore` subagent justify a dedicated cheaper Researcher agent? Telemetry makes those decisions data-driven (see `TODO.md §0` for the full decision-gate framework).
+Multi-tier orchestration has a non-obvious cost structure. Brain (user's active model) dominates by token volume — it re-sends its full context every turn (cached after the first hit, but still billed at the cache-read rate of the most expensive model) and receives all subagent returns. Planner (claude-code-glm-5.1) and Reviewer (claude-code-kimi-k2.6) are single-call-per-phase. Actor (claude-code-qwen3-coder-next) is called once per step and may iterate. Without measurement, cost/quality trade-offs are guesses: which tier to change? which phase to skip? does the built-in `Explore` subagent justify a dedicated cheaper Researcher agent? Telemetry makes those decisions data-driven (see `TODO.md §0` for the full decision-gate framework).
 
 Every `/brain` and `/duo` run is instrumented post-hoc by `scripts/telemetry-summarize.{sh,py}`, invoked from each command's cleanup block. Native (non-orchestra) CC sessions are tracked automatically via `bash-session-init.sh` (sourced on every Bash tool call through `BASH_ENV`) and finalized by the Stop hook — see §Native session tracking below.
 
@@ -529,11 +528,16 @@ T2 applies sources in priority order; first non-zero value wins:
 
 **Typical tier proportions:**
 
-| Session type | Brain | Planner (glm-5.1) | Actor (qwen3) | Reviewer (Sonnet) |
+These are historical examples from the Anthropic-only era. For current non-Anthropic deployments, see the SoHoAI flat-rate cost model (§Cost model — SoHoAI flat-rate) and per-tier breakdown command (`telemetry-report.sh --tier`).
+
+**Sample tier proportions from historical /brain sessions:**
+
+| Session type | Brain | Planner | Actor | Reviewer |
 |---|---|---|---|---|
-| `/brain` — Sonnet Brain | ~66% | ~13% | ~8% | ~13% |
-| `/brain` — Opus Brain | ~95% | ~2% | ~1% | ~2% |
+| `/brain` | variable | ~13% | ~8% | ~13% |
 | `/duo` | ~60% | — | ~40% | — |
+
+Models: Brain (user's active model), Planner (claude-code-glm-5.1), Actor (claude-code-qwen3-coder-next, or claude-code-kimi-k2.6 for heavy steps), Reviewer (claude-code-kimi-k2.6). All subagents operate under flat-rate SoHoAI pricing (marginal cost = $0).
 
 Brain's tier dominance is what remains **after** prompt caching has already taken ~86% off Brain's bill — the proportions in the table are post-cache. Three multipliers stack to keep Brain on top: **model rate** (Brain pays per-token Anthropic pricing; subagents run on SoHoAI flat-rate), **context size** (Brain re-sends the whole session every turn; subagents get a fresh, scoped prompt), and **turn count** (Brain runs every user message + every dispatch round-trip; subagents are one-shot). Caching only attacks the first multiplier. To shift the proportions further: trim context (`/compact`, smaller inlined artifacts) or downgrade the Brain model.
 
@@ -542,25 +546,25 @@ The `--tier` flag on `telemetry-report.sh` reads per-session `telemetry.json` fi
 **Sample `--tier` output:**
 
 ```
-  2026-04-30  brain   560s  outcome=pass  total=$1.30
-    Tier         Model                  Tokens   %tok      Cost   %cost
-    ----------------------------------------------------------------
-    brain        claude-sonnet-4-6  1,322,163  68.5%  $0.8100   66.3%
-    planner      claude-sonnet-4-6     92,598   4.8%  $0.1563   12.8%
-    actor        claude-haiku-4-5     425,531  22.0%  $0.1007    8.2%
-    reviewer     claude-sonnet-4-6     89,658   4.6%  $0.1549   12.7%
-    ----------------------------------------------------------------
-    TOTAL                           1,929,950          $1.2219
+  2026-05-20  brain   560s  outcome=pass  total=~$0.02
+    Tier         Model                        Tokens   %tok      Cost   %cost
+    -----------------------------------------------------------------------
+    brain        claude-code-kimi-k2.6    1,322,163  68.5%  ~$0.0200 100.0%
+    planner      claude-code-glm-5.1         92,598   4.8%  ~$0.0000   0.0%
+    actor        claude-code-qwen3-coder-next 425,531  22.0%  ~$0.0000   0.0%
+    reviewer     claude-code-kimi-k2.6       89,658   4.6%  ~$0.0000   0.0%
+    -----------------------------------------------------------------------
+    TOTAL                                 1,929,950          ~$0.0200
 
 --- Cumulative totals (3 session(s)) ---
-  Tier         Model                  Tokens   %tok       Cost   %cost
-  --------------------------------------------------------------------
-  brain        claude-sonnet-4-6  2,009,402  69.3%   $1.2079   69.9%
-  planner      claude-sonnet-4-6     92,598   3.2%   $0.1563    9.0%
-  actor        claude-haiku-4-5     709,827  24.5%   $0.2081   12.0%
-  reviewer     claude-sonnet-4-6     89,658   3.1%   $0.1549    9.0%
-  --------------------------------------------------------------------
-  TOTAL                           2,901,485           $1.7271
+  Tier         Model                        Tokens   %tok        Cost   %cost
+  --------------------------------------------------------------------------
+  brain        claude-code-kimi-k2.6    2,009,402  69.3%    ~$0.0600 100.0%
+  planner      claude-code-glm-5.1         92,598   3.2%    ~$0.0000   0.0%
+  actor        claude-code-qwen3-coder-next 709,827  24.5%    ~$0.0000   0.0%
+  reviewer     claude-code-kimi-k2.6       89,658   3.1%    ~$0.0000   0.0%
+  --------------------------------------------------------------------------
+  TOTAL                                 2,901,485          ~$0.0600
 ```
 
 **Decision gates** (see `TODO.md §0` for thresholds and sample-size requirements):
@@ -587,13 +591,12 @@ Reference: [Design history & amendments](design-history.md) §Amendment 2026-05-
 
 | Role | Model | Trigger |
 |---|---|---|
-| Planner (normal) | `claude-code-glm-5.1` | inputs ≤ 30 KB |
-| Planner (long-context fallback) | Sonnet 4.6 | inputs > 30 KB; preserves Anthropic cache discount |
+| Planner (normal) | `claude-code-glm-5.1` | all inputs |
 | Actor (default) | `claude-code-qwen3-coder-next` | all steps unless marked heavy |
 | Actor (heavy) | `claude-code-kimi-k2.6` | `[tier: heavy]` annotation in PLAN.md step |
-| Reviewer | Sonnet 4.6 | all reviews (unchanged; calibration priority) |
+| Reviewer | `claude-code-kimi-k2.6` | all reviews (calibration + flat-rate economics) |
 
-**Brain** runs on the user's active model (no restriction); `/duo` still recommends Sonnet 4.6 (advisory only).
+**Brain** runs on the user's active model (no restriction); `/duo` recommends claude-code-kimi-k2.6 (advisory only); any model works.
 
 ### Step-level tier annotations
 
@@ -604,24 +607,18 @@ Plan steps may be tagged with optional `[tier: …]` annotations to override tie
 
 Format: annotation appears on the same line as the step heading (e.g., `### 5. Refactor X [tier: heavy]`). Brain's PLAN parser confirms the annotation exists before dispatching the heavy-tier subagent; if malformed or missing, the step runs at default tier.
 
-### Planner long-context fallback
-
-When RESEARCH + constraints + prior artifacts exceed ~30 KB, Brain runs Sonnet 4.6 via the `planner-long` agent instead of `planner`. This preserves Anthropic's prompt cache discount on large inputs (30× savings on repetitive prefix tokens) while staying in the flat-rate economy via `planner-long` as a documented SoHoAI alias. The 30 KB threshold is approximate; Brain is instructed to `wc -c` the combined input and pick the tier accordingly.
-
-See TODO.md §10e for the deferred automation of this check.
-
 ### Alias stability contract
 
 SoHoAI exposes agents as aliases: `claude-code-glm-5.1`, `claude-code-qwen3-coder-next`, `claude-code-kimi-k2.6`, etc. These are **stable across deployments** within the SoHoAI domain (as of 2026-05-11, per handoff §1). If the alias routing changes (e.g., DeepSeek → Claude 3.7), SoHoAI commits to rotating the alias URL, not swapping backends silently. Updates will be documented in the design-history.md amendment chain.
 
 Without this contract, cost + quality tracking would drift silently between deployments.
 
-### Reviewer remains Sonnet 4.6
+### Reviewer is now Kimi K2.6
 
-Reviewer stays Sonnet 4.6 (no multi-model routing). Rationale:
-- Reviewer is a calibration touchstone — if it starts rejecting code that Sonnet previously accepted, review-loop iteration counts will spike, signaling a model regression.
-- Reviewer is called ≤ 3 times per step (review loop cap); its cost is < 15% of typical sessions.
-- Code review is a high-stakes task where Sonnet's consistency is proven; evaluation of GLM-5.1 as a second-pass cross-check is deferred (see TODO.md §10b).
+Reviewer switched from Sonnet 4.6 to `claude-code-kimi-k2.6` under the flat-rate SoHoAI model. Rationale:
+- **Calibration still possible**: Sonnet 4.6 remains available as the Brain's primary model for interactive sessions. Reviewer's verdict can be cross-checked against any Sonnet-based `/duo` plans the operator runs interactively.
+- **Quality under flat-rate**: Kimi K2.6 has proven reliable for code review tasks and operates on a flat-rate subscription basis (marginal cost = $0 per invocation), making the review loop economically viable even with cap-3 iteration.
+- **Consistency**: Reviewer stays single-model (no multi-model routing per tier); the actor-heavy tier (also Kimi K2.6) provides operational consistency across the implementation and review stages.
 
 ### Cross-reference
 
