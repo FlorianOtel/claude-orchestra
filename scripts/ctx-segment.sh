@@ -75,15 +75,6 @@ if [ "$forced_1m" = true ]; then
     advertised_size=1000000
 fi
 
-# Recalculate used_pct against the true advertised_size.
-# The caller derived used_pct from CC's context_window_size (200K for sonnet[1m]),
-# which inflates the percentage by ~5× relative to the real 1M window.
-# Must run after advertised_size is finalised so the denominator is correct.
-if [ "$forced_1m" = true ] && [ "$tokens" -gt 0 ]; then
-    used_pct=$(echo "scale=2; 100 * $tokens / $advertised_size" | bc)
-    used_pct=$(printf "%.0f" "$used_pct")
-fi
-
 # Format tokens (K or M)
 format_tokens() {
     local t="$1"
