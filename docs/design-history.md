@@ -3,7 +3,7 @@ title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design not
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-11--18-00
+updated_at: 2026-05-19--16-28
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1619,3 +1619,26 @@ model | ctx ▓▓░░░░░░░░ 21% 210K/1M | ~$X.YZ | ◆ project | 
 5. **Cost for all sessions:** Previously cost was only shown during active orchestra (/duo or /brain) sessions. Now shown for native sessions too via the `native-*` lck path in the cost query block.
 
 **Files updated:** `status-line/orchestra-block.sh`, `scripts/ctx-segment.sh`, `docs/design.md` (§Status-line badge, §ctx segment implementation), `CLAUDE.md` (smoke test expected outputs), `docs/design-history.md` (this amendment), `memory/project_state.md` (Status-line layout section).
+
+---
+
+## Amendment 2026-05-19 — fix [1m] ctx window display after first API call (commits a2a70c7, dd8dba0)
+
+**Problem.** In projects configured with `"model": "sonnet[1m]"`, the status-line showed incorrect values after the first API call:
+- Model display name reverted from "Sonnet 4.6 (1M context)" to "Sonnet 4.6".
+- Context window denominator showed 200K instead of 1M.
+- Progress bar and percentage inflated ~5× (e.g., 82K tokens showed 41% instead of 8%).
+
+**Root cause.** `[1m]` is a CC-local routing shorthand — it directs `claude-sonnet-4-6` requests to a 1M-context deployment tier via API parameters (beta headers or access flags). The Anthropic API always returns the canonical model name `claude-sonnet-4-6` with `context_window: 200000` in its response metadata; the 1M routing is invisible to the model spec embedded in the response. CC uses the configured model for its initial status-line render (correctly reports 1M), but after the first real API call CC updates its internal model state from the API response — overwriting 1M with 200K and dropping the `[1m]` marker permanently for that session.
+
+**Why Sonnet 4.6 specifically.** Opus 4.7 (`claude-opus-4-7`) has 1M as its canonical API context window — the API itself returns `context_window: 1000000`, so no mismatch occurs. The `[1m]` shorthand exists only for Sonnet 4.6 because Sonnet's standard spec is 200K; the 1M tier is an extended capability, not the default. This is not a configuration option that can be changed from the CC side — the API will always return 200K for `claude-sonnet-4-6`. Future models with 1M as their native canonical spec would not be affected.
+
+**Secondary symptom (percentage/bar inconsistency).** After the first API call, `context_window_size=200000` and `used_percentage` (CC-computed: `100 * tokens / 200000`) both flow into `ctx-segment.sh`. The script correctly overrides the denominator to 1M (via `forced_1m`), producing the right "XK/1M" display — but was still using the caller-supplied `used_pct` (computed against 200K) for the bar fill and percentage label. Result: "41% 82K/1M" — bar and percentage derived from one denominator, total from another.
+
+**Fix — two compensating changes (no CC change needed or possible):**
+
+1. `status-line/orchestra-block.sh` (commit a2a70c7): after extracting `model_id` from CC JSON, reads `settings.json` (project-level first, then global) for the `model` field. If it contains `[1m]` and `model_id` does not, and the base model matches after CC shorthand normalization (`sonnet` → `claude-sonnet-4-6`, `opus` → `claude-opus-4-7`, `haiku` → `claude-haiku-4-5`), re-appends `[1m]` to `model_id`. A subsequent bash substitution also restores "(1M context)" in the `status_line` display name string (`model_name` is in scope from the host script).
+
+2. `scripts/ctx-segment.sh` (commit dd8dba0): after `advertised_size` is finalised (including `forced_1m → 1000000` override), recalculates `used_pct = 100 * tokens / advertised_size` when `forced_1m=true` and `tokens > 0`. This makes bar fill, percentage label, and denominator all consistent with the real 1M window. Non-1M models are unaffected (the recalculation guard is `forced_1m=true` only).
+
+**Files changed:** `status-line/orchestra-block.sh`, `scripts/ctx-segment.sh`, `docs/design.md` (§ctx segment implementation details — CC/API mismatch note added), `docs/design-history.md` (this amendment).
