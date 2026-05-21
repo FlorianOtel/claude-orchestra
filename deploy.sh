@@ -73,6 +73,18 @@ echo "Agents:"
 for f in "$REPO"/agents/*.md; do
     copy_file "$f" "$CLAUDE/agents/$(basename "$f")"
 done
+# Structural invariant: variant bodies must not drift from their base.
+# Frontmatter and Role preamble differ by design; everything from
+# "You are the **<Tier>**" onward must be byte-identical.
+if ! $DRY_RUN && ! $SHOW_DIFF; then
+    for pair in "actor:actor-heavy" "planner:planner-long"; do
+        base="${pair%:*}"; var="${pair#*:}"
+        diff <(awk '/^You are the/,0' "$REPO/agents/$base.md") \
+             <(awk '/^You are the/,0' "$REPO/agents/$var.md") \
+          > /dev/null 2>&1 \
+          || die "agent variant drift: $var.md body diverges from $base.md — mirror changes before deploying"
+    done
+fi
 
 # ── 4. Slash commands ─────────────────────────────────────────────────────────
 echo "Commands:"

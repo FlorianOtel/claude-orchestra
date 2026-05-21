@@ -293,10 +293,22 @@ def query_sohoai_cost(
     return None
 
 
-def query_litellm_cost(parent: Dict, subagents: List[Dict], warnings: List[str]) -> Optional[float]:
+def query_litellm_cost(
+    parent: Dict,
+    subagents: List[Dict],
+    warnings: List[str],
+    pricing_data: Optional[Dict] = None,
+) -> Optional[float]:
     """Query litellm for cost computation with cache-token rates.
 
     Returns total cost or None if litellm unavailable or computation fails.
+    claude-code-* aliases are SoHoAI gateway aliases (not LiteLLM-registered models);
+    they are treated as $0 per pricing.yaml rather than aborting the entire path.
+
+    When pricing_data is supplied, its cache rates take precedence over LiteLLM's
+    registry for any model listed in pricing_data. LiteLLM's claude-opus-4-7 entry
+    carries ~1/3 of the correct Anthropic list rates; pricing.yaml is the
+    authoritative source and always wins for known models.
     """
     try:
         import litellm
@@ -304,51 +316,65 @@ def query_litellm_cost(parent: Dict, subagents: List[Dict], warnings: List[str])
         warnings.append("litellm not installed; skipping litellm cost query")
         return None
 
-    total_cost = 0.0
+    _pricing_models: Dict = (pricing_data or {}).get("models", {})
 
-    try:
-        # Parent cost
-        if parent.get("model"):
-            model = _normalize_model_id(parent["model"])
-            tokens = parent.get("tokens", {})
-            base_cost = litellm.completion_cost(
+    def _model_cost(raw_model: str, tokens: Dict) -> float:
+        """Return litellm cost for one model+tokens, or 0.0 on any failure."""
+        model = _normalize_model_id(raw_model)
+        # SoHoAI gateway aliases — not in LiteLLM's registry; $0 by design (flat subscription).
+        if model.startswith("claude-code-"):
+            return 0.0
+        try:
+            base = litellm.completion_cost(
                 model=model,
                 completion_response={"usage": {
                     "prompt_tokens": tokens.get("input", 0),
                     "completion_tokens": tokens.get("output", 0),
                 }}
             )
-            cache_info = litellm.get_model_info(model) or {}
-            cache_create_rate = cache_info.get("cache_creation_input_token_cost", 0.0) or 0.0
-            cache_read_rate = cache_info.get("cache_read_input_token_cost", 0.0) or 0.0
-            parent_cost = (base_cost
-                          + tokens.get("cache_creation", 0) * cache_create_rate
-                          + tokens.get("cache_read", 0) * cache_read_rate)
-            total_cost += parent_cost
+            info = litellm.get_model_info(model) or {}
+            cc_rate = info.get("cache_creation_input_token_cost", 0.0) or 0.0
+            cr_rate = info.get("cache_read_input_token_cost", 0.0) or 0.0
+            # pricing.yaml overrides LiteLLM cache rates for known models.
+            # LiteLLM's claude-opus-4-7 entry has wrong rates (~1/3 of Anthropic
+            # list price) — pricing.yaml is the authoritative source for models
+            # listed there, so always prefer it when the model appears.
+            if model in _pricing_models:
+                p = _pricing_models[model]
+                yaml_cc = p.get("cache_creation", 0.0)
+                yaml_cr = p.get("cache_read", 0.0)
+                if yaml_cc > 0.0:
+                    new_cc = yaml_cc / 1_000_000.0
+                    if abs(new_cc - cc_rate) > 1e-14:
+                        warnings.append(
+                            f"litellm cache_creation rate for {model} overridden by "
+                            f"pricing.yaml ({cc_rate:.2e} → {new_cc:.2e})"
+                        )
+                    cc_rate = new_cc
+                if yaml_cr > 0.0:
+                    cr_rate = yaml_cr / 1_000_000.0
+            return base + tokens.get("cache_creation", 0) * cc_rate + tokens.get("cache_read", 0) * cr_rate
+        except Exception as e:
+            warnings.append(f"litellm cost skipped for {raw_model!r}: {e}")
+            return 0.0
 
-        # Subagent costs
+    total_cost = 0.0
+    has_native_model = False
+
+    try:
+        if parent.get("model"):
+            if not _normalize_model_id(parent["model"]).startswith("claude-code-"):
+                has_native_model = True
+            total_cost += _model_cost(parent["model"], parent.get("tokens", {}))
+
         for subagent in subagents:
             if subagent.get("model"):
-                model = _normalize_model_id(subagent["model"])
-                tokens = subagent.get("tokens", {})
-                base_cost = litellm.completion_cost(
-                    model=model,
-                    completion_response={"usage": {
-                        "prompt_tokens": tokens.get("input", 0),
-                        "completion_tokens": tokens.get("output", 0),
-                    }}
-                )
-                cache_info = litellm.get_model_info(model) or {}
-                cache_create_rate = cache_info.get("cache_creation_input_token_cost", 0.0) or 0.0
-                cache_read_rate = cache_info.get("cache_read_input_token_cost", 0.0) or 0.0
-                agent_cost = (base_cost
-                             + tokens.get("cache_creation", 0) * cache_create_rate
-                             + tokens.get("cache_read", 0) * cache_read_rate)
-                total_cost += agent_cost
+                if not _normalize_model_id(subagent["model"]).startswith("claude-code-"):
+                    has_native_model = True
+                total_cost += _model_cost(subagent["model"], subagent.get("tokens", {}))
 
         if total_cost == 0.0:
-            # Non-local model but zero cost suggests missing model in litellm
-            if parent.get("model") or any(s.get("model") for s in subagents):
+            if has_native_model:
                 warnings.append("litellm returned zero cost for non-local model")
             return None
 
@@ -679,9 +705,9 @@ def main():
             if not pricing_data.get("models") and parent_cost == 0:
                 warnings.append("parent cost unavailable (no pricing.yaml): sohoai_api subagent cost only")
 
-    # Source 2: litellm (with cache-token rates)
+    # Source 2: litellm (with cache-token rates; pricing_data passed for fallback)
     if cost_usd is None:
-        cost_usd = query_litellm_cost(parent, subagents, warnings)
+        cost_usd = query_litellm_cost(parent, subagents, warnings, pricing_data)
         if cost_usd is not None:
             cost_source = "litellm"
 

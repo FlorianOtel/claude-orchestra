@@ -1,10 +1,10 @@
 ---
-description: Commit the active /duo plan and execute — transitions from planning discussion to action. Calls ExitPlanMode, dispatches Actor (Haiku), and runs cleanup + telemetry. Refuses if no active /duo session.
+description: Commit the active /duo plan and execute — transitions from planning discussion to action. Calls ExitPlanMode, dispatches Actor subagent, and runs cleanup + telemetry. Refuses if no active /duo session.
 ---
 
 # /duo-act — commit the active /duo plan and execute
 
-You are running the **duo** pipeline's commit-and-execute step. `/duo-act` finalises the active /duo planning session: it presents the current `PLAN.md`, calls `ExitPlanMode`, dispatches the Actor (Haiku) subagent, then runs cleanup + telemetry.
+You are running the **duo** pipeline's commit-and-execute step. `/duo-act` finalises the active /duo planning session: it presents the current `PLAN.md`, calls `ExitPlanMode`, dispatches the Actor subagent, then runs cleanup + telemetry.
 
 If no /duo session is active (no `.duo-inflight` in any session subdir), refuse and tell the operator to run `/duo-plan` first.
 

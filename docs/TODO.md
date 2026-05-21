@@ -2,8 +2,8 @@
 title: "Claude Orchestra — v2 Deferred & TODO items"
 created_at: 20260428-000000
 created_by: Claude Code (Claude Haiku 4.5)
-updated_by: Claude Code (Claude Haiku 4.5)
-updated_at: 2026-05-06--00-00
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-10--20-28
 context: >
   Extract from the design.md reference document, capturing all deferred
   features, v2 architectural stubs, optimization opportunities, and open
@@ -136,6 +136,17 @@ v2 implementation notes:
 - CROSS-CHECK is not a new subagent; it's a Brain-level step inside the `/brain` skill.
 - Halt-and-resume semantics share infrastructure with the `PreCompact` hook already wired in v1.
 
+### §10.2.1 Per-step tier annotation — RESOLVED
+
+**Status: Completed in session 20260510T180922Z-2575990.**
+
+Per-step `[tier: …]` annotations were deferred pending multi-model routing rollout (Ollama Cloud Pro flat-rate made tiering economically viable). Now implemented:
+
+- Schema: `[tier: default]`, `[tier: heavy]` on PLAN.md step headings.
+- Planner 30 KB threshold auto-detects input size and picks agent (GLM-5.1 for normal, Sonnet for large).
+- Actor dispatches to `actor-heavy` (Kimi K2.6) for heavy steps, `actor` (Qwen3) otherwise.
+- See `design.md` §Multi-model routing + `design-history.md` §Amendment 2026-05-10.
+
 ### §10.3 Other deferred items
 
 - **Option A showcase** (separate `claude --model …` processes per tier in dedicated tmux windows) — build only if v1's in-process subagent pattern proves insufficient for some specific task.
@@ -145,31 +156,20 @@ v2 implementation notes:
 - **Review-loop escalation verbs** after cap-3 surface (`/fix`, `/accept-with-comments`, `/reject`) — v1 just lets Brain surface a text summary and the user decides in natural conversation.
 - **`PreCompact` payload schema refinement** — v1 writes Brain's current `PLAN.md` reference, open `TASKS.json` items, last-N decisions, and active gate state to `brain-state.md`. Format evolves during v1 use.
 
-## Hook-based model enforcement via `$CLAUDE_MODEL`
+### §10.4 Multi-model routing follow-ups (session 20260510T180922Z-2575990)
 
-**Current state (v1):** `/brain` enforces minimum Sonnet 4.6 and `/duo` warns below Sonnet 4.6
-via **LLM instruction-following** — Brain is instructed to read "The exact model ID is…" from
-its system context, classify the model, and stop (`/brain`) or warn (`/duo`) accordingly. This
-works because Claude Code injects the model ID into every session's system prompt, and Brain
-reliably follows the instruction.
+These items are deferred pending real-world telemetry from the new multi-model routing (GLM-5.1 Planner, Qwen3 Actor, Sonnet Reviewer).
 
-**Limitation:** Instruction-based, not runtime-enforced. Same trust level as the plan-mode
-gate. A future change to Claude Code's system-prompt injection format could silently break
-the detection, and a sufficiently degraded session state could miss it.
+- **Reviewer GLM-5.1 second-pass cross-check** — Evaluate `claude-code-glm-5.1` as a second-pass Reviewer after the primary Sonnet 4.6 review. Rationale: GLM-5.1 may catch different class of issues (e.g., performance, security) that Sonnet misses. Only implement after ≥ 20 sessions show consistent FIX-verdict patterns under new multi-model routing (baseline to measure improvement against).
 
-**Upgrade path:** Migrate `/brain`'s hard block to a **PreToolUse hook** that fires before
-Brain's first tool call. The hook reads `$CLAUDE_MODEL` (or `$ANTHROPIC_MODEL`, or whatever
-env var Anthropic exposes), compares it against the minimum (`claude-sonnet-4-6`,
-`claude-opus-4-7`), and exits non-zero if the model is below minimum. A non-zero hook exit
-causes Claude Code to surface an error and abort the action — making this a true runtime gate
-independent of LLM instruction-following.
+- **SoHoAI 429-fallback path in `scripts/orchestra-hook.sh`** — When Ollama Cloud Pro session or weekly cap exhaustion returns 429, fall back gracefully to Anthropic Haiku/Sonnet for the affected subagent, then resume with the primary model on next invocation. Today a 429 mid-`/brain` aborts the entire pipeline. Trigger: implement after first observed 429 in real usage, or proactively if Ollama Cloud Pro caps tighten materially.
 
-`/duo`'s advisory could similarly move to a hook that prints the warning and exits 0 (non-blocking).
+- **PLAN.md schema validator** — GLM-5.1's format discipline vs Sonnet is untested. Add a post-Planner parse check that confirms numbered steps, optional `[tier: …]` placement, and canonical headings before Brain persists PLAN.md to `${SESSION_DIR}/`. If invalid, re-dispatch Planner with specific feedback. Trigger: implement after first observed malformed PLAN.md from `claude-code-glm-5.1`.
 
-**When to revisit:** When Anthropic exposes `$CLAUDE_MODEL` or equivalent as an environment
-variable available in hook scripts, or when model info appears in the hook `HookInput` payload.
+- **Automate the 30 KB Planner threshold** — Brain is currently instructed (in prose) to `wc -c` the combined RESEARCH.md + constraints text and pick `planner` or `planner-long`. If Brain forgets or context is ambiguous, cost regresses (no Anthropic cache discount on large inputs). Implement as a small Bash helper invoked by `commands/brain.md` Phase 1 that prints the chosen `subagent_type` (and input size), so Brain reads it directly and always picks the right agent. Trigger: cost telemetry shows the manual check is consistently being skipped (baseline: sample 10 `/brain` runs, check logs for "30 KB" decision text).
 
----
+- **Agent-frontmatter `max_tokens` knob** — Handoff §3 specifies `max_tokens ≥ 500` for reasoning models (GLM-5.1, Qwen3 require reasoning budget). CC's default is well above this, but if a future Claude Code version lowers the default, reasoning-model subagents will exhaust tokens and return empty with `stop_reason: max_tokens`. Trigger: monitor smoke 2 + first 5 real `/brain` runs for empty-output failures; if observed, surface the workaround in `design.md` with concrete example and link to CC version notes.
+
 
 ## §13.3 What would be required to close the live feed gap
 
@@ -272,7 +272,6 @@ The 2026-04-26 migration to Option A (`claude -p` subprocesses on `main`) makes 
 | `/orchestra-mode` does not actually flip Claude Code permission mode | Deliberate — keeps v1 stub harmless; Axis X flip is user-driven via `Shift+Tab` | v2 `/orchestra-mode` implementation |
 | `brain-state.md` payload is minimal (just pointers to state files + last 20 log lines) | Placeholder in v1; full payload schema depends on what `/brain-resume` will need | v2 schema refinement |
 | No log rotation — `invocations.log` and per-invocation logfiles grow unboundedly | Acceptable for v1 usage volumes; user can `rm` periodically or add logrotate | Optional user-side hygiene |
-| Model check is LLM-enforced, not runtime-enforced | No `$CLAUDE_MODEL` env var in Claude Code v1; check is instruction-based (same trust level as plan-mode gate) | v2 PreToolUse hook when env var becomes available — see "Hook-based model enforcement" section above |
 | Window counter is tmux-session-wide, not per-project | A `plan` window from one project blocks `plan` in another until it auto-closes | Acceptable; window names include stage, not project; 120 s auto-close limits overlap |
 | Hook writes a stale state.env entry that persists indefinitely | Each `start` appends a new `LAST_WINDOW_<STAGE>=…` line; `state.env` grows | Low-impact; later lines shadow earlier when sourced; a `state.env.tmp`+rename rewrite could be added if the file grows uncomfortably large |
 

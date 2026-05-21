@@ -10,7 +10,7 @@ No separate sessions. No `claude -p` subprocesses. No multi-run registry. If the
 
 ## Pipeline rules — READ FIRST
 
-`/brain` orchestrates **subagents**: Planner (Sonnet 4.6) produces the plan, Actor (Haiku 4.5) makes code changes, Reviewer (Sonnet 4.6) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
+`/brain` orchestrates **subagents**: Planner (`claude-code-glm-5.1` or Sonnet 4.6 for large inputs via `planner-long`) produces the plan, Actor (`claude-code-qwen3-coder-next` or `claude-code-kimi-k2.6` for `[tier: heavy]` steps) makes code changes, Reviewer (Sonnet 4.6) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
 
 ### Override of plan-mode's plan-file directive
 
@@ -43,21 +43,9 @@ Each of these means a `Task`-tool dispatch was skipped. If you catch yourself ab
 | Multi-step task, architecture-ish, or anything where a review loop matters | `/brain` |
 | Simple, well-scoped, ≤ 10 steps, low blast-radius | `/duo` |
 
-## Prerequisites
-
-1. **Model check (ENFORCED — do this before anything else):** Read "The exact model ID is…" from your system context and classify your model:
-
-   - Model ID contains `haiku` **or** is `claude-sonnet-4-5` or an older Sonnet → **STOP immediately.** Do not run any Bash. Output:
-     > "⛔ /brain requires minimum Sonnet 4.6. You are on [MODEL-ID]. Run `/model claude-sonnet-4-6` or `/model claude-opus-4-7` to switch, then re-run `/brain`."
-   - Model ID is `claude-sonnet-4-6*` → emit this advisory then proceed:
-     > "ℹ️ Running /brain on Sonnet 4.6 (minimum met). For hard architectural reasoning, Opus 4.7 is recommended — `/model claude-opus-4-7` to switch if needed."
-   - Model ID is `claude-opus-4-7*` or any newer/higher-capability version → proceed silently.
-   - Model cannot be determined from system context → ask the operator before proceeding:
-     > "⚠️ Could not read model from system context. Please confirm you are on Sonnet 4.6 or higher before I continue."
-
-2. **Plan mode is active.** Phase 0 and Phase 1 must run with the parent in plan mode. If the operator is not in plan mode, stop and say:
+1. **Plan mode is active.** Phase 0 and Phase 1 must run with the parent in plan mode. If the operator is not in plan mode, stop and say:
    > "Please enter plan mode first (Shift+Tab), then run `/brain` again."
-3. **Bypass-flattens-down caveat.** If the operator launched the parent session with `--dangerously-skip-permissions`, all subagent permission frontmatter is silently overridden and Phase 0's read-only posture is not enforced by the framework. Subagents inherit bypass. Document but do not refuse — this is the operator's choice.
+2. **Bypass-flattens-down caveat.** If the operator launched the parent session with `--dangerously-skip-permissions`, all subagent permission frontmatter is silently overridden and Phase 0's read-only posture is not enforced by the framework. Subagents inherit bypass. Document but do not refuse — this is the operator's choice.
 
 ## Setup — per-invocation artifact directory + housekeeping
 
@@ -265,6 +253,8 @@ Task tool invocation:
     to ${SESSION_DIR}/PLAN.md via Bash atomic-rename.
 ```
 
+> **Long-context fallback:** Before dispatching Planner, measure the combined size of RESEARCH.md + any additional constraints text (use `wc -c`). If the combined input exceeds ~30 KB, dispatch Planner with `subagent_type: planner-long` (Sonnet 4.6, long-context variant) instead of the default `planner`. This variant provides larger context windows for research-heavy or architecturally complex tasks.
+
 Planner is **purely read-only** by frontmatter (`tools: Read, Grep, Glob, WebFetch`); it cannot modify any files. **You (Brain) own persistence of `PLAN.md`** — Planner returns the plan text; you do the atomic-rename.
 
 After Planner returns, persist its plan via `Bash`:
@@ -290,10 +280,12 @@ Show the plan to the operator. Ask explicitly: **"Approve this plan?"** Wait for
 
 After `ExitPlanMode` is approved, the parent is out of plan mode. Actor's tool calls follow the operator's chosen permission posture (auto-accept / manual approve).
 
+**Tier-aware dispatch:** For each step or step-group, check the PLAN.md entry for a `[tier: heavy]` annotation. If present, dispatch with `subagent_type: actor-heavy` (for heavyweight refactoring, large-scale refactors, or architecturally complex changes); otherwise use `subagent_type: actor` (default). The prompt and instructions are identical; only the subagent type differs.
+
 **Each step (or tight group of steps) of Phase 2 begins with this exact `Task` tool call.** Do NOT use `Edit/Write/Bash` on project code yourself — Actor owns the code changes. Do NOT skip ahead to Phase 3 by inspecting the diff yourself — Reviewer owns the audit.
 
 ```
-Task tool invocation:
+Task tool invocation (default tier):
   subagent_type: actor
   description: <one-liner describing the step or step-group>
   prompt: |
@@ -310,6 +302,8 @@ Task tool invocation:
     Include a unified diff summary in your final message — this is what
     Reviewer will audit verbatim.
 ```
+
+> **NOTE:** For `[tier: heavy]` steps, use `subagent_type: actor-heavy` instead of `actor`. The prompt body is identical; only the subagent type changes.
 
 For each step (or tight group of steps) in `PLAN.md`:
 

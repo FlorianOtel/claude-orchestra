@@ -6,10 +6,10 @@ A three-tier orchestration layer for [Claude Code](https://claude.ai/code) that 
 
 | Tier | Model | Role |
 |---|---|---|
-| **Brain** | Claude Opus 4.7 | Your main session — orchestrates, delegates, approves |
-| **Planner** | Claude Sonnet 4.6 | Decomposes tasks into numbered, reviewable plans |
-| **Actor** | Claude Haiku 4.5 | Executes individual plan steps; scoped, fast, cheap |
-| **Reviewer** | Claude Sonnet 4.6 | Reviews Actor's output; emits PASS / FIX / BLOCK verdicts |
+| **Brain** | Your main session — orchestrates, delegates, approves |
+| **Planner** | Decomposes tasks into numbered, reviewable plans |
+| **Actor** | Executes individual plan steps; scoped, fast, cheap |
+| **Reviewer** | Reviews Actor's output; emits PASS / FIX / BLOCK verdicts |
 
 ## Pipelines
 
@@ -21,7 +21,7 @@ Two invocation styles depending on how much structure the task warrants:
 PLAN → [G2 approval] → IMPLEMENT + REVIEW loop (cap 3) → VERIFY + doc/memory update
 ```
 
-Planner (Sonnet) drafts a numbered plan; Brain surfaces it for your approval via `ExitPlanMode`; Actor (Haiku) executes each step; Reviewer (Sonnet) reviews each step with up to 3 fix iterations; Brain does a doc-delta check and memory update on completion.
+Planner drafts a numbered plan; Brain surfaces it for your approval via `ExitPlanMode`; Actor executes each step; Reviewer reviews each step with up to 3 fix iterations; Brain does a doc-delta check and memory update on completion.
 
 Use for: multi-file refactors, architecture changes, anything where a review loop matters.
 
@@ -30,12 +30,12 @@ Use for: multi-file refactors, architecture changes, anything where a review loo
 ```
 /duo-plan <task>  →  refinement turns (multi-turn plan-mode iteration)  →  /duo-act
                                                                            ├→ [G2 approval]
-                                                                           └→ Execute all steps (Haiku, auto)
+                                                                           └→ Execute all steps (Actor, auto)
                                                                            or
                                                                            /duo-abandon → cancel cleanly
 ```
 
-`/duo-plan` opens a planning session (sets up artifacts, drafts the initial `PLAN.md`, then yields back). You and Sonnet refine the plan across as many turns as needed using Claude Code's native plan-mode iteration. `/duo-act` calls `ExitPlanMode`, dispatches Haiku to execute all approved steps in a single Actor invocation, then runs cleanup + telemetry. `/duo-abandon` cancels the session cleanly (writes `.outcome=abandoned`, runs T2, clears the badge). No review tier, no loop.
+`/duo-plan` opens a planning session (sets up artifacts, drafts the initial `PLAN.md`, then yields back). You refine the plan across as many turns as needed using Claude Code's native plan-mode iteration. `/duo-act` calls `ExitPlanMode`, dispatches Actor subagent to execute all approved steps in a single Actor invocation, then runs cleanup + telemetry. `/duo-abandon` cancels the session cleanly (writes `.outcome=abandoned`, runs T2, clears the badge). No review tier, no loop.
 
 Splitting plan-approval into an explicit `/duo-act` (rather than barrelling through `ExitPlanMode` in one response) makes mid-plan refinement first-class and keeps telemetry attribution correct.
 
@@ -125,7 +125,7 @@ Status line shows (when orchestra is installed):
                                                           orchestra badge
 
 ♪ orchestra -> plan <title>       — /duo-plan session active, planning in progress
-♪ orchestra -> plan <title> ▶ implement   — /duo-act has dispatched Haiku Actor
+♪ orchestra -> plan <title> ▶ implement   — /duo-act has dispatched Actor
 ♪ orchestra -> brain <title> ⚠ >200K       — Brain context too large to delegate safely
 ```
 
@@ -160,13 +160,13 @@ and are deployed explicitly — no automatic shadowing.
 ```
 claude-orchestra/
 ├── agents/
-│   ├── planner.md         Sonnet 4.6 — writes numbered plan to PLAN.md
-│   ├── actor.md           Haiku 4.5  — executes one scoped step
-│   └── reviewer.md        Sonnet 4.6 — reviews diff, emits PASS/FIX/BLOCK
+│   ├── planner.md         — writes numbered plan to PLAN.md
+│   ├── actor.md           — executes one scoped step
+│   └── reviewer.md        — reviews diff, emits PASS/FIX/BLOCK
 ├── commands/
 │   ├── brain.md           /brain slash command           — full pipeline (Phase 0 inline + Planner/Actor/Reviewer subagents)
 │   ├── duo-plan.md       /duo-plan slash command       — open a /duo planning session (multi-turn refinement)
-│   ├── duo-act.md        /duo-act slash command        — commit the plan, ExitPlanMode, dispatch Actor (Haiku), cleanup
+│   ├── duo-act.md        /duo-act slash command        — commit the plan, ExitPlanMode, dispatch Actor, cleanup
 │   └── duo-abandon.md     /duo-abandon slash command     — cancel the active /duo session, run cleanup + telemetry
 ├── scripts/
 │   └── orchestra-hook.sh      PreToolUse / SubagentStop / PreCompact hook dispatcher

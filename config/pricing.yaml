@@ -5,6 +5,10 @@ notes: |
   long-cache (1h TTL, 2x input) is not yet tracked separately. Verify against
   the source URL above on every bump and update last_updated.
 models:
+  # NOTE: LiteLLM's internal model database under-prices claude-opus-4-7 — it appears
+  # to omit or zero-out cache_creation and cache_read rates, reporting only input+output.
+  # When cost_source=litellm, expect a ~$29 undercount per 689K cache-creation tokens
+  # relative to these rates. pricing_yaml is the authoritative fallback for full cost.
   claude-opus-4-7:
     input: 15.00
     output: 75.00
@@ -25,3 +29,24 @@ models:
     output: 5.00
     cache_creation: 1.25
     cache_read: 0.10
+  # ── SoHoAI / LiteLLM-routed aliases ─────────────────────────────────────────
+  # Served via the SoHoAI gateway (ANTHROPIC_BASE_URL=http://192.168.1.93:8000).
+  # Ollama Cloud Pro is a flat $20/mo subscription; no per-token marginal cost.
+  # Cache discounts do not apply (LiteLLM strips cache_control markers).
+  # Rates are 0.00 so the pricing_yaml T2 fallback contributes $0 — correct.
+  # Authoritative cost for these models is the SoHoAI API (cost_source=sohoai_api).
+  claude-code-gemma-4-e4b:
+    input: 0.00
+    output: 0.00
+  claude-code-deepseek-v4-pro:
+    input: 0.00
+    output: 0.00
+  claude-code-kimi-k2.6:
+    input: 0.00
+    output: 0.00
+  claude-code-glm-5.1:
+    input: 0.00
+    output: 0.00
+  claude-code-qwen3-coder-next:
+    input: 0.00
+    output: 0.00
