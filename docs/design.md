@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-19--16-28
+updated_at: 2026-05-21--00-00
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -135,8 +135,7 @@ The utilization denominator is looked up from `context-windows.yaml` per model I
 
 **`~$X.YZ`** — live running cost (always shown, including `~$0.00` from the very first render so the display is visibly live from session start). Source differs by session type:
 - **Orchestra sessions**: SoHoAI `usage_events` table query via SQLite direct read (primary, NFS-accessible) or HTTP API fallback (TTL=8 s cache). Stale cache marked `*`. No `(est)` fallback — JSONL is not used (SoHoAI-proxied sessions do not write `costUSD` to JSONL entries).
-- **Native sessions (no recent orchestra)**: `cost.total_cost_usd` from CC's own `statusLine` JSON input — precise, always current, no external query needed. Last non-zero total (parent + subagents) is written to `active-sessions/<session>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead, keeping the field continuously visible.
-- **Native sessions (after orchestra session ends in same project)**: `cost_usd_estimate` from the most recent `telemetry.json`, shown instead of the CC JSON estimate — authoritative (SoHoAI subagents + T2 parent). Guard: `telemetry.json` mtime must be strictly greater than the native session's `.lck` mtime (proves the pipeline ended *during* this session, not before). If the `.lck` does not exist yet (`mtime=0`), falls back to CC JSON. This prevents false positives when a new session is opened after an orchestra session ends.
+- **All sessions (fallback when SoHoAI returns nothing)**: `cost.total_cost_usd` from CC's own `statusLine` JSON input (parent session) **+** subagent JSONL costs from `native-subagent-cost.sh` (actor completions). Last non-zero total is written to `active-sessions/native-<UUID>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead. This fallback covers: (a) pure native sessions, (b) orchestra sessions where CC 2.1.132 doesn't inject `X-Orchestra-Session-ID` so SoHoAI can't attribute cost, and (c) post-duo native continuation where cost previously froze at the telemetry.json value.
 
 **`♪ badge`** — orchestra session badge (shown only during active /duo or /brain sessions, or when a subagent is running). Badge formats in descending priority:
 
@@ -160,8 +159,8 @@ The status line script is called by Claude Code on each render tick — after ev
 | `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
 | `/brain` inflight marker (session-discovery for `/brain-abandon` and explicit CMD-classification by Stop-hook) | `${SESSION_DIR}/.brain-inflight` | `/brain` command setup |
 | Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
-| Live cost (orchestra) | SoHoAI `usage_events` SQLite (direct) → HTTP API fallback via `sohoai-live-cost.sh` (TTL=8 s) | T2 via SoHoAI API |
-| Live cost (native) | `cost.total_cost_usd` from CC `statusLine` JSON input | CC accumulates cost internally |
+| Live cost (orchestra, SoHoAI works) | SoHoAI `usage_events` SQLite (direct) → HTTP API fallback via `sohoai-live-cost.sh` (TTL=8 s) | T2 via SoHoAI API |
+| Live cost (fallback: native + orchestra w/o attribution) | `cost.total_cost_usd` from CC `statusLine` JSON + `native-subagent-cost.sh` for actor JSONLs | CC internal + JSONL pricing.yaml |
 | Live cost (ctx segment) | `context_windows.yaml` + CC context width | ctx-segment.sh |
 
 #### ctx segment implementation details

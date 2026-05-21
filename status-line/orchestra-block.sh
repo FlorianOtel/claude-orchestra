@@ -242,9 +242,15 @@ except Exception:
     fi
 
     # --- live cost ---
-    # Orchestra sessions: query SoHoAI (has per-subagent attribution).
-    # Native sessions: CC provides cost.total_cost_usd directly in JSON — precise,
-    # always current, no SoHoAI query or JSONL parsing needed.
+    # Orchestra sessions: try SoHoAI first (per-subagent attribution when headers work).
+    # Fallback for all sessions (native, and orchestra when SoHoAI has no attribution):
+    # CC JSON provides cost.total_cost_usd (parent turns) + native-subagent-cost.sh
+    # walks actor JSONL files for subagent spend. This fixes two bugs:
+    #   1. Post-duo native continuation: cost was frozen at telemetry.json value;
+    #      now it grows as the conversation continues.
+    #   2. New duo session (orchestra active): SoHoAI returns 0 (CC 2.1.132 doesn't
+    #      inject X-Orchestra-Session-ID), cost disappeared; now falls through to
+    #      native CC + subagent cost so the counter stays visible and growing.
     live_cost=""
     if [ -n "$live_session_id" ]; then
         if [ -n "$active_session_dir" ]; then
@@ -252,41 +258,20 @@ except Exception:
             started_at=$(stat -c %Y "$active_session_dir" 2>/dev/null || echo "0")
             live_cost=$(~/.claude/scripts/sohoai-live-cost.sh \
                 "$live_session_id" "$started_at" "$cost_cache" 2>/dev/null || true)
-        elif [[ "$live_session_id" == native-* ]]; then
-            # Prefer authoritative telemetry.json from the most recent completed
-            # orchestra session, but only when it was written AFTER this native
-            # session started (.lck mtime is the session-start lower bound).
-            # Guard: _lck_mtime > 0 ensures .lck exists; _tel_mtime > _lck_mtime
-            # ensures the orchestra session ended during this session, not before.
-            # This eliminates false positives for new sessions opened after a
-            # pipeline ends in the same project.
-            if [ -d "$sessions_root" ]; then
-                _recent_dir=$(find "$sessions_root" -mindepth 1 -maxdepth 1 -type d \
-                    -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)
-                _tel_file="${_recent_dir}/telemetry.json"
-                if [ -f "$_tel_file" ]; then
-                    _lck_mtime=$(stat -c %Y \
-                        "$HOME/.claude/active-sessions/${live_session_id}.lck" \
-                        2>/dev/null || echo 0)
-                    _tel_mtime=$(stat -c %Y "$_tel_file" 2>/dev/null || echo 0)
-                    if [ "$_lck_mtime" -gt 0 ] && [ "$_tel_mtime" -gt "$_lck_mtime" ]; then
-                        _tel_cost=$(jq -r '.cost_usd_estimate // empty' \
-                            "$_tel_file" 2>/dev/null || true)
-                        if printf '%s' "$_tel_cost" | grep -qE '^[0-9]+\.?[0-9]*$'; then
-                            live_cost=$(LC_ALL=C printf '~$%.2f' "$_tel_cost" 2>/dev/null || true)
-                        fi
-                    fi
-                fi
-            fi
-            if [ -z "$live_cost" ]; then
+        fi
+        # Universal fallback: native CC cost + subagent JSONL costs.
+        # Runs when: (a) native session, (b) orchestra session where SoHoAI returned nothing.
+        if [ -z "$live_cost" ]; then
             _cc_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null)
             if [ "$_is_non_anthropic" = true ]; then
                 _cc_cost=0
             fi
 
-            # Subagent costs — walk agent JSONLs, TTL-cached 30 s
-            _parent_uuid="${live_session_id#native-}"
-            _sub_cache="$HOME/.claude/active-sessions/${live_session_id}.subcost-cache"
+            # Subagent costs — walk actor/subagent JSONLs, TTL-cached 30 s.
+            # CC session UUID from JSON (stable for the CC process lifetime, regardless
+            # of whether we're in an orchestra or native phase).
+            _parent_uuid=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null)
+            _sub_cache="$HOME/.claude/active-sessions/native-${_parent_uuid}.subcost-cache"
             _sub_age=$(( $(date +%s) - $(stat -c %Y "$_sub_cache" 2>/dev/null || echo 0) ))
             if [ "$_sub_age" -gt 30 ]; then
                 _sub_cost=$(~/.claude/scripts/native-subagent-cost.sh \
@@ -297,7 +282,7 @@ except Exception:
                 _sub_cost=$(cat "$_sub_cache" 2>/dev/null || echo "")
             fi
 
-            # Combine parent + subagent costs and format
+            # Combine parent + subagent costs and format.
             _total=$(${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3 \
                 -c "print(f'{float(\"${_cc_cost:-0}\")+float(\"${_sub_cost:-0}\"):.4f}')" \
                 2>/dev/null || echo "${_cc_cost:-0}")
@@ -305,7 +290,7 @@ except Exception:
             # Cache last non-zero total; fall back to it when CC reports 0 at turn boundaries
             # (CC resets cost.total_cost_usd to 0 briefly after each tool-call completes).
             # Skip cache read for non-Anthropic models — cost is intentionally $0 for them.
-            _cost_cache="$HOME/.claude/active-sessions/${live_session_id}.cost-cache"
+            _cost_cache="$HOME/.claude/active-sessions/native-${_parent_uuid}.cost-cache"
             if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$' \
                && [ "$(printf '%.0f' "$_total" 2>/dev/null || echo 0)" != "0" ]; then
                 printf '%s' "$_total" > "$_cost_cache.tmp" 2>/dev/null \
@@ -319,7 +304,6 @@ except Exception:
             if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$'; then
                 live_cost=$(LC_ALL=C printf '~$%.2f' "$_total" 2>/dev/null || true)
             fi
-            fi  # telemetry fallback
         fi
     fi
 
