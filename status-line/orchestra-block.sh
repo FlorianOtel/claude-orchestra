@@ -44,15 +44,29 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     fi
 
     # --- /duo badge: count .duo-inflight markers across session dirs ---
+    # Staleness check: a .duo-inflight is live only when the CC session that
+    # created it is still running. Each session dir holds .transcript-uuid
+    # (the CC session UUID written atomically with .duo-inflight); we verify
+    # liveness by checking for native-<uuid>.lck in active-sessions. The Stop
+    # hook cleans up dead .lck files, so a missing .lck means a dead session.
     duo_count=0
     duo_title=""
+    _live_duo_dir=""
     sessions_root="$cwd/.claude/orchestra/sessions"
     if [ -d "$sessions_root" ]; then
-        duo_count=$(find "$sessions_root" -maxdepth 2 -name ".duo-inflight" 2>/dev/null | wc -l | tr -d ' ')
-        if [ "$duo_count" -eq 1 ]; then
-            duo_title=$(find "$sessions_root" -maxdepth 2 -name ".duo-inflight" 2>/dev/null \
-                        -exec cat {} \; 2>/dev/null | head -c 30)
-        fi
+        while IFS= read -r _inf; do
+            [ -z "$_inf" ] && continue
+            _sess_dir=$(dirname "$_inf")
+            _tuuid=$(cat "${_sess_dir}/.transcript-uuid" 2>/dev/null | tr -d '[:space:]')
+            # Missing .transcript-uuid or no live .lck → stale, skip.
+            [ -z "$_tuuid" ] && continue
+            [ ! -f "$HOME/.claude/active-sessions/native-${_tuuid}.lck" ] && continue
+            duo_count=$(( duo_count + 1 ))
+            if [ "$duo_count" -eq 1 ]; then
+                duo_title=$(head -c 30 "$_inf" 2>/dev/null || true)
+                _live_duo_dir="$_sess_dir"
+            fi
+        done < <(find "$sessions_root" -maxdepth 2 -name ".duo-inflight" 2>/dev/null)
     fi
 
     # --- active-subagent indicator ---
@@ -75,8 +89,7 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     # --- live session ID resolution (orchestra + native fallback) ---
     active_session_dir=""
     if [ "$duo_count" -gt 0 ]; then
-        active_session_dir=$(find "$sessions_root" -maxdepth 2 -name ".duo-inflight" 2>/dev/null \
-                            | head -n 1 | xargs -r dirname)
+        active_session_dir="$_live_duo_dir"
     elif [ -n "$orch_title" ] && [ -d "$cwd/.claude/orchestra/sessions" ]; then
         active_session_dir=$(find "$cwd/.claude/orchestra/sessions" -mindepth 1 -maxdepth 1 -type d \
                               -printf '%T@ %p\n' 2>/dev/null \

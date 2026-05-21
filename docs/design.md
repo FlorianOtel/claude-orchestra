@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-21--00-00
+updated_at: 2026-05-21--18-03
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -137,7 +137,7 @@ The utilization denominator is looked up from `context-windows.yaml` per model I
 - **Orchestra sessions**: SoHoAI `usage_events` table query via SQLite direct read (primary, NFS-accessible) or HTTP API fallback (TTL=8 s cache). Stale cache marked `*`. No `(est)` fallback — JSONL is not used (SoHoAI-proxied sessions do not write `costUSD` to JSONL entries).
 - **All sessions (fallback when SoHoAI returns nothing)**: `cost.total_cost_usd` from CC's own `statusLine` JSON input (parent session) **+** subagent JSONL costs from `native-subagent-cost.sh` (actor completions). Last non-zero total is written to `active-sessions/native-<UUID>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead. This fallback covers: (a) pure native sessions, (b) orchestra sessions where CC 2.1.132 doesn't inject `X-Orchestra-Session-ID` so SoHoAI can't attribute cost, and (c) post-duo native continuation where cost previously froze at the telemetry.json value.
 
-**`♪ badge`** — orchestra session badge (shown only during active /duo or /brain sessions, or when a subagent is running). Badge formats in descending priority:
+**`♪ badge`** — orchestra session badge (shown only during active /duo or /brain sessions, or when a subagent is running). Stale `.duo-inflight` files left behind by crashed CC sessions are detected by checking `native-<transcript-uuid>.lck` liveness; sessions whose CC process is dead are silently excluded from the badge count and `active_session_dir` resolution. Badge formats in descending priority:
 
 | Condition | Badge |
 |---|---|
@@ -155,7 +155,7 @@ The status line script is called by Claude Code on each render tick — after ev
 
 | Signal | Source | Written by |
 |---|---|---|
-| `/duo` title and inflight state | `${SESSION_DIR}/.duo-inflight` | `/duo-plan` command setup |
+| `/duo` title and inflight state | `${SESSION_DIR}/.duo-inflight` (live only — liveness verified via `native-<uuid>.lck`; stale markers from crashed sessions are skipped silently) | `/duo-plan` command setup |
 | `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
 | `/brain` inflight marker (session-discovery for `/brain-abandon` and explicit CMD-classification by Stop-hook) | `${SESSION_DIR}/.brain-inflight` | `/brain` command setup |
 | Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
