@@ -156,12 +156,13 @@ if ! $DRY_RUN; then
         ok "cleaned orphan: $CLAUDE/agents/.stripped/"
     fi
 
-    # 7b-ii. Planner-long agent variant (removed in non-Anthropic pipeline transition).
-    if [ -f "$CLAUDE/agents/planner-long.md" ]; then
-        echo "  Removing orphaned planner-long.md"
-        rm "$CLAUDE/agents/planner-long.md"
-        ok "cleaned orphan: $CLAUDE/agents/planner-long.md"
-    fi
+    # 7b2. Non-Anthropic agent variants (litellm-gateway branch only; removed 2026-05-22).
+    for orphan in actor-heavy.md planner-long.md; do
+        if [ -f "$CLAUDE/agents/$orphan" ]; then
+            rm -f "$CLAUDE/agents/$orphan"
+            ok "cleaned orphan: $CLAUDE/agents/$orphan"
+        fi
+    done
 
     # 7c. Obsolete commands (Step 6 of the revert plan, plus the duo session-bracketing redesign).
     # duo.md was replaced by duo-start.md / duo-end.md / duo-abandon.md (2026-05-05).
