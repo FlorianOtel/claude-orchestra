@@ -169,11 +169,9 @@ def get_session_telemetry_json(session_dir: str) -> Optional[Dict[str, Any]]:
 
 
 def format_cost(cost: float, cost_source: str = "") -> str:
-    """Format cost as $X.XXXX, '$0.0000' for known-zero (non-Anthropic), or '-' if unknown."""
-    if cost is None:
+    """Format cost as $X.XXXX, or '-' if zero/unknown."""
+    if cost is None or cost == 0:
         return "-"
-    if cost == 0:
-        return "$0.0000" if cost_source == "pricing_yaml" else "-"
     return f"${cost:.4f}"
 
 

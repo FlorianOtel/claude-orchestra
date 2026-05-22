@@ -147,9 +147,8 @@ def query_sohoai_usage(
     """Query SoHoAI for cost_usd and token counts.
 
     For native sessions (session_id starts with 'native-'):
-      Queries by model_filter + time window.  Source filter is intentionally
-      omitted: SoHoAI assigns 'unknown' source to non-Anthropic LiteLLM-routed
-      models, so only model name + started_at window are reliable for scoping.
+      Queries by model_filter + time window.  Source filter is omitted so the
+      query works regardless of how SoHoAI tags the source field.
     For orchestra sessions:
       Queries by orchestra_session_id.
 

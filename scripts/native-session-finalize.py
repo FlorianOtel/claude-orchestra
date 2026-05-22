@@ -103,8 +103,6 @@ def main():
                 )
                 if first_ts is not None:
                     # Always record model + tokens when transcript is parsed successfully.
-                    # Don't gate on t2_cost > 0 — non-Anthropic models have $0 cost but
-                    # still need correct model name recorded.
                     if t2_model:
                         model = t2_model
                     if t2_tokens:

@@ -75,10 +75,10 @@ git checkout litellm-gateway && git merge main --no-edit && git push origin lite
 - **Model:** claude-sonnet-4-6
 - **Reason:** refactor(telemetry): UUID-keyed native sessions — bash-session-init.sh now writes native-<UUID>.lck directly (registration moved from Stop hook). Eliminated PID ancestry traversal (/proc/stat). Session IDs are now native-<UUID>. Bug caught during implementation: `[ -z ] && return || exit` idiom kills bash when UUID is set — must use `if/then`.
 - **Timestamp:** 2026-05-10T18:51:03Z
-- **Model:** claude-code-qwen3-coder-next (Actor) + claude-code-deepseek-v4-pro (Planner / Actor-heavy) + claude-sonnet-4-6 (Reviewer / planner-long fallback)
+- **Model:** qwen3-coder-next (Actor) + deepseek-v4-pro (Planner / Actor-heavy) + claude-sonnet-4-6 (Reviewer / planner-long fallback)
 - **Reason:** graduated SoHoAI rollout — Phases A+B+C: pricing.yaml + tier annotations + actor-heavy + planner-long + Reviewer-stays-Sonnet. Smoke tests pending — session 20260510T180922Z-2575990. Cost/duration TBD-post-smoke.
 - **Timestamp:** 2026-05-10T20:45:52Z
-- **Model:** claude-opus-4-7[1m] (Brain) + claude-code-kimi-k2.6 (actor-heavy) + claude-sonnet-4-6 (reviewer-long)
+- **Model:** claude-opus-4-7[1m] (Brain) + kimi-k2.6 (actor-heavy) + claude-sonnet-4-6 (reviewer-long)
 - **Reason:** status-line ctx + SoHoAI live-cost segments — implemented via /brain heavy-tier workflow, deployed, all smoke tests pass (ctx bar colors, 1M denominator, SoHoAI query, JSONL fallback).
 - **Timestamp:** 2026-05-19T00-00
 - **Model:** claude-sonnet-4-6[1m]
@@ -118,7 +118,7 @@ Verify T1 (hook events) and T2 (transcript parse) after any /duo or /brain run.
    → `~$X.YZ` or empty; <2s wall time
 6. Live render: send any message to CC; observe status bar shows
    `model | ctx ▓▓░░░░░░░░ N% XK/YM | ~$X.YZ | ◆ project | ⎇ branch`
-   (cost shown for paid models; absent for zero-cost claude-code-* models)
+   (cost shown for paid models; absent for local/* zero-cost models)
 
 ### Native session telemetry smoke test
 1. Open a fresh CC session (no /brain or /duo).

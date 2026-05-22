@@ -3,7 +3,7 @@ title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design not
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-19--16-28
+updated_at: 2026-05-22--00-00
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -22,6 +22,14 @@ context: >
   captures the state of the design before any implementation starts, and
   lists the open questions that must be answered first.
 ---
+
+> **Model naming note (2026-05-22):** Non-Anthropic models were previously exposed to Claude Code
+> via the SoHoAI LiteLLM proxy under `claude-code-<model>` aliases (required because CC only
+> accepts models with a `claude-` prefix). That proxy layer has been removed; claude-orchestra now
+> uses only Anthropic models. The rest of this document uses the old alias names. Rename mapping:
+> `claude-code-deepseek-v4-pro` → `deepseek-v4-pro`, `claude-code-kimi-k2.6` → `kimi-k2.6`,
+> `claude-code-glm-5.1` → `glm-5.1`, `claude-code-qwen3-coder-next` → `qwen3-coder-next`,
+> `claude-code-qwen3-4b-q6` → `qwen3-4b-q6`, `claude-code-qwen3-9b-q4` → `qwen3-9b-q4`.
 
 # Claude Code three-tier orchestrator — TODO
 

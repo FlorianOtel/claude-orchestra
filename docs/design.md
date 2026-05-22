@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-21--18-03
+updated_at: 2026-05-22--00-00
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -55,10 +55,10 @@ When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo
 | Agent | Model | File | Tools | Role |
 |---|---|---|---|---|
 | **Brain** | Opus 4.7 (or Sonnet for /duo) | — (main session) | all | Orchestrates; calls `ExitPlanMode` at plan approval (G2) |
-| **Planner** | `claude-code-deepseek-v4-pro` | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md; Sonnet 4.6 via `planner-long` for >30 KB inputs |
+| **Planner** | `deepseek-v4-pro` | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md; Sonnet 4.6 via `planner-long` for >30 KB inputs |
 | **Planner** (long) | Sonnet 4.6 | `~/.claude/agents/planner-long.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Fallback for large inputs (>30 KB); preserves Anthropic cache discount |
-| **Actor** | `claude-code-qwen3-coder-next` | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
-| **Actor** (heavy) | `claude-code-kimi-k2.6` | `~/.claude/agents/actor-heavy.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Complex multi-file refactors; triggered by `[tier: heavy]` step annotations |
+| **Actor** | `qwen3-coder-next` | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
+| **Actor** (heavy) | `kimi-k2.6` | `~/.claude/agents/actor-heavy.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Complex multi-file refactors; triggered by `[tier: heavy]` step annotations |
 | **Reviewer** | Sonnet 4.6 | `~/.claude/agents/reviewer.md` | Read, Grep, Glob, TodoWrite (read-only) | Reviews diff against PLAN.md; returns PASS / FIX / BLOCK |
 
 ### Model requirements
@@ -125,13 +125,6 @@ Fields injected by the orchestra block:
 - **Orange**: ≥ 80% utilization
 
 The utilization denominator is looked up from `context-windows.yaml` per model ID, with fallback to Claude Code's native `context_window.context_window_size`. Model ID normalization strips `[1m]`, `[200k]`, and date suffixes before lookup. Models with `[1m]` in their ID force a 1,000,000 denominator.
-
-**Non-Anthropic models (`claude-code-*`).** Claude Code does not report token counts for non-Anthropic models (e.g. `claude-code-kimi-k2.6`). A SoHoAI fallback reaches into `usage_events` via `query_sohoai_usage()` in `scripts/telemetry-summarize.py` and `sohoai-live-cost.sh`. Key constraints:
-- **Latest request only**: the fallback reads `latest_total_tokens` (size of the most recent API request), NOT cumulative tokens across all turns — cumulative would produce absurd percentages (14M/256K ≈ 5500%).
-- **Model-scoped**: query uses `model = ? OR model LIKE ?` (e.g. `kimi-k2.6` matches `kimi-k2.6:cloud` in the DB). Source filter is intentionally omitted because SoHoAI's LiteLLM callback tags non-Anthropic models with `source='unknown'`.
-- **Time-scoped**: `created_at >=` from the `.lck` `started_at` field isolates this session's requests from other concurrent or prior sessions with the same model.
-- **Denominator consistency**: percentage and display both use `context-windows.yaml` as the denominator. Without this fix CC's `context_window_size` for non-Anthropic models would report ~200K for a 256K-window model, inflating the percentage to 101%.
-- **TTL**: 8 s, so the token bar updates every ~8 s rather than continuously (sufficient for a progress indicator).
 
 **`~$X.YZ`** — live running cost (always shown, including `~$0.00` from the very first render so the display is visibly live from session start). Source differs by session type:
 - **Orchestra sessions**: SoHoAI `usage_events` table query via SQLite direct read (primary, NFS-accessible) or HTTP API fallback (TTL=8 s cache). Stale cache marked `*`. No `(est)` fallback — JSONL is not used (SoHoAI-proxied sessions do not write `costUSD` to JSONL entries).
@@ -396,12 +389,12 @@ The Stop hook fires per response turn. It iterates all `native-*.lck` files and 
 | `started_at` | ISO8601 timestamp from `.lck` creation |
 | `ended_at` | ISO8601 timestamp at finalization |
 | `duration_s` | wall-clock seconds |
-| `cost_usd_estimate` | parent + all subagent costs (from cost-source cascade); `0.0` for non-Anthropic (zero-rate) models |
+| `cost_usd_estimate` | parent + all subagent costs (from cost-source cascade) |
 | `cost_source` | `sohoai_api` / `litellm` / `pricing_yaml` / `none` |
-| `model` | parent session model name (present when transcript was parsed — both Anthropic and non-Anthropic) |
+| `model` | parent session model name (present when transcript was parsed) |
 | `total_tokens` | parent session token count (present when transcript was parsed; excludes subagent tokens) |
 
-**Non-Anthropic models.** Sessions using SoHoAI proxy models not in `pricing.yaml` (e.g. `claude-code-qwen3-coder-next`, `claude-code-kimi-k2.6`) are recorded with `cost_usd_estimate: 0.0` and `cost_source: "pricing_yaml"` — the transcript was successfully parsed and the model identified, but no pricing rate is available. `session-report.py` renders these as `$0.0000` to distinguish them from sessions where cost attribution failed entirely (`cost_source: "none"`, displayed as `-`). For past records already in `telemetry.jsonl` with a missing `model` field (written before the 2026-05-11 finalize-script fix), `session-report.py` retroactively re-reads the JSONL transcript at display time to fill in the model name.
+For past records already in `telemetry.jsonl` with a missing `model` field (written before the 2026-05-11 finalize-script fix), `session-report.py` retroactively re-reads the JSONL transcript at display time to fill in the model name.
 
 **Reporting.** `native-session-report.py` reads from two sources and merges them (deduplicating by `session_id`, telemetry takes precedence, sorted newest-first):
 1. `~/.claude/native-sessions/telemetry.jsonl` — primary; contains all sessions finalized since 2026-05-07.
@@ -595,10 +588,10 @@ Reference: [Design history & amendments](design-history.md) §Amendment 2026-05-
 
 | Role | Model | Trigger |
 |---|---|---|
-| Planner (normal) | `claude-code-deepseek-v4-pro` | inputs ≤ 30 KB |
+| Planner (normal) | `deepseek-v4-pro` | inputs ≤ 30 KB |
 | Planner (long-context fallback) | Sonnet 4.6 | inputs > 30 KB; preserves Anthropic cache discount |
-| Actor (default) | `claude-code-qwen3-coder-next` | all steps unless marked heavy |
-| Actor (heavy) | `claude-code-kimi-k2.6` | `[tier: heavy]` annotation in PLAN.md step |
+| Actor (default) | `qwen3-coder-next` | all steps unless marked heavy |
+| Actor (heavy) | `kimi-k2.6` | `[tier: heavy]` annotation in PLAN.md step |
 | Reviewer | Sonnet 4.6 | all reviews (unchanged; calibration priority) |
 
 **Brain** remains Opus 4.7 for `/brain` and Sonnet 4.6 for `/duo` (no change).
@@ -607,8 +600,8 @@ Reference: [Design history & amendments](design-history.md) §Amendment 2026-05-
 
 Plan steps may be tagged with optional `[tier: …]` annotations to override tier defaults:
 
-- `[tier: default]` — use default tier (Qwen3 for Actor, DeepSeek for Planner). Usually omitted.
-- `[tier: heavy]` — use heavy tier (Kimi K2.6 for Actor; Sonnet stays for Planner). Used for complex multi-file refactors, architectural changes, or security-sensitive code.
+- `[tier: default]` — use default tier. Usually omitted.
+- `[tier: heavy]` — use heavy tier (actor-heavy agent). Used for complex multi-file refactors, architectural changes, or security-sensitive code.
 
 Format: annotation appears on the same line as the step heading (e.g., `### 5. Refactor X [tier: heavy]`). Brain's PLAN parser confirms the annotation exists before dispatching the heavy-tier subagent; if malformed or missing, the step runs at default tier.
 
@@ -618,25 +611,18 @@ When RESEARCH + constraints + prior artifacts exceed ~30 KB, Brain runs Sonnet 4
 
 See TODO.md §10e for the deferred automation of this check.
 
-### Alias stability contract
-
-SoHoAI exposes agents as aliases: `claude-code-deepseek-v4-pro`, `claude-code-qwen3-coder-next`, `claude-code-kimi-k2.6`, etc. These are **stable across deployments** within the SoHoAI domain (as of 2026-05-10, per handoff §1). If the alias routing changes (e.g., DeepSeek → Claude 3.7), SoHoAI commits to rotating the alias URL, not swapping backends silently. Updates will be documented in the design-history.md amendment chain.
-
-Without this contract, cost + quality tracking would drift silently between deployments.
-
 ### Reviewer remains Sonnet 4.6
 
 Reviewer stays Sonnet 4.6 (no multi-model routing). Rationale:
 - Reviewer is a calibration touchstone — if it starts rejecting code that Sonnet previously accepted, review-loop iteration counts will spike, signaling a model regression.
 - Reviewer is called ≤ 3 times per step (review loop cap); its cost is < 15% of typical sessions.
-- Code review is a high-stakes task where Sonnet's consistency is proven; evaluation of GLM-5.1 as a second-pass cross-check is deferred (see TODO.md §10b).
+- Code review is a high-stakes task where Sonnet's consistency is proven; evaluation of a second-pass cross-check model is deferred (see TODO.md §10b).
 
 ### Cross-reference
 
 - Agents table (this document, §How the workflow works): file paths and role descriptions.
 - design-history.md §Amendment 2026-05-10: historical context, operator caveats, deferred follow-ups.
-- TODO.md §10b–10f: deferred items (GLM-5.1 second-pass, 429 fallback, PLAN schema validator, 30 KB threshold automation, max_tokens knob).
-- Handoff §1: SoHoAI alias stability contract.
+- TODO.md §10b–10f: deferred items (second-pass cross-check, 429 fallback, PLAN schema validator, 30 KB threshold automation, max_tokens knob).
 - Handoff §3: max_tokens ≥ 500 requirement for reasoning models.
 
 ---
