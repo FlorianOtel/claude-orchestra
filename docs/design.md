@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (claude-code-kimi-k2.6)
-updated_at: 2026-05-20--00-00
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-22--00-00
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -14,11 +14,11 @@ context: >
 
 # Claude Orchestra
 
-A three-tier orchestration system for Claude Code: **Brain** delegates reasoning, implementation, and review across **Planner** (claude-code-glm-5.1), **Actor** (claude-code-qwen3-coder-next), and **Reviewer** (claude-code-kimi-k2.6) tiers using Claude Code's native `Task` tool for subagent dispatch. Single global install at `~/.claude/`; usable from any project.
+A three-tier orchestration system for Claude Code: **Brain** (Opus 4.7 or Sonnet 4.6) delegates reasoning, implementation, and review across **Planner** (Sonnet 4.6), **Actor** (Haiku 4.5), and **Reviewer** (Sonnet 4.6) tiers using Claude Code's native `Task` tool for subagent dispatch. Single global install at `~/.claude/`; usable from any project.
 
 ## Intro
 
-Claude Orchestra solves the cost/capability trade-off for multi-step code work. A single powerful Brain (user's active model, recommended: claude-code-kimi-k2.6) orchestrates cheaper specialized tiers: a read-only Planner for structured reasoning, a write-capable Actor for implementation, and a read-only Reviewer for quality gates. The key design choice: **Option B — native Claude Code subagents, not separate processes** — which keeps the architecture simple and preserves permission modes and plan-approval gates.
+Claude Orchestra solves the cost/capability trade-off for multi-step code work. A single powerful Brain (Opus 4.7) orchestrates cheaper specialized tiers: a read-only Planner for structured reasoning, a write-capable Actor for implementation, and a read-only Reviewer for quality gates. The key design choice: **Option B — native Claude Code subagents, not separate processes** — which keeps the architecture simple and preserves permission modes and plan-approval gates.
 
 Use it when you want code changes reviewed before landing, or when you want to isolate reasoning from implementation for cost control.
 
@@ -28,11 +28,11 @@ Use it when you want code changes reviewed before landing, or when you want to i
 
 Talk to Brain normally. Brain delegates to Planner/Actor/Reviewer as needed. No forced pipeline. Example: "explain the SoHoAI routing architecture" — Brain reads files and answers directly.
 
-### /duo — lightweight (Brain plans, Actor executes), session-bracketed
+### /duo — lightweight (Sonnet plans, Haiku acts), session-bracketed
 
-`/duo` is a three-command session-bracketed pipeline. `/duo-plan <task>` opens a planning session (sets up the session_dir, drafts an initial `PLAN.md`, and yields back). The operator then refines the plan across as many normal plan-mode turns as needed. `/duo-act` commits the plan, calls `ExitPlanMode`, dispatches Actor, and runs cleanup + telemetry. `/duo-abandon` cancels the active session cleanly. No Reviewer. Example: "add a docstring to rag_engine/search.py::search_rag" — low risk, no review needed.
+`/duo` is a three-command session-bracketed pipeline. `/duo-plan <task>` opens a planning session (sets up the session_dir, drafts an initial `PLAN.md`, and yields back). The operator then refines the plan across as many normal plan-mode turns as needed. `/duo-act` commits the plan, calls `ExitPlanMode`, dispatches Actor (Haiku), and runs cleanup + telemetry. `/duo-abandon` cancels the active session cleanly. No Reviewer. Example: "add a docstring to rag_engine/search.py::search_rag" — low risk, no review needed.
 
-Workflow: (1) Launch a Claude Code session (recommended: `claude-code-kimi-k2.6`). (2) `Shift+Tab` to enter plan mode. (3) `/duo-plan <task>`. (4) Refine across turns until the plan is right. (5) `/duo-act` to execute (or `/duo-abandon` to cancel); on approval, `Shift+Tab` to bypassPermissions if desired, Actor runs uninterrupted.
+Workflow: (1) `claude --model claude-sonnet-4-6`. (2) `Shift+Tab` to enter plan mode. (3) `/duo-plan <task>`. (4) Refine across turns until the plan is right. (5) `/duo-act` to execute (or `/duo-abandon` to cancel); on approval, `Shift+Tab` to bypassPermissions if desired, Actor runs uninterrupted.
 
 Splitting the plan-approval gate into an explicit `/duo-act` (rather than the slash command barrelling through to `ExitPlanMode` in one response) means rejection-or-redirect during planning is now first-class: refinement is a normal multi-turn conversation, not a rejected-plan-and-informally-keep-chatting situation. Telemetry attribution stays correct because `.outcome`-file mtime bounds the T2 time window (see §Telemetry).
 
@@ -54,19 +54,21 @@ When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo
 
 | Agent | Model | File | Tools | Role |
 |---|---|---|---|---|
-| **Brain** | any (user's active model) | — (main session) | all | Orchestrates; calls `ExitPlanMode` at plan approval (G2) |
-| **Planner** | `claude-code-glm-5.1` | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md |
-| **Actor** | `claude-code-qwen3-coder-next` | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
-| **Actor** (heavy) | `claude-code-kimi-k2.6` | `~/.claude/agents/actor-heavy.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Complex multi-file refactors; triggered by `[tier: heavy]` step annotations |
-| **Reviewer** | `claude-code-kimi-k2.6` | `~/.claude/agents/reviewer.md` | Read, Grep, Glob, TodoWrite (read-only) | Reviews diff against PLAN.md; returns PASS / FIX / BLOCK |
+| **Brain** | Opus 4.7 (or Sonnet for /duo) | — (main session) | all | Orchestrates; calls `ExitPlanMode` at plan approval (G2) |
+| **Planner** | `deepseek-v4-pro` | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md; Sonnet 4.6 via `planner-long` for >30 KB inputs |
+| **Planner** (long) | Sonnet 4.6 | `~/.claude/agents/planner-long.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Fallback for large inputs (>30 KB); preserves Anthropic cache discount |
+| **Actor** | `qwen3-coder-next` | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
+| **Actor** (heavy) | `kimi-k2.6` | `~/.claude/agents/actor-heavy.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Complex multi-file refactors; triggered by `[tier: heavy]` step annotations |
+| **Reviewer** | Sonnet 4.6 | `~/.claude/agents/reviewer.md` | Read, Grep, Glob, TodoWrite (read-only) | Reviews diff against PLAN.md; returns PASS / FIX / BLOCK |
 
 ### Model requirements
 
 | Command | Minimum | Recommended | Enforcement |
 |---|---|---|---|
-| `/duo` | none | claude-code-kimi-k2.6 | Advisory only — Brain warns and continues |
+| `/brain` | Sonnet 4.6 | Opus 4.7 | Hard block — Brain reads model ID from system context and refuses to proceed if below minimum |
+| `/duo` | none | Sonnet 4.6 | Advisory only — Brain warns and continues |
 
-The check happens at command startup before any Bash or setup runs. It is LLM-enforced (Brain reads "The exact model ID is…" injected by Claude Code into every session's system context) — same trust level as the plan-mode gate.
+Both checks happen at command startup before any Bash or setup runs. The check is LLM-enforced (Brain reads "The exact model ID is…" injected by Claude Code into every session's system context) — same trust level as the plan-mode gate. See TODO.md for the hook-based upgrade path when `$CLAUDE_MODEL` becomes available.
 
 ### Sequential Phase Architecture & gates
 
@@ -124,19 +126,11 @@ Fields injected by the orchestra block:
 
 The utilization denominator is looked up from `context-windows.yaml` per model ID, with fallback to Claude Code's native `context_window.context_window_size`. Model ID normalization strips `[1m]`, `[200k]`, and date suffixes before lookup. Models with `[1m]` in their ID force a 1,000,000 denominator.
 
-**Non-Anthropic models (`claude-code-*`).** Claude Code does not report token counts for non-Anthropic models (e.g. `claude-code-kimi-k2.6`). A SoHoAI fallback reaches into `usage_events` via `query_sohoai_usage()` in `scripts/telemetry-summarize.py` and `sohoai-live-cost.sh`. Key constraints:
-- **Latest request only**: the fallback reads `latest_total_tokens` (size of the most recent API request), NOT cumulative tokens across all turns — cumulative would produce absurd percentages (14M/256K ≈ 5500%).
-- **Model-scoped**: query uses `model = ? OR model LIKE ?` (e.g. `kimi-k2.6` matches `kimi-k2.6:cloud` in the DB). Source filter is intentionally omitted because SoHoAI's LiteLLM callback tags non-Anthropic models with `source='unknown'`.
-- **Time-scoped**: `created_at >=` from the `.lck` `started_at` field isolates this session's requests from other concurrent or prior sessions with the same model.
-- **Denominator consistency**: percentage and display both use `context-windows.yaml` as the denominator. Without this fix CC's `context_window_size` for non-Anthropic models would report ~200K for a 256K-window model, inflating the percentage to 101%.
-- **TTL**: 8 s, so the token bar updates every ~8 s rather than continuously (sufficient for a progress indicator).
-
 **`~$X.YZ`** — live running cost (always shown, including `~$0.00` from the very first render so the display is visibly live from session start). Source differs by session type:
 - **Orchestra sessions**: SoHoAI `usage_events` table query via SQLite direct read (primary, NFS-accessible) or HTTP API fallback (TTL=8 s cache). Stale cache marked `*`. No `(est)` fallback — JSONL is not used (SoHoAI-proxied sessions do not write `costUSD` to JSONL entries).
-- **Native sessions (no recent orchestra)**: `cost.total_cost_usd` from CC's own `statusLine` JSON input — precise, always current, no external query needed. Last non-zero total (parent + subagents) is written to `active-sessions/<session>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead, keeping the field continuously visible.
-- **Native sessions (after orchestra session ends in same project)**: `cost_usd_estimate` from the most recent `telemetry.json`, shown instead of the CC JSON estimate — authoritative (SoHoAI subagents + T2 parent). Guard: `telemetry.json` mtime must be strictly greater than the native session's `.lck` mtime (proves the pipeline ended *during* this session, not before). If the `.lck` does not exist yet (`mtime=0`), falls back to CC JSON. This prevents false positives when a new session is opened after an orchestra session ends.
+- **All sessions (fallback when SoHoAI returns nothing)**: `cost.total_cost_usd` from CC's own `statusLine` JSON input (parent session) **+** subagent JSONL costs from `native-subagent-cost.sh` (actor completions). Last non-zero total is written to `active-sessions/native-<UUID>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead. This fallback covers: (a) pure native sessions, (b) orchestra sessions where CC 2.1.132 doesn't inject `X-Orchestra-Session-ID` so SoHoAI can't attribute cost, and (c) post-duo native continuation where cost previously froze at the telemetry.json value.
 
-**`♪ badge`** — orchestra session badge (shown only during active /duo or /brain sessions, or when a subagent is running). Badge formats in descending priority:
+**`♪ badge`** — orchestra session badge (shown only during active /duo or /brain sessions, or when a subagent is running). Stale `.duo-inflight` files left behind by crashed CC sessions are detected by checking `native-<transcript-uuid>.lck` liveness; sessions whose CC process is dead are silently excluded from the badge count and `active_session_dir` resolution. Badge formats in descending priority:
 
 | Condition | Badge |
 |---|---|
@@ -154,12 +148,12 @@ The status line script is called by Claude Code on each render tick — after ev
 
 | Signal | Source | Written by |
 |---|---|---|
-| `/duo` title and inflight state | `${SESSION_DIR}/.duo-inflight` | `/duo-plan` command setup |
+| `/duo` title and inflight state | `${SESSION_DIR}/.duo-inflight` (live only — liveness verified via `native-<uuid>.lck`; stale markers from crashed sessions are skipped silently) | `/duo-plan` command setup |
 | `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
 | `/brain` inflight marker (session-discovery for `/brain-abandon` and explicit CMD-classification by Stop-hook) | `${SESSION_DIR}/.brain-inflight` | `/brain` command setup |
 | Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
-| Live cost (orchestra) | SoHoAI `usage_events` SQLite (direct) → HTTP API fallback via `sohoai-live-cost.sh` (TTL=8 s) | T2 via SoHoAI API |
-| Live cost (native) | `cost.total_cost_usd` from CC `statusLine` JSON input | CC accumulates cost internally |
+| Live cost (orchestra, SoHoAI works) | SoHoAI `usage_events` SQLite (direct) → HTTP API fallback via `sohoai-live-cost.sh` (TTL=8 s) | T2 via SoHoAI API |
+| Live cost (fallback: native + orchestra w/o attribution) | `cost.total_cost_usd` from CC `statusLine` JSON + `native-subagent-cost.sh` for actor JSONLs | CC internal + JSONL pricing.yaml |
 | Live cost (ctx segment) | `context_windows.yaml` + CC context width | ctx-segment.sh |
 
 #### ctx segment implementation details
@@ -169,6 +163,14 @@ The ctx segment uses `scripts/ctx-segment.sh` which reads `context-windows.yaml`
 Bar: 20 cells, each representing 5% of the context window (filled `▓`, empty `░`). Prior to 2026-05-12 the bar was 10 cells at 10% each; prior to 2026-05-11 it was 8 cells at 12.5% each.
 
 Token formatting: values ≥ 1,000,000 show as `XM` (e.g., `1.2M`), values ≥ 1,000 show as `XK`, otherwise raw `XK`.
+
+**CC/API [1m] context window mismatch (2026-05-19, commits a2a70c7 + dd8dba0).** `[1m]` is a CC-local shorthand that routes `claude-sonnet-4-6` requests to a 1M-context deployment tier server-side via API parameters (beta headers or access flags). The Anthropic API always returns the canonical model name `claude-sonnet-4-6` with `context_window: 200000` in its response metadata — the 1M routing is invisible to the API's model spec. CC uses the configured model for its **initial** status-line render (reports `context_window_size=1000000`), but updates from the API response on subsequent renders, losing the `[1m]` indicator. Two symptoms result: (1) the display name reverts from "Sonnet 4.6 (1M context)" to "Sonnet 4.6"; (2) `used_percentage` is computed against 200K (e.g., 82K tokens → 41%), while the `ctx` denominator field still shows 1M — an inconsistent "41% 82K/1M".
+
+**Why this is Sonnet 4.6-specific:** Opus 4.7 (`claude-opus-4-7`) has 1M as its canonical API context window — the API itself returns `context_window: 1000000`, so no mismatch occurs. The `[1m]` shorthand exists only for Sonnet 4.6 because Sonnet's standard spec is 200K and the 1M tier is an extended capability, not the default. Future models that include 1M as their native API spec would not be affected.
+
+**Workaround (not a CC fix — CC behaviour is unchanged):**
+1. `orchestra-block.sh` reads `settings.json` (project-level, then global) after extracting `model_id` from CC JSON. If the configured model contains `[1m]` and `model_id` does not, but the base model matches (mapping CC shorthands: `sonnet` → `claude-sonnet-4-6`, `opus` → `claude-opus-4-7`, `haiku` → `claude-haiku-4-5`), it re-appends `[1m]` to `model_id`. A follow-on bash substitution also restores "(1M context)" in the already-built `status_line` display name string.
+2. `ctx-segment.sh` recalculates `used_pct` after `advertised_size` is finalised: when `forced_1m=true` and `tokens > 0`, `used_pct = 100 * tokens / advertised_size`. This ensures bar fill, percentage, and denominator are all derived from the same 1M denominator.
 
 #### CC statusLine JSON schema (CC 2.1.139+)
 
@@ -231,7 +233,7 @@ Concurrency safety via hostname + PID + timestamp stamping in log lines; atomic-
 **Global (~/.claude/):**
 ```
 agents/
-  planner.md, actor.md, actor-heavy.md, reviewer.md
+  planner.md, actor.md, reviewer.md
 commands/
   brain.md, brain-abandon.md
   duo-plan.md, duo-act.md, duo-abandon.md
@@ -262,16 +264,16 @@ invocations.log    (subagent start/end events, append-only)
 brain-state.md     (pre-compact snapshot)
 ```
 
-### Cost model — SoHoAI flat-rate
+### Cost model
 
-All subagents operate under a flat-rate SoHoAI subscription (marginal cost = $0 per invocation):
+Mixed-tier pricing; orchestration overhead is paid by Brain (Opus is ~7–10× Haiku):
 
-- **Brain** (user's active model): most expensive; receives every subagent's return. Mitigated by prompt caching + `PreCompact` hook saving state. Cost dominates a typical session.
-- **Planner** (claude-code-glm-5.1): called once per plan. $0 marginal cost.
-- **Actor** (claude-code-qwen3-coder-next or claude-code-kimi-k2.6 if heavy): called once per step. $0 marginal cost.
-- **Reviewer** (claude-code-kimi-k2.6): called once per review (up to 3 per step). $0 marginal cost.
+- **Brain** (Opus 4.7): most expensive; receives every subagent's return. Mitigated by prompt caching + `PreCompact` hook saving state.
+- **Planner** (Sonnet): called once per plan.
+- **Actor** (Haiku): called once per step (cheap).
+- **Reviewer** (Sonnet): called once per review (up to 3 per step).
 
-Rule of thumb: use `/brain` for tasks where the review loop actually earns the Brain overhead (architecture, multi-file refactors). Use `/duo` for simple, low-risk tasks. The zero-marginal-cost subagents make both pipelines economically viable even with repeated review iterations.
+Rule of thumb: use `/brain` for tasks where the review loop actually earns the Brain overhead (architecture, multi-file refactors). Use `/duo` for simple, low-risk tasks.
 
 ### Disabling and troubleshooting
 
@@ -303,7 +305,7 @@ Deliberate deviations:
 - **Custom state dir `.claude/orchestra/`** — pragmatic co-location with other Claude Code config.
 - **Per-invocation subdirs** — isolation and lazy cleanup (30-day retention).
 - **Atomic-rename pattern** — POSIX standard, documented in prompts, not enforced at hook level.
-- **SoHoAI model aliases** — `claude-code-glm-5.1`, `claude-code-qwen3-coder-next`, `claude-code-kimi-k2.6` (alias stability governed by §Multi-model routing).
+- **Pinned model snapshots** — `claude-sonnet-4-5`, `claude-haiku-4-5-20251001` (no auto-upgrade).
 
 ### Live feed limitations
 
@@ -317,7 +319,7 @@ See design-history.md §13.3 for three potential approaches to close the gap.
 
 ### Rationale
 
-Multi-tier orchestration has a non-obvious cost structure. Brain (user's active model) dominates by token volume — it re-sends its full context every turn (cached after the first hit, but still billed at the cache-read rate of the most expensive model) and receives all subagent returns. Planner (claude-code-glm-5.1) and Reviewer (claude-code-kimi-k2.6) are single-call-per-phase. Actor (claude-code-qwen3-coder-next) is called once per step and may iterate. Without measurement, cost/quality trade-offs are guesses: which tier to change? which phase to skip? does the built-in `Explore` subagent justify a dedicated cheaper Researcher agent? Telemetry makes those decisions data-driven (see `TODO.md §0` for the full decision-gate framework).
+Multi-tier orchestration has a non-obvious cost structure. Brain (Opus or Sonnet) dominates by token volume — it re-sends its full context every turn (cached after the first hit, but still billed at the cache-read rate of the most expensive model) and receives all subagent returns. Planner and Reviewer (Sonnet) are single-call-per-phase. Actor (Haiku) is cheap per token but may iterate. Without measurement, cost/quality trade-offs are guesses: which tier to change? which phase to skip? does the built-in `Explore` subagent justify a dedicated cheaper Researcher agent? Telemetry makes those decisions data-driven (see `TODO.md §0` for the full decision-gate framework).
 
 Every `/brain` and `/duo` run is instrumented post-hoc by `scripts/telemetry-summarize.{sh,py}`, invoked from each command's cleanup block. Native (non-orchestra) CC sessions are tracked automatically via `bash-session-init.sh` (sourced on every Bash tool call through `BASH_ENV`) and finalized by the Stop hook — see §Native session tracking below.
 
@@ -387,12 +389,12 @@ The Stop hook fires per response turn. It iterates all `native-*.lck` files and 
 | `started_at` | ISO8601 timestamp from `.lck` creation |
 | `ended_at` | ISO8601 timestamp at finalization |
 | `duration_s` | wall-clock seconds |
-| `cost_usd_estimate` | parent + all subagent costs (from cost-source cascade); `0.0` for non-Anthropic (zero-rate) models |
+| `cost_usd_estimate` | parent + all subagent costs (from cost-source cascade) |
 | `cost_source` | `sohoai_api` / `litellm` / `pricing_yaml` / `none` |
-| `model` | parent session model name (present when transcript was parsed — both Anthropic and non-Anthropic) |
+| `model` | parent session model name (present when transcript was parsed) |
 | `total_tokens` | parent session token count (present when transcript was parsed; excludes subagent tokens) |
 
-**Non-Anthropic models.** Sessions using SoHoAI proxy models not in `pricing.yaml` (e.g. `claude-code-qwen3-coder-next`, `claude-code-kimi-k2.6`) are recorded with `cost_usd_estimate: 0.0` and `cost_source: "pricing_yaml"` — the transcript was successfully parsed and the model identified, but no pricing rate is available. `session-report.py` renders these as `$0.0000` to distinguish them from sessions where cost attribution failed entirely (`cost_source: "none"`, displayed as `-`). For past records already in `telemetry.jsonl` with a missing `model` field (written before the 2026-05-11 finalize-script fix), `session-report.py` retroactively re-reads the JSONL transcript at display time to fill in the model name.
+For past records already in `telemetry.jsonl` with a missing `model` field (written before the 2026-05-11 finalize-script fix), `session-report.py` retroactively re-reads the JSONL transcript at display time to fill in the model name.
 
 **Reporting.** `native-session-report.py` reads from two sources and merges them (deduplicating by `session_id`, telemetry takes precedence, sorted newest-first):
 1. `~/.claude/native-sessions/telemetry.jsonl` — primary; contains all sessions finalized since 2026-05-07.
@@ -528,49 +530,44 @@ T2 applies sources in priority order; first non-zero value wins:
 
 **Typical tier proportions:**
 
-These are historical examples from the Anthropic-only era. For current non-Anthropic deployments, see the SoHoAI flat-rate cost model (§Cost model — SoHoAI flat-rate) and per-tier breakdown command (`telemetry-report.sh --tier`).
-
-**Sample tier proportions from historical /brain sessions:**
-
-| Session type | Brain | Planner | Actor | Reviewer |
+| Session type | Brain | Planner (Sonnet) | Actor (Haiku) | Reviewer (Sonnet) |
 |---|---|---|---|---|
-| `/brain` | variable | ~13% | ~8% | ~13% |
+| `/brain` — Sonnet Brain | ~66% | ~13% | ~8% | ~13% |
+| `/brain` — Opus Brain | ~95% | ~2% | ~1% | ~2% |
 | `/duo` | ~60% | — | ~40% | — |
 
-Models: Brain (user's active model), Planner (claude-code-glm-5.1), Actor (claude-code-qwen3-coder-next, or claude-code-kimi-k2.6 for heavy steps), Reviewer (claude-code-kimi-k2.6). All subagents operate under flat-rate SoHoAI pricing (marginal cost = $0).
-
-Brain's tier dominance is what remains **after** prompt caching has already taken ~86% off Brain's bill — the proportions in the table are post-cache. Three multipliers stack to keep Brain on top: **model rate** (Brain pays per-token Anthropic pricing; subagents run on SoHoAI flat-rate), **context size** (Brain re-sends the whole session every turn; subagents get a fresh, scoped prompt), and **turn count** (Brain runs every user message + every dispatch round-trip; subagents are one-shot). Caching only attacks the first multiplier. To shift the proportions further: trim context (`/compact`, smaller inlined artifacts) or downgrade the Brain model.
+Brain's tier dominance is what remains **after** prompt caching has already taken ~86% off Brain's bill — the proportions in the table are post-cache. Three multipliers stack to keep Brain on top: **model rate** (Opus cache-read ≈ 15× Haiku cache-read), **context size** (Brain re-sends the whole session every turn; subagents get a fresh, scoped prompt), and **turn count** (Brain runs every user message + every dispatch round-trip; subagents are one-shot). Caching only attacks the first multiplier. To shift the proportions further: trim context (`/compact`, smaller inlined artifacts) or downgrade the Brain model.
 
 The `--tier` flag on `telemetry-report.sh` reads per-session `telemetry.json` files (located via the `session_dir` field in the global log) to produce a per-tier breakdown for each session, then a cumulative totals table across all sessions — the primary tool for answering "which tier is driving my costs overall?".
 
 **Sample `--tier` output:**
 
 ```
-  2026-05-20  brain   560s  outcome=pass  total=~$0.02
-    Tier         Model                        Tokens   %tok      Cost   %cost
-    -----------------------------------------------------------------------
-    brain        claude-code-kimi-k2.6    1,322,163  68.5%  ~$0.0200 100.0%
-    planner      claude-code-glm-5.1         92,598   4.8%  ~$0.0000   0.0%
-    actor        claude-code-qwen3-coder-next 425,531  22.0%  ~$0.0000   0.0%
-    reviewer     claude-code-kimi-k2.6       89,658   4.6%  ~$0.0000   0.0%
-    -----------------------------------------------------------------------
-    TOTAL                                 1,929,950          ~$0.0200
+  2026-04-30  brain   560s  outcome=pass  total=$1.30
+    Tier         Model                  Tokens   %tok      Cost   %cost
+    ----------------------------------------------------------------
+    brain        claude-sonnet-4-6  1,322,163  68.5%  $0.8100   66.3%
+    planner      claude-sonnet-4-6     92,598   4.8%  $0.1563   12.8%
+    actor        claude-haiku-4-5     425,531  22.0%  $0.1007    8.2%
+    reviewer     claude-sonnet-4-6     89,658   4.6%  $0.1549   12.7%
+    ----------------------------------------------------------------
+    TOTAL                           1,929,950          $1.2219
 
 --- Cumulative totals (3 session(s)) ---
-  Tier         Model                        Tokens   %tok        Cost   %cost
-  --------------------------------------------------------------------------
-  brain        claude-code-kimi-k2.6    2,009,402  69.3%    ~$0.0600 100.0%
-  planner      claude-code-glm-5.1         92,598   3.2%    ~$0.0000   0.0%
-  actor        claude-code-qwen3-coder-next 709,827  24.5%    ~$0.0000   0.0%
-  reviewer     claude-code-kimi-k2.6       89,658   3.1%    ~$0.0000   0.0%
-  --------------------------------------------------------------------------
-  TOTAL                                 2,901,485          ~$0.0600
+  Tier         Model                  Tokens   %tok       Cost   %cost
+  --------------------------------------------------------------------
+  brain        claude-sonnet-4-6  2,009,402  69.3%   $1.2079   69.9%
+  planner      claude-sonnet-4-6     92,598   3.2%   $0.1563    9.0%
+  actor        claude-haiku-4-5     709,827  24.5%   $0.2081   12.0%
+  reviewer     claude-sonnet-4-6     89,658   3.1%   $0.1549    9.0%
+  --------------------------------------------------------------------
+  TOTAL                           2,901,485           $1.7271
 ```
 
 **Decision gates** (see `TODO.md §0` for thresholds and sample-size requirements):
 
 1. **Researcher agent** — implement only if `Explore` dispatches account for > 15% of session cost.
-2. **Planner model** — downgrade to a cheaper model only if `planner_replans` rate is low and Planner cost fraction is measurable.
+2. **Planner model** — downgrade to Haiku only if `planner_replans` rate is low and Planner cost fraction is measurable.
 3. **1-hour TTL caching** — activate per-tier when TTL-miss rate exceeds 33%.
 4. **Reviewer skip** — only if FIX-verdict rate drops below 10% over ≥ 50 sessions (quality risk).
 5. **Opus vs Sonnet for Brain** — compare `regret_flag` rate at different model tiers once sufficient data exists.
@@ -591,41 +588,41 @@ Reference: [Design history & amendments](design-history.md) §Amendment 2026-05-
 
 | Role | Model | Trigger |
 |---|---|---|
-| Planner (normal) | `claude-code-glm-5.1` | all inputs |
-| Actor (default) | `claude-code-qwen3-coder-next` | all steps unless marked heavy |
-| Actor (heavy) | `claude-code-kimi-k2.6` | `[tier: heavy]` annotation in PLAN.md step |
-| Reviewer | `claude-code-kimi-k2.6` | all reviews (calibration + flat-rate economics) |
+| Planner (normal) | `deepseek-v4-pro` | inputs ≤ 30 KB |
+| Planner (long-context fallback) | Sonnet 4.6 | inputs > 30 KB; preserves Anthropic cache discount |
+| Actor (default) | `qwen3-coder-next` | all steps unless marked heavy |
+| Actor (heavy) | `kimi-k2.6` | `[tier: heavy]` annotation in PLAN.md step |
+| Reviewer | Sonnet 4.6 | all reviews (unchanged; calibration priority) |
 
-**Brain** runs on the user's active model (no restriction); `/duo` recommends claude-code-kimi-k2.6 (advisory only); any model works.
+**Brain** remains Opus 4.7 for `/brain` and Sonnet 4.6 for `/duo` (no change).
 
 ### Step-level tier annotations
 
 Plan steps may be tagged with optional `[tier: …]` annotations to override tier defaults:
 
-- `[tier: default]` — use default tier (Qwen3 for Actor, GLM-5.1 for Planner). Usually omitted.
-- `[tier: heavy]` — use heavy tier (Kimi K2.6 for Actor; Sonnet stays for Planner). Used for complex multi-file refactors, architectural changes, or security-sensitive code.
+- `[tier: default]` — use default tier. Usually omitted.
+- `[tier: heavy]` — use heavy tier (actor-heavy agent). Used for complex multi-file refactors, architectural changes, or security-sensitive code.
 
 Format: annotation appears on the same line as the step heading (e.g., `### 5. Refactor X [tier: heavy]`). Brain's PLAN parser confirms the annotation exists before dispatching the heavy-tier subagent; if malformed or missing, the step runs at default tier.
 
-### Alias stability contract
+### Planner long-context fallback
 
-SoHoAI exposes agents as aliases: `claude-code-glm-5.1`, `claude-code-qwen3-coder-next`, `claude-code-kimi-k2.6`, etc. These are **stable across deployments** within the SoHoAI domain (as of 2026-05-11, per handoff §1). If the alias routing changes (e.g., DeepSeek → Claude 3.7), SoHoAI commits to rotating the alias URL, not swapping backends silently. Updates will be documented in the design-history.md amendment chain.
+When RESEARCH + constraints + prior artifacts exceed ~30 KB, Brain runs Sonnet 4.6 via the `planner-long` agent instead of `planner`. This preserves Anthropic's prompt cache discount on large inputs (30× savings on repetitive prefix tokens) while staying in the flat-rate economy via `planner-long` as a documented SoHoAI alias. The 30 KB threshold is approximate; Brain is instructed to `wc -c` the combined input and pick the tier accordingly.
 
-Without this contract, cost + quality tracking would drift silently between deployments.
+See TODO.md §10e for the deferred automation of this check.
 
-### Reviewer is now Kimi K2.6
+### Reviewer remains Sonnet 4.6
 
-Reviewer switched from Sonnet 4.6 to `claude-code-kimi-k2.6` under the flat-rate SoHoAI model. Rationale:
-- **Calibration still possible**: Sonnet 4.6 remains available as the Brain's primary model for interactive sessions. Reviewer's verdict can be cross-checked against any Sonnet-based `/duo` plans the operator runs interactively.
-- **Quality under flat-rate**: Kimi K2.6 has proven reliable for code review tasks and operates on a flat-rate subscription basis (marginal cost = $0 per invocation), making the review loop economically viable even with cap-3 iteration.
-- **Consistency**: Reviewer stays single-model (no multi-model routing per tier); the actor-heavy tier (also Kimi K2.6) provides operational consistency across the implementation and review stages.
+Reviewer stays Sonnet 4.6 (no multi-model routing). Rationale:
+- Reviewer is a calibration touchstone — if it starts rejecting code that Sonnet previously accepted, review-loop iteration counts will spike, signaling a model regression.
+- Reviewer is called ≤ 3 times per step (review loop cap); its cost is < 15% of typical sessions.
+- Code review is a high-stakes task where Sonnet's consistency is proven; evaluation of a second-pass cross-check model is deferred (see TODO.md §10b).
 
 ### Cross-reference
 
 - Agents table (this document, §How the workflow works): file paths and role descriptions.
 - design-history.md §Amendment 2026-05-10: historical context, operator caveats, deferred follow-ups.
-- TODO.md §10b–10f: deferred items (GLM-5.1 second-pass, 429 fallback, PLAN schema validator, 30 KB threshold automation, max_tokens knob).
-- Handoff §1: SoHoAI alias stability contract.
+- TODO.md §10b–10f: deferred items (second-pass cross-check, 429 fallback, PLAN schema validator, 30 KB threshold automation, max_tokens knob).
 - Handoff §3: max_tokens ≥ 500 requirement for reasoning models.
 
 ---

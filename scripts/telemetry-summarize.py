@@ -147,9 +147,8 @@ def query_sohoai_usage(
     """Query SoHoAI for cost_usd and token counts.
 
     For native sessions (session_id starts with 'native-'):
-      Queries by model_filter + time window.  Source filter is intentionally
-      omitted: SoHoAI assigns 'unknown' source to non-Anthropic LiteLLM-routed
-      models, so only model name + started_at window are reliable for scoping.
+      Queries by model_filter + time window.  Source filter is omitted so the
+      query works regardless of how SoHoAI tags the source field.
     For orchestra sessions:
       Queries by orchestra_session_id.
 
@@ -302,9 +301,6 @@ def query_litellm_cost(
     """Query litellm for cost computation with cache-token rates.
 
     Returns total cost or None if litellm unavailable or computation fails.
-    claude-code-* aliases are SoHoAI gateway aliases (not LiteLLM-registered models);
-    they are treated as $0 per pricing.yaml rather than aborting the entire path.
-
     When pricing_data is supplied, its cache rates take precedence over LiteLLM's
     registry for any model listed in pricing_data. LiteLLM's claude-opus-4-7 entry
     carries ~1/3 of the correct Anthropic list rates; pricing.yaml is the
@@ -321,9 +317,6 @@ def query_litellm_cost(
     def _model_cost(raw_model: str, tokens: Dict) -> float:
         """Return litellm cost for one model+tokens, or 0.0 on any failure."""
         model = _normalize_model_id(raw_model)
-        # SoHoAI gateway aliases — not in LiteLLM's registry; $0 by design (flat subscription).
-        if model.startswith("claude-code-"):
-            return 0.0
         try:
             base = litellm.completion_cost(
                 model=model,
@@ -359,23 +352,21 @@ def query_litellm_cost(
             return 0.0
 
     total_cost = 0.0
-    has_native_model = False
+    has_model = False
 
     try:
         if parent.get("model"):
-            if not _normalize_model_id(parent["model"]).startswith("claude-code-"):
-                has_native_model = True
+            has_model = True
             total_cost += _model_cost(parent["model"], parent.get("tokens", {}))
 
         for subagent in subagents:
             if subagent.get("model"):
-                if not _normalize_model_id(subagent["model"]).startswith("claude-code-"):
-                    has_native_model = True
+                has_model = True
                 total_cost += _model_cost(subagent["model"], subagent.get("tokens", {}))
 
         if total_cost == 0.0:
-            if has_native_model:
-                warnings.append("litellm returned zero cost for non-local model")
+            if has_model:
+                warnings.append("litellm returned zero cost for model")
             return None
 
         return round(total_cost, 4)

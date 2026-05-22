@@ -2,8 +2,8 @@
 title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design notes & open questions"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (claude-code-kimi-k2.6)
-updated_at: 2026-05-20--00-00
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-22--00-00
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -22,6 +22,14 @@ context: >
   captures the state of the design before any implementation starts, and
   lists the open questions that must be answered first.
 ---
+
+> **Model naming note (2026-05-22):** Non-Anthropic models were previously exposed to Claude Code
+> via the SoHoAI LiteLLM proxy under `claude-code-<model>` aliases (required because CC only
+> accepts models with a `claude-` prefix). That proxy layer has been removed; claude-orchestra now
+> uses only Anthropic models. The rest of this document uses the old alias names. Rename mapping:
+> `claude-code-deepseek-v4-pro` → `deepseek-v4-pro`, `claude-code-kimi-k2.6` → `kimi-k2.6`,
+> `claude-code-glm-5.1` → `glm-5.1`, `claude-code-qwen3-coder-next` → `qwen3-coder-next`,
+> `claude-code-qwen3-4b-q6` → `qwen3-4b-q6`, `claude-code-qwen3-9b-q4` → `qwen3-9b-q4`.
 
 # Claude Code three-tier orchestrator — TODO
 
@@ -1622,20 +1630,41 @@ model | ctx ▓▓░░░░░░░░ 21% 210K/1M | ~$X.YZ | ◆ project | 
 
 ---
 
+## Amendment 2026-05-19 — fix [1m] ctx window display after first API call (commits a2a70c7, dd8dba0)
+
+**Problem.** In projects configured with `"model": "sonnet[1m]"`, the status-line showed incorrect values after the first API call:
+- Model display name reverted from "Sonnet 4.6 (1M context)" to "Sonnet 4.6".
+- Context window denominator showed 200K instead of 1M.
+- Progress bar and percentage inflated ~5× (e.g., 82K tokens showed 41% instead of 8%).
+
+**Root cause.** `[1m]` is a CC-local routing shorthand — it directs `claude-sonnet-4-6` requests to a 1M-context deployment tier via API parameters (beta headers or access flags). The Anthropic API always returns the canonical model name `claude-sonnet-4-6` with `context_window: 200000` in its response metadata; the 1M routing is invisible to the model spec embedded in the response. CC uses the configured model for its initial status-line render (correctly reports 1M), but after the first real API call CC updates its internal model state from the API response — overwriting 1M with 200K and dropping the `[1m]` marker permanently for that session.
+
+**Why Sonnet 4.6 specifically.** Opus 4.7 (`claude-opus-4-7`) has 1M as its canonical API context window — the API itself returns `context_window: 1000000`, so no mismatch occurs. The `[1m]` shorthand exists only for Sonnet 4.6 because Sonnet's standard spec is 200K; the 1M tier is an extended capability, not the default. This is not a configuration option that can be changed from the CC side — the API will always return 200K for `claude-sonnet-4-6`. Future models with 1M as their native canonical spec would not be affected.
+
+**Secondary symptom (percentage/bar inconsistency).** After the first API call, `context_window_size=200000` and `used_percentage` (CC-computed: `100 * tokens / 200000`) both flow into `ctx-segment.sh`. The script correctly overrides the denominator to 1M (via `forced_1m`), producing the right "XK/1M" display — but was still using the caller-supplied `used_pct` (computed against 200K) for the bar fill and percentage label. Result: "41% 82K/1M" — bar and percentage derived from one denominator, total from another.
+
+**Fix — two compensating changes (no CC change needed or possible):**
+
+1. `status-line/orchestra-block.sh` (commit a2a70c7): after extracting `model_id` from CC JSON, reads `settings.json` (project-level first, then global) for the `model` field. If it contains `[1m]` and `model_id` does not, and the base model matches after CC shorthand normalization (`sonnet` → `claude-sonnet-4-6`, `opus` → `claude-opus-4-7`, `haiku` → `claude-haiku-4-5`), re-appends `[1m]` to `model_id`. A subsequent bash substitution also restores "(1M context)" in the `status_line` display name string (`model_name` is in scope from the host script).
+
+2. `scripts/ctx-segment.sh` (commit dd8dba0): after `advertised_size` is finalised (including `forced_1m → 1000000` override), recalculates `used_pct = 100 * tokens / advertised_size` when `forced_1m=true` and `tokens > 0`. This makes bar fill, percentage label, and denominator all consistent with the real 1M window. Non-1M models are unaffected (the recalculation guard is `forced_1m=true` only).
+
+**Files changed:** `status-line/orchestra-block.sh`, `scripts/ctx-segment.sh`, `docs/design.md` (§ctx segment implementation details — CC/API mismatch note added), `docs/design-history.md` (this amendment).
+
+---
+
 ## Amendment 2026-05-20 — full non-Anthropic pipeline + reviewer model switch to kimi-k2.6
 
 **Change:** Complete transition to non-Anthropic SoHoAI flat-rate models across all agent tiers.
 
-**Model assignments (final):**
-- **Planner:** `claude-code-glm-5.1` (no planner-long fallback; removed)
-- **Actor (default):** `claude-code-qwen3-coder-next`
-- **Actor (heavy):** `claude-code-kimi-k2.6`
-- **Reviewer:** `claude-code-kimi-k2.6` (switched from Sonnet 4.6)
+**Model assignments (final, subsequently reverted 2026-05-22):**
+- **Planner:** `glm-5.1` (no planner-long fallback; removed)
+- **Actor (default):** `qwen3-coder-next`
+- **Actor (heavy):** `kimi-k2.6`
+- **Reviewer:** `kimi-k2.6` (switched from Sonnet 4.6)
 
 **Rationale:**
-- **Planner-long removal:** Under non-Anthropic routing, prompt cache benefits don't apply to cached input (LiteLLM strips `cache_control` headers). The planner-long Sonnet fallback was a hedge against per-token costs for large inputs; flat-rate SoHoAI eliminates the cost incentive. Removed the planner-long agent entirely; Planner is now always `claude-code-glm-5.1`.
-- **Reviewer moved to Kimi K2.6:** Under flat-rate, Reviewer's $0 marginal cost means review iterations are economically viable even with cap-3 per step. Sonnet 4.6 remains available as the user's interactive Brain model and via manual `/duo` sessions for cross-checking. Quality calibration is preserved via this heterogeneity (if Kimi K2.6 Reviewer verdicts diverge from Sonnet `/duo` plans, the signal is immediately visible). Documented in design.md §Multi-model routing why this shift is now justified.
+- **Planner-long removal:** Under non-Anthropic routing, prompt cache benefits don't apply to cached input (LiteLLM strips `cache_control` headers). The planner-long Sonnet fallback was a hedge against per-token costs for large inputs; flat-rate SoHoAI eliminates the cost incentive. Removed the planner-long agent entirely; Planner was always `glm-5.1`.
+- **Reviewer moved to Kimi K2.6:** Under flat-rate, Reviewer's $0 marginal cost means review iterations are economically viable even with cap-3 per step. Sonnet 4.6 remains available as the user's interactive Brain model and via manual `/duo` sessions for cross-checking. Quality calibration is preserved via this heterogeneity (if Kimi K2.6 Reviewer verdicts diverge from Sonnet `/duo` plans, the signal is immediately visible).
 
-**Files updated:** `docs/design.md` (agents table: removed planner-long row, changed reviewer model to kimi-k2.6; multi-model routing section: deleted planner long-context subsection, rewrote "Reviewer is now Kimi K2.6"; cost model updated for flat-rate; file inventory updated), `docs/design-history.md` (this amendment), `CLAUDE.md` (Layout line for agents, Smoke test Model line), `config/pricing.yaml` (retained Anthropic entries for historical T2 fallback; added non-Anthropic SoHoAI entries at $0).
-
-**Metadata:** Updated `docs/design.md` frontmatter `updated_by=Claude Code (claude-code-kimi-k2.6)` and `updated_at=2026-05-20--00-00`.
+**Files updated:** `docs/design.md`, `docs/design-history.md`, `CLAUDE.md`, `config/pricing.yaml`.

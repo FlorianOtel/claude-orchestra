@@ -44,15 +44,29 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     fi
 
     # --- /duo badge: count .duo-inflight markers across session dirs ---
+    # Staleness check: a .duo-inflight is live only when the CC session that
+    # created it is still running. Each session dir holds .transcript-uuid
+    # (the CC session UUID written atomically with .duo-inflight); we verify
+    # liveness by checking for native-<uuid>.lck in active-sessions. The Stop
+    # hook cleans up dead .lck files, so a missing .lck means a dead session.
     duo_count=0
     duo_title=""
+    _live_duo_dir=""
     sessions_root="$cwd/.claude/orchestra/sessions"
     if [ -d "$sessions_root" ]; then
-        duo_count=$(find "$sessions_root" -maxdepth 2 -name ".duo-inflight" 2>/dev/null | wc -l | tr -d ' ')
-        if [ "$duo_count" -eq 1 ]; then
-            duo_title=$(find "$sessions_root" -maxdepth 2 -name ".duo-inflight" 2>/dev/null \
-                        -exec cat {} \; 2>/dev/null | head -c 30)
-        fi
+        while IFS= read -r _inf; do
+            [ -z "$_inf" ] && continue
+            _sess_dir=$(dirname "$_inf")
+            _tuuid=$(cat "${_sess_dir}/.transcript-uuid" 2>/dev/null | tr -d '[:space:]')
+            # Missing .transcript-uuid or no live .lck → stale, skip.
+            [ -z "$_tuuid" ] && continue
+            [ ! -f "$HOME/.claude/active-sessions/native-${_tuuid}.lck" ] && continue
+            duo_count=$(( duo_count + 1 ))
+            if [ "$duo_count" -eq 1 ]; then
+                duo_title=$(head -c 30 "$_inf" 2>/dev/null || true)
+                _live_duo_dir="$_sess_dir"
+            fi
+        done < <(find "$sessions_root" -maxdepth 2 -name ".duo-inflight" 2>/dev/null)
     fi
 
     # --- active-subagent indicator ---
@@ -75,8 +89,7 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     # --- live session ID resolution (orchestra + native fallback) ---
     active_session_dir=""
     if [ "$duo_count" -gt 0 ]; then
-        active_session_dir=$(find "$sessions_root" -maxdepth 2 -name ".duo-inflight" 2>/dev/null \
-                            | head -n 1 | xargs -r dirname)
+        active_session_dir="$_live_duo_dir"
     elif [ -n "$orch_title" ] && [ -d "$cwd/.claude/orchestra/sessions" ]; then
         active_session_dir=$(find "$cwd/.claude/orchestra/sessions" -mindepth 1 -maxdepth 1 -type d \
                               -printf '%T@ %p\n' 2>/dev/null \
@@ -128,89 +141,52 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     used_percentage=$(printf "%.0f" "$used_percentage")
     model_id=$(echo "$input" | jq -r '.model.id // .model.display_name // ""' 2>/dev/null)
 
-    # Non-Anthropic models (claude-code-*, local/*) — CC gives no token counts.
-    # Soften forced-zero cost: only local/qwen3* models are truly $0.
-    _is_non_anthropic=false
-    case "$model_id" in
-        local/qwen3*|claude-code-qwen3*)
-            _is_non_anthropic=true ;;
-        claude-code-*)
-            _is_non_anthropic=true ;;
-    esac
-
-    # --- SoHoAI live token fallback for non-Anthropic models ---
-    # CC's token counts for non-Anthropic models are unreliable (cumulative,
-    # inflated, or simply wrong). Always query SoHoAI and override CC when a
-    # value is returned. Scope by .lck started_at so concurrent sessions with
-    # the same model don't collide.
-    if [ "$_is_non_anthropic" = true ] \
-       && [ -n "$live_session_id" ] && [ -n "$_real_started_at" ]; then
-        _sohoai_cache="$HOME/.claude/active-sessions/${live_session_id}.sohoai"
-        # Derive bare model name from CC model_id for SoHoAI LIKE query
-        _model_filter="${model_id#claude-code-}"
-        if [ -z "$_model_filter" ]; then
-            _model_filter="${model_id#local/}"
+    # Restore [1m] suffix when settings.json configures a 1M model but the API
+    # response strips it. [1m] is CC-local routing — the Anthropic API returns
+    # the plain model ID (e.g., "claude-sonnet-4-6") regardless of the context
+    # tier, so ctx-segment.sh's forced_1m branch never fires after the first
+    # API call unless we re-inject it here.
+    _settings_model=""
+    for _sf in "$cwd/.claude/settings.json" "$HOME/.claude/settings.json"; do
+        if [ -f "$_sf" ]; then
+            _sm=$(jq -r '.model // ""' "$_sf" 2>/dev/null)
+            if [ -n "$_sm" ]; then
+                _settings_model="$_sm"
+                break
+            fi
         fi
-        [ -z "$_model_filter" ] && _model_filter="$model_id"
-
-        _sohoai_tok=$(~/.claude/scripts/sohoai-live-cost.sh \
-            "$live_session_id" "$_real_started_at" "$_sohoai_cache" \
-            "$_model_filter" "tokens" 2>/dev/null || echo "")
-
-        # sohoai-live-cost returns latest_total_tokens (most recent request's
-        # input+output), not cumulative. latest_total_tokens is inherently
-        # monotonic (context only grows), and the 8-second TTL in the .sohoai
-        # cache prevents jitter. No separate .max-tokens cache needed.
-        if [ -n "$_sohoai_tok" ] && [ "$_sohoai_tok" -gt 0 ] 2>/dev/null; then
-            tokens_used="$_sohoai_tok"
-
-            # Use the same denominator ctx-segment.sh will display.
-            # CC's context_window_size is wrong for non-Anthropic models
-            # (reports ~200K for kimi-k2.6 whose real window is 256K).
-            _denom="$context_window_size"
-            _yaml_denom=$("${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3" -c "
-import sys, yaml, re
-model = '${model_id}'.lower()
-yaml_path = '${HOME}/.claude/orchestra/context-windows.yaml'
-try:
-    with open(yaml_path) as f:
-        cfg = yaml.safe_load(f)
-    models = cfg.get('models', {})
-    # [1m] force 1M
-    if '[1m]' in model:
-        print(1000000)
-        sys.exit(0)
-    # Direct lookup
-    if model in models:
-        print(models[model])
-        sys.exit(0)
-    # Normalise: strip [..], -YYYYMMDD
-    norm = re.sub(r'\[.*\]$', '', model)
-    norm = re.sub(r'-[0-9]{8}$', '', norm)
-    if norm in models:
-        print(models[norm])
-    else:
-        print('')
-except Exception:
-    print('')
-" 2>/dev/null || true)
-            if [ -n "$_yaml_denom" ] && [ "$_yaml_denom" -gt 0 ] 2>/dev/null; then
-                _denom="$_yaml_denom"
-            fi
-
-            if [ "$_denom" -gt 0 ]; then
-                used_percentage=$(echo "scale=2; 100 * $_sohoai_tok / $_denom" | bc)
-            fi
-            used_percentage=$(printf "%.0f" "$used_percentage")
+    done
+    if [[ "$_settings_model" == *"[1m]"* ]] && [[ "$model_id" != *"[1m]"* ]] && [[ -n "$model_id" ]]; then
+        _settings_base=$(echo "$_settings_model" | sed 's/\[1m\]//g; s/\[.*\]//g')
+        case "$_settings_base" in
+            sonnet) _settings_base="claude-sonnet-4-6" ;;
+            opus)   _settings_base="claude-opus-4-7"   ;;
+            haiku)  _settings_base="claude-haiku-4-5"  ;;
+        esac
+        if [[ "$model_id" == "$_settings_base" ]] || [[ "$model_id" == "$_settings_base"-* ]]; then
+            model_id="${model_id}[1m]"
         fi
     fi
 
     ctx_seg=$(~/.claude/scripts/ctx-segment.sh "${used_percentage:-0}" "${tokens_used:-0}" "${context_window_size:-200000}" "${model_id:-}" 2>/dev/null || true)
 
+    # Fix model display name: when [1m] was restored above, CC's display_name
+    # no longer says "(1M context)". Re-inject it via literal text substitution
+    # on status_line. model_name is in scope from the host script (status-line.sh).
+    if [[ "$model_id" == *"[1m]"* ]] && [[ -n "${model_name:-}" ]] && [[ "$model_name" != *"(1M"* ]]; then
+        status_line="${status_line/✦ ${model_name}/✦ ${model_name} (1M context)}"
+    fi
+
     # --- live cost ---
-    # Orchestra sessions: query SoHoAI (has per-subagent attribution).
-    # Native sessions: CC provides cost.total_cost_usd directly in JSON — precise,
-    # always current, no SoHoAI query or JSONL parsing needed.
+    # Orchestra sessions: try SoHoAI first (per-subagent attribution when headers work).
+    # Fallback for all sessions (native, and orchestra when SoHoAI has no attribution):
+    # CC JSON provides cost.total_cost_usd (parent turns) + native-subagent-cost.sh
+    # walks actor JSONL files for subagent spend. This fixes two bugs:
+    #   1. Post-duo native continuation: cost was frozen at telemetry.json value;
+    #      now it grows as the conversation continues.
+    #   2. New duo session (orchestra active): SoHoAI returns 0 (CC 2.1.132 doesn't
+    #      inject X-Orchestra-Session-ID), cost disappeared; now falls through to
+    #      native CC + subagent cost so the counter stays visible and growing.
     live_cost=""
     if [ -n "$live_session_id" ]; then
         if [ -n "$active_session_dir" ]; then
@@ -218,41 +194,17 @@ except Exception:
             started_at=$(stat -c %Y "$active_session_dir" 2>/dev/null || echo "0")
             live_cost=$(~/.claude/scripts/sohoai-live-cost.sh \
                 "$live_session_id" "$started_at" "$cost_cache" 2>/dev/null || true)
-        elif [[ "$live_session_id" == native-* ]]; then
-            # Prefer authoritative telemetry.json from the most recent completed
-            # orchestra session, but only when it was written AFTER this native
-            # session started (.lck mtime is the session-start lower bound).
-            # Guard: _lck_mtime > 0 ensures .lck exists; _tel_mtime > _lck_mtime
-            # ensures the orchestra session ended during this session, not before.
-            # This eliminates false positives for new sessions opened after a
-            # pipeline ends in the same project.
-            if [ -d "$sessions_root" ]; then
-                _recent_dir=$(find "$sessions_root" -mindepth 1 -maxdepth 1 -type d \
-                    -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)
-                _tel_file="${_recent_dir}/telemetry.json"
-                if [ -f "$_tel_file" ]; then
-                    _lck_mtime=$(stat -c %Y \
-                        "$HOME/.claude/active-sessions/${live_session_id}.lck" \
-                        2>/dev/null || echo 0)
-                    _tel_mtime=$(stat -c %Y "$_tel_file" 2>/dev/null || echo 0)
-                    if [ "$_lck_mtime" -gt 0 ] && [ "$_tel_mtime" -gt "$_lck_mtime" ]; then
-                        _tel_cost=$(jq -r '.cost_usd_estimate // empty' \
-                            "$_tel_file" 2>/dev/null || true)
-                        if printf '%s' "$_tel_cost" | grep -qE '^[0-9]+\.?[0-9]*$'; then
-                            live_cost=$(LC_ALL=C printf '~$%.2f' "$_tel_cost" 2>/dev/null || true)
-                        fi
-                    fi
-                fi
-            fi
-            if [ -z "$live_cost" ]; then
+        fi
+        # Universal fallback: native CC cost + subagent JSONL costs.
+        # Runs when: (a) native session, (b) orchestra session where SoHoAI returned nothing.
+        if [ -z "$live_cost" ]; then
             _cc_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null)
-            if [ "$_is_non_anthropic" = true ]; then
-                _cc_cost=0
-            fi
 
-            # Subagent costs — walk agent JSONLs, TTL-cached 30 s
-            _parent_uuid="${live_session_id#native-}"
-            _sub_cache="$HOME/.claude/active-sessions/${live_session_id}.subcost-cache"
+            # Subagent costs — walk actor/subagent JSONLs, TTL-cached 30 s.
+            # CC session UUID from JSON (stable for the CC process lifetime, regardless
+            # of whether we're in an orchestra or native phase).
+            _parent_uuid=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null)
+            _sub_cache="$HOME/.claude/active-sessions/native-${_parent_uuid}.subcost-cache"
             _sub_age=$(( $(date +%s) - $(stat -c %Y "$_sub_cache" 2>/dev/null || echo 0) ))
             if [ "$_sub_age" -gt 30 ]; then
                 _sub_cost=$(~/.claude/scripts/native-subagent-cost.sh \
@@ -263,20 +215,19 @@ except Exception:
                 _sub_cost=$(cat "$_sub_cache" 2>/dev/null || echo "")
             fi
 
-            # Combine parent + subagent costs and format
+            # Combine parent + subagent costs and format.
             _total=$(${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3 \
                 -c "print(f'{float(\"${_cc_cost:-0}\")+float(\"${_sub_cost:-0}\"):.4f}')" \
                 2>/dev/null || echo "${_cc_cost:-0}")
 
             # Cache last non-zero total; fall back to it when CC reports 0 at turn boundaries
             # (CC resets cost.total_cost_usd to 0 briefly after each tool-call completes).
-            # Skip cache read for non-Anthropic models — cost is intentionally $0 for them.
-            _cost_cache="$HOME/.claude/active-sessions/${live_session_id}.cost-cache"
+            _cost_cache="$HOME/.claude/active-sessions/native-${_parent_uuid}.cost-cache"
             if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$' \
                && [ "$(printf '%.0f' "$_total" 2>/dev/null || echo 0)" != "0" ]; then
                 printf '%s' "$_total" > "$_cost_cache.tmp" 2>/dev/null \
                     && mv -f "$_cost_cache.tmp" "$_cost_cache" 2>/dev/null || true
-            elif [ "$_is_non_anthropic" != true ] && [ -f "$_cost_cache" ]; then
+            elif [ -f "$_cost_cache" ]; then
                 _total=$(cat "$_cost_cache" 2>/dev/null || echo "${_total:-0}")
             fi
 
@@ -285,7 +236,6 @@ except Exception:
             if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$'; then
                 live_cost=$(LC_ALL=C printf '~$%.2f' "$_total" 2>/dev/null || true)
             fi
-            fi  # telemetry fallback
         fi
     fi
 

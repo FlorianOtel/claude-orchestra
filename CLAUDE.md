@@ -25,8 +25,8 @@ git checkout litellm-gateway && git merge main --no-edit && git push origin lite
 
 ## Layout
 
-- `agents/`   — planner (claude-code-glm-5.1), actor (claude-code-qwen3-coder-next), reviewer (claude-code-kimi-k2.6)
-- `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents) + /brain-abandon (explicit cancel); /duo-plan, /duo-act, /duo-abandon (lightweight session-bracketed pipeline: Brain plans interactively across multiple turns, Actor acts after /duo-act)
+- `agents/`   — planner (Sonnet 4.6), actor (Haiku 4.5), reviewer (Sonnet 4.6)
+- `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents) + /brain-abandon (explicit cancel); /duo-plan, /duo-act, /duo-abandon (lightweight session-bracketed pipeline: Sonnet plans interactively across multiple turns, Haiku acts after /duo-act)
 - `scripts/orchestra-hook.sh` — PreToolUse / SubagentStop / PreCompact / Stop dispatcher
 - `scripts/otel-headers-helper.sh` — X-Orchestra-Session-ID injection; auto-creates native session entries (CC 2.1.132: not called — fallback via bash-session-init.sh)
 - `scripts/bash-session-init.sh` — sourced via `BASH_ENV`; registers native session as `native-<UUID>.lck` on first Bash call (UUID-keyed, cc_pid for liveness only)
@@ -41,9 +41,48 @@ git checkout litellm-gateway && git merge main --no-edit && git push origin lite
 
 ## Smoke test
 
-- **Timestamp:** 2026-05-20T09:45:52Z
-- **Model:** claude-code-kimi-k2.6 (Brain) + claude-code-glm-5.1 (Planner) + claude-code-qwen3-coder-next (Actor) + claude-code-kimi-k2.6 (Reviewer)
+- **Timestamp:** 2026-04-28T14:24:09Z
+- **Model:** claude-haiku-4-5-20251001
+- **Reason:** Subagents smoke test — verifies that /duo can dispatch Actor as a Haiku subprocess
+- **Timestamp:** 2026-04-28T14:49:27Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** smoke 2 from subagents branch
+- **Timestamp:** 2026-04-28T14:52:58Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** smoke 3 from /brain — via brain pipeline
+- **Timestamp:** 2026-04-30T16:55:50Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** /duo telemetry end-to-end smoke test — session 20260430T165550Z-1501376, cost=$0.2744, 3/3 checks passed (T1 timing-only/usage=null expected; T2 authoritative)
+- **Timestamp:** 2026-04-30T17:34:41Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** /brain telemetry end-to-end smoke test — session 20260430T173441Z-1527612, cost=$0.9107, 6 T1 events, 3/3 checks passed. Cost persisted through all subagent phases.
+- **Timestamp:** 2026-05-06T18:17:44Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** /duo LiteLLM telemetry v1 — session 20260506T181744Z-1733561, cost=$1.5855, 3/3 standard checks passed. Revealed: `apiHeaders` is not a valid CC field (silently ignored); all Actor calls hit SoHoAI as `claude_code_native`. Fix: switched to `env.ANTHROPIC_CUSTOM_HEADERS`. cost_source=pricing_yaml (litellm also failed with `prompt_tokens` kwarg error).
+- **Timestamp:** 2026-05-06T18:34:58Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** /duo LiteLLM telemetry v1.5 — session 20260506T183458Z-1766043, cost=$2.0682, 3/3 standard checks passed. `ANTHROPIC_CUSTOM_HEADERS` fix deployed but SoHoAI attribution still returns 0 (env var is startup-time; subagents inherit parent env which predates the write). cost_source=litellm (litellm fallback now works — no `prompt_tokens` error). Next: investigate `otelHeadersHelper` for per-request dynamic header injection.
+- **Timestamp:** 2026-05-07T10:29:03Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** fix(telemetry): all report scripts now show YYYY-MM-DD--HH-MM timestamps; fixed is_session_active() multi-line lck parsing in native-session-report.py
+- **Timestamp:** 2026-05-07T14:46:42Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** native session T2 fallback smoke test — session native-20260507T143424Z-2001330, cost=$13.3918, source=pricing_yaml, model=claude-sonnet-4-6. Diagnosed: otelHeadersHelper not called by CC 2.1.132 (no .lck files), SoHoAI query returns 0 (no session attribution). Fix: Stop hook self-registers each session; T2 fallback parses JSONL transcript via session_uuid + pricing.yaml.
+- **Timestamp:** 2026-05-07T17:09:00Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** fix(telemetry): BASH_ENV bridge — bash-session-init.sh writes uuid-<CC_MAIN_PID> sidecar; Stop hook reads /proc/NODE/stat for parent lookup. Fixes: CLAUDE_CODE_SESSION_ID not set in hook context (only in Bash subprocesses). Bug caught: ||exit 0 logic killed all Bash calls when UUID was set — fixed to if/then guard.
+- **Timestamp:** 2026-05-07T17:39:00Z
+- **Model:** claude-sonnet-4-6
+- **Reason:** refactor(telemetry): UUID-keyed native sessions — bash-session-init.sh now writes native-<UUID>.lck directly (registration moved from Stop hook). Eliminated PID ancestry traversal (/proc/stat). Session IDs are now native-<UUID>. Bug caught during implementation: `[ -z ] && return || exit` idiom kills bash when UUID is set — must use `if/then`.
+- **Timestamp:** 2026-05-10T18:51:03Z
+- **Model:** qwen3-coder-next (Actor) + deepseek-v4-pro (Planner / Actor-heavy) + claude-sonnet-4-6 (Reviewer / planner-long fallback)
+- **Reason:** graduated SoHoAI rollout — Phases A+B+C: pricing.yaml + tier annotations + actor-heavy + planner-long + Reviewer-stays-Sonnet. Smoke tests pending — session 20260510T180922Z-2575990. Cost/duration TBD-post-smoke.
+- **Timestamp:** 2026-05-10T20:45:52Z
+- **Model:** claude-opus-4-7[1m] (Brain) + kimi-k2.6 (actor-heavy) + claude-sonnet-4-6 (reviewer-long)
 - **Reason:** status-line ctx + SoHoAI live-cost segments — implemented via /brain heavy-tier workflow, deployed, all smoke tests pass (ctx bar colors, 1M denominator, SoHoAI query, JSONL fallback).
+- **Timestamp:** 2026-05-19T00-00
+- **Model:** claude-sonnet-4-6[1m]
+- **Reason:** fix(status-line): restore [1m] ctx window after first API call — CC's API response strips the [1m] CC-local routing marker; orchestra-block.sh now reads settings.json to re-inject it, restoring 1M denominator and "(1M context)" display name in projects configured with sonnet[1m].
 
 ## Telemetry Smoke Tests
 
@@ -65,13 +104,13 @@ Verify T1 (hook events) and T2 (transcript parse) after any /duo or /brain run.
 ### Status-line ctx + SoHoAI cost smoke test (no CC restart needed)
 1. Deploy: `./deploy.sh`
 2. Test ctx segment (low fill, expect green):
-   `~/.claude/scripts/ctx-segment.sh 12 24000 200000 claude-code-kimi-k2.6`
+   `~/.claude/scripts/ctx-segment.sh 12 24000 200000 claude-sonnet-4-6`
    → colored `ctx ▓░░░░░░░░░ 12% 24K/200K`
 3. Test ctx segment (high fill, expect orange):
-   `~/.claude/scripts/ctx-segment.sh 85 170000 200000 claude-code-kimi-k2.6`
+   `~/.claude/scripts/ctx-segment.sh 85 170000 200000 claude-sonnet-4-6`
    → `ctx ▓▓▓▓▓▓▓▓░░ 85% 170K/200K` in orange
 4. Test ctx 1M variant:
-   `~/.claude/scripts/ctx-segment.sh 12 120000 1000000 'claude-code-deepseek-v4-pro[1m]'`
+   `~/.claude/scripts/ctx-segment.sh 12 120000 1000000 'claude-opus-4-7[1m]'`
    → `ctx ▓░░░░░░░░░ 12% 120K/1M`
 5. Test SoHoAI helper (replace SESSION_ID with active orchestra dir
    basename or `native-<UUID>` from `~/.claude/active-sessions/`):
@@ -79,7 +118,7 @@ Verify T1 (hook events) and T2 (transcript parse) after any /duo or /brain run.
    → `~$X.YZ` or empty; <2s wall time
 6. Live render: send any message to CC; observe status bar shows
    `model | ctx ▓▓░░░░░░░░ N% XK/YM | ~$X.YZ | ◆ project | ⎇ branch`
-   (cost shown for paid models; absent for zero-cost claude-code-* models)
+   (cost shown for paid models; absent for local/* zero-cost models)
 
 ### Native session telemetry smoke test
 1. Open a fresh CC session (no /brain or /duo).
