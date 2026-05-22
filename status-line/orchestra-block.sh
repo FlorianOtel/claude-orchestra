@@ -168,6 +168,16 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         fi
     fi
 
+    # Recalculate used_percentage against 1M denominator when [1m] is in model_id.
+    # CC reports used_pct relative to the 200K window (the API always strips [1m]
+    # from its response, causing CC to revert to 200K after the first API call).
+    # Without this re-derivation the bar fill and label are ~5× inflated relative
+    # to the real 1M window. Removed accidentally in 385c011; restored here.
+    if [[ "$model_id" == *"[1m]"* ]] && [ "${tokens_used:-0}" -gt 0 ]; then
+        used_percentage=$(echo "scale=2; 100 * $tokens_used / 1000000" | bc)
+        used_percentage=$(printf "%.0f" "$used_percentage")
+    fi
+
     ctx_seg=$(~/.claude/scripts/ctx-segment.sh "${used_percentage:-0}" "${tokens_used:-0}" "${context_window_size:-200000}" "${model_id:-}" 2>/dev/null || true)
 
     # Fix model display name: when [1m] was restored above, CC's display_name

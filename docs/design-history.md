@@ -3,7 +3,7 @@ title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design not
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-22--00-00
+updated_at: 2026-05-22--19-00
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1650,3 +1650,27 @@ model | ctx ▓▓░░░░░░░░ 21% 210K/1M | ~$X.YZ | ◆ project | 
 2. `scripts/ctx-segment.sh` (commit dd8dba0): after `advertised_size` is finalised (including `forced_1m → 1000000` override), recalculates `used_pct = 100 * tokens / advertised_size` when `forced_1m=true` and `tokens > 0`. This makes bar fill, percentage label, and denominator all consistent with the real 1M window. Non-1M models are unaffected (the recalculation guard is `forced_1m=true` only).
 
 **Files changed:** `status-line/orchestra-block.sh`, `scripts/ctx-segment.sh`, `docs/design.md` (§ctx segment implementation details — CC/API mismatch note added), `docs/design-history.md` (this amendment).
+
+## Amendment 2026-05-22 — fix [1m] used_pct recalculation regression (commit after 385c011)
+
+**Problem.** After commit `385c011` (refactor: drop claude-code-* non-Anthropic model aliases), the status-line again showed an inconsistent context bar for `sonnet[1m]` sessions — e.g. `21% 42K/1M` when it should show `~4% 42K/1M`.
+
+**Root cause.** The `used_percentage` recalculation after `[1m]` injection was accidentally removed by `385c011`. The sequence:
+1. `a2a70c7` — added [1m] injection and `used_pct` recalculation to `orchestra-block.sh`
+2. `dd8dba0` — also added recalculation to `ctx-segment.sh` (belt-and-suspenders)
+3. `09d340a` — removed recalculation from `ctx-segment.sh` ("redundant — orchestra-block.sh re-derives it upstream")
+4. `385c011` — removed the 83-line non-Anthropic block from `orchestra-block.sh`; that block happened to include the [1m] recalculation in the same region of the file. After this commit, neither script recalculates `used_pct` for [1m]. Regression.
+
+The underlying display bug is identical to Amendment 2026-05-19: CC reports `used_pct` based on the 200K window (after API reverts from [1m] config), but `ctx-segment.sh` forces the denominator to 1M — so bar/percentage are relative to 200K while the displayed total is 1M.
+
+**Fix.** Restore the recalculation to `orchestra-block.sh`, after the [1m] injection block and before the `ctx-segment.sh` call:
+```bash
+if [[ "$model_id" == *"[1m]"* ]] && [ "${tokens_used:-0}" -gt 0 ]; then
+    used_percentage=$(echo "scale=2; 100 * $tokens_used / 1000000" | bc)
+    used_percentage=$(printf "%.0f" "$used_percentage")
+fi
+```
+
+Guard `[[ "$model_id" == *"[1m]"* ]]` covers both paths: injection fired (settings.json → [1m] added) and [1m] already present from CC on turn 1 (harmless double-compute, same result).
+
+**Files changed:** `status-line/orchestra-block.sh`, `docs/design-history.md` (this amendment).
