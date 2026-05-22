@@ -67,6 +67,9 @@
 - **Timestamp:** 2026-05-19T00-00
 - **Model:** claude-sonnet-4-6[1m]
 - **Reason:** fix(status-line): restore [1m] ctx window after first API call — CC's API response strips the [1m] CC-local routing marker; orchestra-block.sh now reads settings.json to re-inject it, restoring 1M denominator and "(1M context)" display name in projects configured with sonnet[1m].
+- **Timestamp:** 2026-05-22T19-00
+- **Model:** claude-sonnet-4-6[1m]
+- **Reason:** fix(status-line): restore [1m] used_pct recalculation — 385c011 accidentally removed it; result was "56% 111K/1M" instead of "11% 111K/1M" for current session (~112K tokens). Verified: CC reports used_pct=56 (200K basis), fix recalculates to 11 (1M basis), ctx-segment renders correct green bar at 11%.
 
 ## Telemetry Smoke Tests
 
