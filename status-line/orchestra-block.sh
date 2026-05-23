@@ -189,6 +189,10 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
 
     # --- live cost ---
     # Orchestra sessions: try SoHoAI first (per-subagent attribution when headers work).
+    # SoHoAI tracks only subagent costs — the parent Brain's API calls go through without
+    # the X-Orchestra-Session-ID header (env var is written after the parent CC process
+    # starts). Add cost.total_cost_usd from the CC JSON as the parent piece, mirroring
+    # telemetry-summarize.py's sohoai_api+t2_parent approach at session close.
     # Fallback for all sessions (native, and orchestra when SoHoAI has no attribution):
     # CC JSON provides cost.total_cost_usd (parent turns) + native-subagent-cost.sh
     # walks actor JSONL files for subagent spend. This fixes two bugs:
@@ -202,8 +206,17 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         if [ -n "$active_session_dir" ]; then
             cost_cache="${active_session_dir}/.live-cost-sohoai"
             started_at=$(stat -c %Y "$active_session_dir" 2>/dev/null || echo "0")
-            live_cost=$(~/.claude/scripts/sohoai-live-cost.sh \
+            _sohoai_str=$(~/.claude/scripts/sohoai-live-cost.sh \
                 "$live_session_id" "$started_at" "$cost_cache" 2>/dev/null || true)
+            # SoHoAI returns only subagent costs; add parent cost from CC JSON to
+            # match telemetry-summarize.py's sohoai_api+t2_parent at session close.
+            if [ -n "$_sohoai_str" ]; then
+                _sohoai_num=$(printf '%s' "$_sohoai_str" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+                _cc_parent=$(echo "$input" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null)
+                live_cost=$(${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3 \
+                    -c "s=float('${_sohoai_num:-0}');p=float('${_cc_parent:-0}');print(f'~\${s+p:.2f}')" \
+                    2>/dev/null || echo "$_sohoai_str")
+            fi
         fi
         # Universal fallback: native CC cost + subagent JSONL costs.
         # Runs when: (a) native session, (b) orchestra session where SoHoAI returned nothing.
