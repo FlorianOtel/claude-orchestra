@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-22--00-00
+updated_by: Claude Code (Claude Sonnet 4.6 [1m])
+updated_at: 2026-05-23--17-54
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -127,7 +127,7 @@ Fields injected by the orchestra block:
 The utilization denominator is looked up from `context-windows.yaml` per model ID, with fallback to Claude Code's native `context_window.context_window_size`. Model ID normalization strips `[1m]`, `[200k]`, and date suffixes before lookup. Models with `[1m]` in their ID force a 1,000,000 denominator.
 
 **`~$X.YZ`** — live running cost (always shown, including `~$0.00` from the very first render so the display is visibly live from session start). Source differs by session type:
-- **Orchestra sessions**: SoHoAI `usage_events` table query via SQLite direct read (primary, NFS-accessible) or HTTP API fallback (TTL=8 s cache). Stale cache marked `*`. No `(est)` fallback — JSONL is not used (SoHoAI-proxied sessions do not write `costUSD` to JSONL entries).
+- **Orchestra sessions**: SoHoAI `usage_events` table query (SQLite direct, TTL=8 s) returns the **subagent cost only** (parent Brain's API calls lack `X-Orchestra-Session-ID` — the env var is written after the parent CC process starts; subagents inherit it correctly). The parent cost is added from `cost.total_cost_usd` in the CC JSON, mirroring the `sohoai_api+t2_parent` approach used in `telemetry-summarize.py` at session close. Stale cache marked `*`.
 - **All sessions (fallback when SoHoAI returns nothing)**: `cost.total_cost_usd` from CC's own `statusLine` JSON input (parent session) **+** subagent JSONL costs from `native-subagent-cost.sh` (actor completions). Last non-zero total is written to `active-sessions/native-<UUID>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead. This fallback covers: (a) pure native sessions, (b) orchestra sessions where CC 2.1.132 doesn't inject `X-Orchestra-Session-ID` so SoHoAI can't attribute cost, and (c) post-duo native continuation where cost previously froze at the telemetry.json value.
 
 **`♪ badge`** — orchestra session badge (shown only during active /duo or /brain sessions, or when a subagent is running). Stale `.duo-inflight` files left behind by crashed CC sessions are detected by checking `native-<transcript-uuid>.lck` liveness; sessions whose CC process is dead are silently excluded from the badge count and `active_session_dir` resolution. Badge formats in descending priority:
@@ -152,7 +152,7 @@ The status line script is called by Claude Code on each render tick — after ev
 | `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
 | `/brain` inflight marker (session-discovery for `/brain-abandon` and explicit CMD-classification by Stop-hook) | `${SESSION_DIR}/.brain-inflight` | `/brain` command setup |
 | Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
-| Live cost (orchestra, SoHoAI works) | SoHoAI `usage_events` SQLite (direct) → HTTP API fallback via `sohoai-live-cost.sh` (TTL=8 s) | T2 via SoHoAI API |
+| Live cost (orchestra, SoHoAI works) | SoHoAI `usage_events` SQLite (direct, subagent cost) + `cost.total_cost_usd` CC JSON (parent cost) via `sohoai-live-cost.sh` (TTL=8 s) | T2 via SoHoAI API + CC JSON |
 | Live cost (fallback: native + orchestra w/o attribution) | `cost.total_cost_usd` from CC `statusLine` JSON + `native-subagent-cost.sh` for actor JSONLs | CC internal + JSONL pricing.yaml |
 | Live cost (ctx segment) | `context_windows.yaml` + CC context width | ctx-segment.sh |
 
@@ -191,19 +191,25 @@ CC passes a rich JSON object to the `statusLine` command on every render. Key fi
 
 #### SoHoAI live cost (orchestra sessions only)
 
-SoHoAI cost for orchestra sessions is retrieved via `scripts/sohoai-live-cost.sh`:
+SoHoAI cost for orchestra sessions is retrieved via `scripts/sohoai-live-cost.sh`, then augmented with the parent Brain cost from the CC JSON:
+
+**SoHoAI query — subagent costs only**
+
+SoHoAI returns only the **subagent portion** of the session cost. The parent Brain's own API calls go to SoHoAI *without* the `X-Orchestra-Session-ID` header — `ANTHROPIC_CUSTOM_HEADERS` is written to `settings.local.json` by the session setup block, but the parent CC process reads settings at startup (before setup runs) and therefore never sees the header. Subagents spawned afterward inherit the env correctly. This is the same gap that `telemetry-summarize.py` compensates for at session close with the `sohoai_api+t2_parent` cost source.
 
 **Primary: SQLite direct read**
 - Reads `usage_events` table from SoHoAI's SQLite DB at `sohoai.db_path` in `config.yaml` (or `SOHOAI_DB_PATH` env var)
 - Query: `SELECT SUM(cost_usd) FROM usage_events WHERE orchestra_session_id = ?`
 - No time filter needed — `orchestra_session_id` uniquely identifies the session
 - Instant (<5 ms), no HTTP overhead, no timeout risk
-- Returns the running accumulated cost (same data as SoHoAI HTTP API)
 
 **Fallback: SoHoAI HTTP API**
 - Fires only when SQLite DB is unavailable/unconfigured
 - `started_at` is derived from `.transcript-path` mtime (written once at session init), NOT from the passed `started_at_unix` (which is the session dir mtime — updated on every file write, effectively always near-now, which caused the original oscillation)
 - 1s timeout; stale cache returned with trailing `*` on failure
+
+**Parent cost augmentation (2026-05-23)**
+After `sohoai-live-cost.sh` returns the SoHoAI subagent cost string (`~$X.YZ`), `orchestra-block.sh` extracts the numeric value, adds `cost.total_cost_usd` from the CC `statusLine` JSON (the parent Brain's running cost), and re-formats the combined total. This mirrors exactly what `telemetry-summarize.py` does at session close. Mid-session polling lag (SoHoAI showing partial subagent costs while subagents are still running) is inherent to live polling and not compensated.
 
 **Why `costUSD` JSONL is not used**
 Sessions routed through SoHoAI proxy do not receive a `costUSD` field in JSONL entries (CC only writes this when calling Anthropic directly). Token-based estimation from pricing.yaml overcounts by ~55% because SoHoAI/LiteLLM applies different effective cache_read rates. The SQLite DB contains SoHoAI's own billing records and is the authoritative source.

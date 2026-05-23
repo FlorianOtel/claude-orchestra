@@ -70,6 +70,9 @@
 - **Timestamp:** 2026-05-22T19-00
 - **Model:** claude-sonnet-4-6[1m]
 - **Reason:** fix(status-line): restore [1m] used_pct recalculation — 385c011 accidentally removed it; result was "56% 111K/1M" instead of "11% 111K/1M" for current session (~112K tokens). Verified: CC reports used_pct=56 (200K basis), fix recalculates to 11 (1M basis), ctx-segment renders correct green bar at 11%.
+- **Timestamp:** 2026-05-23T17-54
+- **Model:** claude-sonnet-4-6[1m]
+- **Reason:** fix(status-line): add parent cost to SoHoAI orchestra cost display — status line was showing SoHoAI subagent cost only (~$9.55) vs telemetry total of $20.60 ($7.99 parent + $12.61 subagents). Root cause: SoHoAI query returns subagent costs only (parent Brain lacks X-Orchestra-Session-ID header at startup); fallback that adds cost.total_cost_usd was skipped when SoHoAI returned non-empty. Fix: parse SoHoAI ~$X.YZ result, add cost.total_cost_usd parent cost, re-format combined total — mirrors telemetry-summarize.py's sohoai_api+t2_parent at session close.
 
 ## Telemetry Smoke Tests
 
