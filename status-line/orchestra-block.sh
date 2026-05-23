@@ -254,6 +254,39 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
                 _total=$(cat "$_cost_cache" 2>/dev/null || echo "${_total:-0}")
             fi
 
+            # --- post-orchestra telemetry override ---
+            # After a /brain or /duo session ends, active_session_dir is cleared
+            # (telemetry.json written) and we land in this native path. The native
+            # cost-cache holds a stale value from turns before the orchestra session
+            # (the SoHoAI path ran during the brain session; native cache not updated).
+            # Correct by reading the most recently closed orchestra session's
+            # telemetry.json when its .transcript-uuid matches the current CC UUID.
+            _orchcost_cache="$HOME/.claude/active-sessions/native-${_parent_uuid}.orchcost-cache"
+            _orchcost_age=$(( $(date +%s) - $(stat -c %Y "$_orchcost_cache" 2>/dev/null || echo 0) ))
+            if [ "$_orchcost_age" -gt 30 ]; then
+                _orch_tele="0"
+                if [ -d "$sessions_root" ]; then
+                    while IFS= read -r _sd; do
+                        [ -f "$_sd/telemetry.json" ] || continue
+                        _suuid=$(cat "$_sd/.transcript-uuid" 2>/dev/null | tr -d '[:space:]')
+                        [ "$_suuid" = "$_parent_uuid" ] || continue
+                        _tc=$(jq -r '.cost_usd_estimate // 0' "$_sd/telemetry.json" 2>/dev/null)
+                        printf '%s' "$_tc" | grep -qE '^[0-9]+\.?[0-9]*$' && _orch_tele="$_tc"
+                    done < <(find "$sessions_root" -mindepth 1 -maxdepth 1 -type d \
+                        -printf '%T@ %p\n' 2>/dev/null | sort -n | awk '{print $2}')
+                fi
+                printf '%s' "$_orch_tele" > "$_orchcost_cache.tmp" 2>/dev/null \
+                    && mv -f "$_orchcost_cache.tmp" "$_orchcost_cache" 2>/dev/null || true
+            else
+                _orch_tele=$(cat "$_orchcost_cache" 2>/dev/null || echo "0")
+            fi
+            # Use orchestra telemetry cost when available — it's the authoritative
+            # SoHoAI+T2 figure vs the native cache which uses CC/pricing.yaml rates.
+            if printf '%s' "${_orch_tele:-0}" | grep -qE '^[0-9]+\.[0-9]+$' \
+               && [ "$(printf '%.0f' "${_orch_tele:-0}" 2>/dev/null || echo 0)" != "0" ]; then
+                _total="$_orch_tele"
+            fi
+
             # Always show cost (including ~$0.00 at session start) so the field is
             # visible from the first render as a live-display sanity check.
             if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$'; then

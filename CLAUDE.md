@@ -73,6 +73,9 @@
 - **Timestamp:** 2026-05-23T17-54
 - **Model:** claude-sonnet-4-6[1m]
 - **Reason:** fix(status-line): add parent cost to SoHoAI orchestra cost display — status line was showing SoHoAI subagent cost only (~$9.55) vs telemetry total of $20.60 ($7.99 parent + $12.61 subagents). Root cause: SoHoAI query returns subagent costs only (parent Brain lacks X-Orchestra-Session-ID header at startup); fallback that adds cost.total_cost_usd was skipped when SoHoAI returned non-empty. Fix: parse SoHoAI ~$X.YZ result, add cost.total_cost_usd parent cost, re-format combined total — mirrors telemetry-summarize.py's sohoai_api+t2_parent at session close.
+- **Timestamp:** 2026-05-23T23-47
+- **Model:** claude-sonnet-4-6[1m]
+- **Reason:** fix(status-line): post-session stale cost-cache override — after /brain session ends, status bar showed ~$9.30 (stale native cache from turns between brain sessions) instead of $16.73 (telemetry). Root cause: native cost-cache not updated during SoHoAI-path brain sessions; after telemetry.json written, native mode activated showing stale cache. Fix: in native fallback block, scan sessions_root for most recent completed session with matching .transcript-uuid, override _total with telemetry.json cost_usd_estimate (30s TTL cache in native-<UUID>.orchcost-cache).
 
 ## Telemetry Smoke Tests
 

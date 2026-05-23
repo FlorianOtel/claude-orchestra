@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 4.6 [1m])
-updated_at: 2026-05-23--17-54
+updated_at: 2026-05-23--23-47
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -128,7 +128,7 @@ The utilization denominator is looked up from `context-windows.yaml` per model I
 
 **`~$X.YZ`** — live running cost (always shown, including `~$0.00` from the very first render so the display is visibly live from session start). Source differs by session type:
 - **Orchestra sessions**: SoHoAI `usage_events` table query (SQLite direct, TTL=8 s) returns the **subagent cost only** (parent Brain's API calls lack `X-Orchestra-Session-ID` — the env var is written after the parent CC process starts; subagents inherit it correctly). The parent cost is added from `cost.total_cost_usd` in the CC JSON, mirroring the `sohoai_api+t2_parent` approach used in `telemetry-summarize.py` at session close. Stale cache marked `*`.
-- **All sessions (fallback when SoHoAI returns nothing)**: `cost.total_cost_usd` from CC's own `statusLine` JSON input (parent session) **+** subagent JSONL costs from `native-subagent-cost.sh` (actor completions). Last non-zero total is written to `active-sessions/native-<UUID>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead. This fallback covers: (a) pure native sessions, (b) orchestra sessions where CC 2.1.132 doesn't inject `X-Orchestra-Session-ID` so SoHoAI can't attribute cost, and (c) post-duo native continuation where cost previously froze at the telemetry.json value.
+- **All sessions (fallback when SoHoAI returns nothing)**: `cost.total_cost_usd` from CC's own `statusLine` JSON input (parent session) **+** subagent JSONL costs from `native-subagent-cost.sh` (actor completions). Last non-zero total is written to `active-sessions/native-<UUID>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead. After computing the native total, a **post-orchestra override** (2026-05-23) checks `sessions_root` for the most recently completed orchestra session whose `.transcript-uuid` matches the current CC UUID (`session_id` from CC JSON); if found, `cost_usd_estimate` from its `telemetry.json` replaces the native total (30 s TTL cache in `native-<UUID>.orchcost-cache`). This fixes the post-session stale-cache problem: the native cache holds a value from turns *before* the orchestra session ran (the SoHoAI path ran during the brain session and did not update the native cache), so without the override the status bar shows the pre-brain cost after the session ends. This fallback covers: (a) pure native sessions, (b) orchestra sessions where CC 2.1.132 doesn't inject `X-Orchestra-Session-ID` so SoHoAI can't attribute cost, and (c) post-orchestra native continuation where the status bar now shows the final telemetry cost.
 
 **`♪ badge`** — orchestra session badge (shown only during active /duo or /brain sessions, or when a subagent is running). Stale `.duo-inflight` files left behind by crashed CC sessions are detected by checking `native-<transcript-uuid>.lck` liveness; sessions whose CC process is dead are silently excluded from the badge count and `active_session_dir` resolution. Badge formats in descending priority:
 
