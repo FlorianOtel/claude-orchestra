@@ -254,14 +254,15 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
                 _total=$(cat "$_cost_cache" 2>/dev/null || echo "${_total:-0}")
             fi
 
-            # --- post-orchestra session boundary reset ---
+            # --- post-orchestra session boundary reset (delta mode) ---
             # Treat each CC section (native → orchestra → native → ...) as logically
-            # distinct. When a /brain or /duo session ends and we enter native mode, the
-            # native cost-cache holds a stale value from turns before the orchestra session
-            # (the SoHoAI path ran during brain/duo and never updated the native cache).
-            # On the FIRST native render after a new orchestra session is detected as closed,
-            # delete the stale cost-cache and reset _total to 0 so this native section
-            # starts fresh. Subsequent renders accumulate normally from zero.
+            # distinct. After a /brain or /duo session ends and native mode activates,
+            # show only the DELTA in cost since the orchestra ended, so native starts
+            # at ~$0.00. The delta is: max(0, _cc_cost - cc_base) + max(0, _sub_cost - sub_base).
+            # Both _cc_cost (CC's cumulative total_cost_usd) and _sub_cost (JSONL-priced
+            # orchestra subagents) are non-zero immediately after session ends, so a plain
+            # reset-to-zero is not enough — the delta approach captures baselines at reset
+            # time and deducts them on every subsequent native render.
             # Works for both /brain and /duo — both write telemetry.json + .transcript-uuid.
             _orchcost_cache="$HOME/.claude/active-sessions/native-${_parent_uuid}.orchcost-cache"
             _orchcost_age=$(( $(date +%s) - $(stat -c %Y "$_orchcost_cache" 2>/dev/null || echo 0) ))
@@ -281,14 +282,26 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
             else
                 _orch_sess_id=$(cat "$_orchcost_cache" 2>/dev/null | tr -d '[:space:]' || echo "")
             fi
-            # First native render after a new orchestra session closes: reset.
             _orch_reset_sentinel="$HOME/.claude/active-sessions/native-${_parent_uuid}.orchcost-reset"
             _last_reset_sid=$(cat "$_orch_reset_sentinel" 2>/dev/null | tr -d '[:space:]' || echo "")
             if [ -n "$_orch_sess_id" ] && [ "$_orch_sess_id" != "$_last_reset_sid" ]; then
+                # New orchestra session just closed. Capture current costs as baselines
+                # so all subsequent native renders show delta from these values.
                 rm -f "$_cost_cache" 2>/dev/null || true
-                _total="0"
-                printf '%s' "$_orch_sess_id" > "$_orch_reset_sentinel.tmp" 2>/dev/null \
-                    && mv -f "$_orch_reset_sentinel.tmp" "$_orch_reset_sentinel" 2>/dev/null || true
+                printf '%s' "${_cc_cost:-0}" > "${_orch_reset_sentinel}.cc.tmp" 2>/dev/null \
+                    && mv -f "${_orch_reset_sentinel}.cc.tmp" "${_orch_reset_sentinel}.cc" 2>/dev/null || true
+                printf '%s' "${_sub_cost:-0}" > "${_orch_reset_sentinel}.sub.tmp" 2>/dev/null \
+                    && mv -f "${_orch_reset_sentinel}.sub.tmp" "${_orch_reset_sentinel}.sub" 2>/dev/null || true
+                printf '%s' "$_orch_sess_id" > "${_orch_reset_sentinel}.tmp" 2>/dev/null \
+                    && mv -f "${_orch_reset_sentinel}.tmp" "$_orch_reset_sentinel" 2>/dev/null || true
+            fi
+            # Apply delta deduction on every native render after a reset.
+            if [ -f "${_orch_reset_sentinel}.cc" ]; then
+                _cc_base=$(cat "${_orch_reset_sentinel}.cc" 2>/dev/null || echo "0")
+                _sub_base=$(cat "${_orch_reset_sentinel}.sub" 2>/dev/null || echo "0")
+                _total=$(${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3 \
+                    -c "cc=float('${_cc_cost:-0}');sub=float('${_sub_cost:-0}');cb=float('${_cc_base:-0}');sb=float('${_sub_base:-0}');print(f'{max(0.0,cc-cb)+max(0.0,sub-sb):.4f}')" \
+                    2>/dev/null || echo "0")
             fi
 
             # Always show cost (including ~$0.00 at session start) so the field is
