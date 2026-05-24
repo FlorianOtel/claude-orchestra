@@ -586,6 +586,62 @@ def cross_check_t1_t2(session_dir: Path, subagents: List[Dict], warnings: List[s
                 warnings.append(f"T1/T2 token delta on {subagent_type}: T1={t1_total} T2={t2_total}")
 
 
+def _validate_cost_display(
+    session_dir: Path,
+    cost_usd_estimate: float,
+    transcript_session_id: str,
+    warnings: list,
+) -> None:
+    """
+    Post-write validation: compare the status-line's last displayed cost
+    (LAST_NONZERO from the .section state file) against the authoritative
+    telemetry cost. Appends a structured warning to invocations.log if the
+    divergence exceeds 5%. Best-effort — never raises.
+    """
+    try:
+        active_sessions_dir = Path.home() / ".claude" / "active-sessions"
+        state_file = active_sessions_dir / f"{transcript_session_id}.section"
+        if not state_file.exists():
+            return
+
+        last_nonzero_str = ""
+        for line in state_file.read_text().splitlines():
+            if line.startswith("LAST_NONZERO="):
+                last_nonzero_str = line.split("=", 1)[1].strip()
+                break
+        if not last_nonzero_str:
+            return
+
+        try:
+            last_nonzero = float(last_nonzero_str)
+        except ValueError:
+            return
+
+        if last_nonzero <= 0:
+            return
+
+        denominator = max(cost_usd_estimate, 0.01)
+        divergence_pct = abs(cost_usd_estimate - last_nonzero) / denominator * 100.0
+
+        if divergence_pct <= 5.0:
+            return
+
+        invlog = Path.home() / ".claude" / "orchestra" / "invocations.log"
+        invlog.parent.mkdir(parents=True, exist_ok=True)
+        warning_record = json.dumps({
+            "event": "cost_divergence",
+            "session_id": session_dir.name,
+            "telemetry_usd": round(cost_usd_estimate, 4),
+            "last_nonzero_usd": round(last_nonzero, 4),
+            "divergence_pct": round(divergence_pct, 1),
+            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        })
+        with open(invlog, "a") as f:
+            f.write(warning_record + "\n")
+    except Exception as e:
+        warnings.append(f"cost_divergence validation skipped: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Parse Claude Code JSONL transcript to produce per-session telemetry."
@@ -735,6 +791,9 @@ def main():
     except Exception as e:
         print(f"telemetry-summarize.py: failed to write telemetry.json: {e}", file=sys.stderr)
         sys.exit(1)
+
+    # Post-write validation: check status-line cost divergence
+    _validate_cost_display(session_dir, cost_usd, transcript_session_id, warnings)
 
     # Append to global telemetry.jsonl
     orchestra_dir = Path.home() / ".claude" / "orchestra"

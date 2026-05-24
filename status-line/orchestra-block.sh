@@ -187,128 +187,129 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         status_line="${status_line/✦ ${model_name}/✦ ${model_name} (1M context)}"
     fi
 
-    # --- live cost ---
-    # Orchestra sessions: try SoHoAI first (per-subagent attribution when headers work).
-    # SoHoAI tracks only subagent costs — the parent Brain's API calls go through without
-    # the X-Orchestra-Session-ID header (env var is written after the parent CC process
-    # starts). Add cost.total_cost_usd from the CC JSON as the parent piece, mirroring
-    # telemetry-summarize.py's sohoai_api+t2_parent approach at session close.
-    # Fallback for all sessions (native, and orchestra when SoHoAI has no attribution):
-    # CC JSON provides cost.total_cost_usd (parent turns) + native-subagent-cost.sh
-    # walks actor JSONL files for subagent spend. This fixes two bugs:
-    #   1. Post-duo native continuation: cost was frozen at telemetry.json value;
-    #      now it grows as the conversation continues.
-    #   2. New duo session (orchestra active): SoHoAI returns 0 (CC 2.1.132 doesn't
-    #      inject X-Orchestra-Session-ID), cost disappeared; now falls through to
-    #      native CC + subagent cost so the counter stays visible and growing.
+    # --- live cost (section-based state model) ---
+    # State file: ~/.claude/active-sessions/<UUID>.section
+    # Four KEY=VALUE fields (sourceable by bash, atomic-rename on all writes):
+    #   SECTION_ID   — current section identifier
+    #   CC_BASE      — cost.total_cost_usd at section start
+    #   SUB_BASE     — native-subagent-cost.sh total at section start
+    #   LAST_NONZERO — last display cost > 0 in this section (transient-zero guard)
     live_cost=""
     if [ -n "$live_session_id" ]; then
+        _parent_uuid=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null)
+        _state_file="$HOME/.claude/active-sessions/${_parent_uuid}.section"
+
+        # 1. Determine current section_id
+        #    Orchestra: active_session_dir is set (live /brain or /duo).
+        #    Native: native:<last-orch-id-or-initial>
         if [ -n "$active_session_dir" ]; then
+            _current_section_id=$(basename "$active_session_dir")
+        else
+            _last_orch_id=""
+            if [ -d "$sessions_root" ]; then
+                while IFS= read -r _sd; do
+                    [ -f "$_sd/telemetry.json" ] || continue
+                    _suuid=$(cat "$_sd/.transcript-uuid" 2>/dev/null | tr -d '[:space:]')
+                    [ "$_suuid" = "$_parent_uuid" ] || continue
+                    _last_orch_id=$(basename "$_sd")
+                done < <(find "$sessions_root" -mindepth 1 -maxdepth 1 -type d \
+                    -printf '%T@ %p\n' 2>/dev/null | sort -n | awk '{print $2}')
+            fi
+            _current_section_id="native:${_last_orch_id:-initial}"
+        fi
+
+        # 2. Read stored state (defaults to empty if file missing)
+        _stored_section_id=""
+        _cc_base="0"
+        _sub_base="0"
+        _last_nonzero="0"
+        if [ -f "$_state_file" ]; then
+            _stored_section_id=$(grep '^SECTION_ID=' "$_state_file" 2>/dev/null | cut -d= -f2-)
+            _cc_base=$(grep '^CC_BASE=' "$_state_file" 2>/dev/null | cut -d= -f2-)
+            _sub_base=$(grep '^SUB_BASE=' "$_state_file" 2>/dev/null | cut -d= -f2-)
+            _last_nonzero=$(grep '^LAST_NONZERO=' "$_state_file" 2>/dev/null | cut -d= -f2-)
+        fi
+
+        # 3. Read current raw costs
+        _cc_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null)
+
+        # Subagent costs — TTL-cached 30 s
+        _sub_cache="$HOME/.claude/active-sessions/${_parent_uuid}.subcost-cache"
+        _sub_age=$(( $(date +%s) - $(stat -c %Y "$_sub_cache" 2>/dev/null || echo 0) ))
+        if [ "$_sub_age" -gt 30 ]; then
+            _sub_cost=$(~/.claude/scripts/native-subagent-cost.sh "$_parent_uuid" 2>/dev/null || echo "")
+            printf '%s' "${_sub_cost:-0}" > "$_sub_cache.tmp" 2>/dev/null \
+                && mv -f "$_sub_cache.tmp" "$_sub_cache" 2>/dev/null || true
+        else
+            _sub_cost=$(cat "$_sub_cache" 2>/dev/null || echo "")
+        fi
+        _sub_cost="${_sub_cost:-0}"
+
+        # 4. Section transition: rewrite state file when section_id changes
+        if [ "$_current_section_id" != "$_stored_section_id" ]; then
+            printf 'SECTION_ID=%s\nCC_BASE=%s\nSUB_BASE=%s\nLAST_NONZERO=0\n' \
+                "$_current_section_id" "${_cc_cost:-0}" "${_sub_cost:-0}" \
+                > "$_state_file.tmp" 2>/dev/null \
+                && mv -f "$_state_file.tmp" "$_state_file" 2>/dev/null || true
+            _cc_base="${_cc_cost:-0}"
+            _sub_base="${_sub_cost:-0}"
+            _last_nonzero="0"
+        fi
+
+        # 5. Compute display cost by section type
+        _display_cost=""
+        if [ -n "$active_session_dir" ]; then
+            # Orchestra: SoHoAI subagent cost + CC parent delta
             cost_cache="${active_session_dir}/.live-cost-sohoai"
             started_at=$(stat -c %Y "$active_session_dir" 2>/dev/null || echo "0")
             _sohoai_str=$(~/.claude/scripts/sohoai-live-cost.sh \
                 "$live_session_id" "$started_at" "$cost_cache" 2>/dev/null || true)
-            # SoHoAI returns only subagent costs; add parent cost from CC JSON to
-            # match telemetry-summarize.py's sohoai_api+t2_parent at session close.
             if [ -n "$_sohoai_str" ]; then
                 _sohoai_num=$(printf '%s' "$_sohoai_str" | grep -oE '[0-9]+\.[0-9]+' | head -1)
-                _cc_parent=$(echo "$input" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null)
-                live_cost=$(${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3 \
-                    -c "s=float('${_sohoai_num:-0}');p=float('${_cc_parent:-0}');print(f'~\${s+p:.2f}')" \
-                    2>/dev/null || echo "$_sohoai_str")
+                if [ -n "$_sohoai_num" ] \
+                   && [ "$(printf '%.0f' "$_sohoai_num" 2>/dev/null || echo 0)" != "0" ]; then
+                    _display_cost=$(${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3 \
+                        -c "s=float('${_sohoai_num:-0}');cc=float('${_cc_cost:-0}');cb=float('${_cc_base:-0}');print(f'{s+max(0.0,cc-cb):.4f}')" \
+                        2>/dev/null || echo "")
+                fi
+            fi
+            # SoHoAI returned nothing or zero: show LAST_NONZERO (or 0)
+            if [ -z "$_display_cost" ]; then
+                if [ -n "$_last_nonzero" ] && \
+                   printf '%s' "$_last_nonzero" | grep -qE '^[0-9]+\.?[0-9]*$' && \
+                   [ "$(printf '%.0f' "$_last_nonzero" 2>/dev/null || echo 0)" != "0" ]; then
+                    _display_cost="$_last_nonzero"
+                else
+                    _display_cost="0.00"
+                fi
+            fi
+        else
+            # Native: delta from baselines
+            _display_cost=$(${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3 \
+                -c "cc=float('${_cc_cost:-0}');sub=float('${_sub_cost:-0}');cb=float('${_cc_base:-0}');sb=float('${_sub_base:-0}');print(f'{max(0.0,cc-cb)+max(0.0,sub-sb):.4f}')" \
+                2>/dev/null || echo "0.0000")
+            # Transient-zero guard: if delta is 0 but LAST_NONZERO > 0, show cached
+            if [ "$(printf '%.0f' "$_display_cost" 2>/dev/null || echo 0)" = "0" ]; then
+                if [ -n "$_last_nonzero" ] && \
+                   printf '%s' "$_last_nonzero" | grep -qE '^[0-9]+\.?[0-9]*$' && \
+                   [ "$(printf '%.0f' "$_last_nonzero" 2>/dev/null || echo 0)" != "0" ]; then
+                    _display_cost="$_last_nonzero"
+                fi
             fi
         fi
-        # Universal fallback: native CC cost + subagent JSONL costs.
-        # Runs when: (a) native session, (b) orchestra session where SoHoAI returned nothing.
-        if [ -z "$live_cost" ]; then
-            _cc_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null)
 
-            # Subagent costs — walk actor/subagent JSONLs, TTL-cached 30 s.
-            # CC session UUID from JSON (stable for the CC process lifetime, regardless
-            # of whether we're in an orchestra or native phase).
-            _parent_uuid=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null)
-            _sub_cache="$HOME/.claude/active-sessions/native-${_parent_uuid}.subcost-cache"
-            _sub_age=$(( $(date +%s) - $(stat -c %Y "$_sub_cache" 2>/dev/null || echo 0) ))
-            if [ "$_sub_age" -gt 30 ]; then
-                _sub_cost=$(~/.claude/scripts/native-subagent-cost.sh \
-                    "$_parent_uuid" 2>/dev/null || echo "")
-                printf '%s' "${_sub_cost:-0}" > "$_sub_cache.tmp" 2>/dev/null \
-                    && mv -f "$_sub_cache.tmp" "$_sub_cache" 2>/dev/null || true
-            else
-                _sub_cost=$(cat "$_sub_cache" 2>/dev/null || echo "")
-            fi
+        # 6. Update LAST_NONZERO in state file if display cost > 0
+        if printf '%s' "$_display_cost" | grep -qE '^[0-9]+\.?[0-9]*$' && \
+           [ "$(printf '%.0f' "$_display_cost" 2>/dev/null || echo 0)" != "0" ]; then
+            printf 'SECTION_ID=%s\nCC_BASE=%s\nSUB_BASE=%s\nLAST_NONZERO=%s\n' \
+                "$_current_section_id" "${_cc_base:-0}" "${_sub_base:-0}" "$_display_cost" \
+                > "$_state_file.tmp" 2>/dev/null \
+                && mv -f "$_state_file.tmp" "$_state_file" 2>/dev/null || true
+        fi
 
-            # Combine parent + subagent costs and format.
-            _total=$(${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3 \
-                -c "print(f'{float(\"${_cc_cost:-0}\")+float(\"${_sub_cost:-0}\"):.4f}')" \
-                2>/dev/null || echo "${_cc_cost:-0}")
-
-            # Cache last non-zero total; fall back to it when CC reports 0 at turn boundaries
-            # (CC resets cost.total_cost_usd to 0 briefly after each tool-call completes).
-            _cost_cache="$HOME/.claude/active-sessions/native-${_parent_uuid}.cost-cache"
-            if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$' \
-               && [ "$(printf '%.0f' "$_total" 2>/dev/null || echo 0)" != "0" ]; then
-                printf '%s' "$_total" > "$_cost_cache.tmp" 2>/dev/null \
-                    && mv -f "$_cost_cache.tmp" "$_cost_cache" 2>/dev/null || true
-            elif [ -f "$_cost_cache" ]; then
-                _total=$(cat "$_cost_cache" 2>/dev/null || echo "${_total:-0}")
-            fi
-
-            # --- post-orchestra session boundary reset (delta mode) ---
-            # Treat each CC section (native → orchestra → native → ...) as logically
-            # distinct. After a /brain or /duo session ends and native mode activates,
-            # show only the DELTA in cost since the orchestra ended, so native starts
-            # at ~$0.00. The delta is: max(0, _cc_cost - cc_base) + max(0, _sub_cost - sub_base).
-            # Both _cc_cost (CC's cumulative total_cost_usd) and _sub_cost (JSONL-priced
-            # orchestra subagents) are non-zero immediately after session ends, so a plain
-            # reset-to-zero is not enough — the delta approach captures baselines at reset
-            # time and deducts them on every subsequent native render.
-            # Works for both /brain and /duo — both write telemetry.json + .transcript-uuid.
-            _orchcost_cache="$HOME/.claude/active-sessions/native-${_parent_uuid}.orchcost-cache"
-            _orchcost_age=$(( $(date +%s) - $(stat -c %Y "$_orchcost_cache" 2>/dev/null || echo 0) ))
-            _orch_sess_id=""
-            if [ "$_orchcost_age" -gt 30 ]; then
-                if [ -d "$sessions_root" ]; then
-                    while IFS= read -r _sd; do
-                        [ -f "$_sd/telemetry.json" ] || continue
-                        _suuid=$(cat "$_sd/.transcript-uuid" 2>/dev/null | tr -d '[:space:]')
-                        [ "$_suuid" = "$_parent_uuid" ] || continue
-                        _orch_sess_id=$(basename "$_sd")
-                    done < <(find "$sessions_root" -mindepth 1 -maxdepth 1 -type d \
-                        -printf '%T@ %p\n' 2>/dev/null | sort -n | awk '{print $2}')
-                fi
-                printf '%s' "${_orch_sess_id:-}" > "$_orchcost_cache.tmp" 2>/dev/null \
-                    && mv -f "$_orchcost_cache.tmp" "$_orchcost_cache" 2>/dev/null || true
-            else
-                _orch_sess_id=$(cat "$_orchcost_cache" 2>/dev/null | tr -d '[:space:]' || echo "")
-            fi
-            _orch_reset_sentinel="$HOME/.claude/active-sessions/native-${_parent_uuid}.orchcost-reset"
-            _last_reset_sid=$(cat "$_orch_reset_sentinel" 2>/dev/null | tr -d '[:space:]' || echo "")
-            if [ -n "$_orch_sess_id" ] && [ "$_orch_sess_id" != "$_last_reset_sid" ]; then
-                # New orchestra session just closed. Capture current costs as baselines
-                # so all subsequent native renders show delta from these values.
-                rm -f "$_cost_cache" 2>/dev/null || true
-                printf '%s' "${_cc_cost:-0}" > "${_orch_reset_sentinel}.cc.tmp" 2>/dev/null \
-                    && mv -f "${_orch_reset_sentinel}.cc.tmp" "${_orch_reset_sentinel}.cc" 2>/dev/null || true
-                printf '%s' "${_sub_cost:-0}" > "${_orch_reset_sentinel}.sub.tmp" 2>/dev/null \
-                    && mv -f "${_orch_reset_sentinel}.sub.tmp" "${_orch_reset_sentinel}.sub" 2>/dev/null || true
-                printf '%s' "$_orch_sess_id" > "${_orch_reset_sentinel}.tmp" 2>/dev/null \
-                    && mv -f "${_orch_reset_sentinel}.tmp" "$_orch_reset_sentinel" 2>/dev/null || true
-            fi
-            # Apply delta deduction on every native render after a reset.
-            if [ -f "${_orch_reset_sentinel}.cc" ]; then
-                _cc_base=$(cat "${_orch_reset_sentinel}.cc" 2>/dev/null || echo "0")
-                _sub_base=$(cat "${_orch_reset_sentinel}.sub" 2>/dev/null || echo "0")
-                _total=$(${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3 \
-                    -c "cc=float('${_cc_cost:-0}');sub=float('${_sub_cost:-0}');cb=float('${_cc_base:-0}');sb=float('${_sub_base:-0}');print(f'{max(0.0,cc-cb)+max(0.0,sub-sb):.4f}')" \
-                    2>/dev/null || echo "0")
-            fi
-
-            # Always show cost (including ~$0.00 at session start) so the field is
-            # visible from the first render as a live-display sanity check.
-            if printf '%s' "$_total" | grep -qE '^[0-9]+\.?[0-9]*$'; then
-                live_cost=$(LC_ALL=C printf '~$%.2f' "$_total" 2>/dev/null || true)
-            fi
+        # 7. Format for display
+        if printf '%s' "$_display_cost" | grep -qE '^[0-9]+\.?[0-9]*$'; then
+            live_cost=$(LC_ALL=C printf '~$%.2f' "$_display_cost" 2>/dev/null || true)
         fi
     fi
 

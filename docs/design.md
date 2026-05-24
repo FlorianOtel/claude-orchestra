@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Sonnet 4.6 [1m])
-updated_at: 2026-05-24--00-00
+updated_by: Claude Code (Claude Haiku 4.5)
+updated_at: 2026-05-24--13-51
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -126,9 +126,12 @@ Fields injected by the orchestra block:
 
 The utilization denominator is looked up from `context-windows.yaml` per model ID, with fallback to Claude Code's native `context_window.context_window_size`. Model ID normalization strips `[1m]`, `[200k]`, and date suffixes before lookup. Models with `[1m]` in their ID force a 1,000,000 denominator.
 
-**`~$X.YZ`** — live running cost (always shown, including `~$0.00` from the very first render so the display is visibly live from session start). Source differs by session type:
-- **Orchestra sessions**: SoHoAI `usage_events` table query (SQLite direct, TTL=8 s) returns the **subagent cost only** (parent Brain's API calls lack `X-Orchestra-Session-ID` — the env var is written after the parent CC process starts; subagents inherit it correctly). The parent cost is added from `cost.total_cost_usd` in the CC JSON, mirroring the `sohoai_api+t2_parent` approach used in `telemetry-summarize.py` at session close. Stale cache marked `*`.
-- **All sessions (fallback when SoHoAI returns nothing)**: `cost.total_cost_usd` from CC's own `statusLine` JSON input (parent session) **+** subagent JSONL costs from `native-subagent-cost.sh` (actor completions). Last non-zero total is written to `active-sessions/native-<UUID>.cost-cache` (atomic rename); when CC reports 0 at tool-call turn boundaries the cached value is shown instead. After computing the native total, a **post-orchestra delta reset** (2026-05-24) treats each logical CC section as starting from `~$0.00`. When a new orchestra session is detected as closed (most recently completed session's `.transcript-uuid` matches the current CC UUID and its session ID differs from the sentinel in `native-<UUID>.orchcost-reset`), the current `_cc_cost` and `_sub_cost` values are stored as baselines in `${sentinel}.cc` and `${sentinel}.sub`. On every subsequent native render, `_total` is overridden with `max(0, _cc_cost - cc_base) + max(0, _sub_cost - sub_base)`. This delta approach is necessary because both `_cc_cost` (CC's cumulative `cost.total_cost_usd` from the orchestra session) and `_sub_cost` (orchestra subagents priced via JSONL + pricing.yaml) are non-zero immediately after the session ends — a plain zero-reset would produce the wrong value on the very next render. `_orchcost_cache` (30 s TTL) stores the session ID (not cost float) for the scan result. This covers both `/brain` and `/duo` sessions since both write `telemetry.json` and `.transcript-uuid` to `sessions_root`. This fallback covers: (a) pure native sessions, (b) orchestra sessions where CC 2.1.132 doesn't inject `X-Orchestra-Session-ID` so SoHoAI can't attribute cost, and (c) post-orchestra native continuation where cost resets to $0 and grows fresh.
+**`~$X.YZ`** — live running cost (always shown, including `~$0.00` from the first render). Each logical CC session is divided into **sections** (native or orchestra); each starts fresh at `~$0.00`. A single state file `~/.claude/active-sessions/<UUID>.section` (KEY=VALUE: `SECTION_ID`, `CC_BASE`, `SUB_BASE`, `LAST_NONZERO`) tracks section boundaries and per-section cost deltas. Atomic-rename writes on every transition.
+
+- **Orchestra sections** (`active_session_dir` set): `sohoai_cost(SECTION_ID) + max(0, cc - CC_BASE)`. If SoHoAI returns 0/nothing, falls back to `LAST_NONZERO` (or $0.00 if none).
+- **Native sections**: `max(0, cc - CC_BASE) + max(0, sub - SUB_BASE)`. If the delta is 0 (CC transient zero), shows `LAST_NONZERO`.
+
+At section transition, current `cc_cost` and `sub_cost` are captured as new baselines; `LAST_NONZERO` resets to 0; display starts fresh at `~$0.00`. Validation: `telemetry-summarize.py` compares the final orchestra `LAST_NONZERO` against `cost_usd_estimate` and writes a `cost_divergence` warning to `invocations.log` if divergence exceeds 5%.
 
 **`♪ badge`** — orchestra session badge (shown only during active /duo or /brain sessions, or when a subagent is running). Stale `.duo-inflight` files left behind by crashed CC sessions are detected by checking `native-<transcript-uuid>.lck` liveness; sessions whose CC process is dead are silently excluded from the badge count and `active_session_dir` resolution. Badge formats in descending priority:
 
@@ -152,8 +155,10 @@ The status line script is called by Claude Code on each render tick — after ev
 | `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
 | `/brain` inflight marker (session-discovery for `/brain-abandon` and explicit CMD-classification by Stop-hook) | `${SESSION_DIR}/.brain-inflight` | `/brain` command setup |
 | Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
-| Live cost (orchestra, SoHoAI works) | SoHoAI `usage_events` SQLite (direct, subagent cost) + `cost.total_cost_usd` CC JSON (parent cost) via `sohoai-live-cost.sh` (TTL=8 s) | T2 via SoHoAI API + CC JSON |
-| Live cost (fallback: native + orchestra w/o attribution) | `cost.total_cost_usd` from CC `statusLine` JSON + `native-subagent-cost.sh` for actor JSONLs | CC internal + JSONL pricing.yaml |
+| Section state (per-CC-session) | `~/.claude/active-sessions/<UUID>.section` — KEY=VALUE: `SECTION_ID`, `CC_BASE`, `SUB_BASE`, `LAST_NONZERO`. Atomic rename on every transition and on each `LAST_NONZERO` update. | `orchestra-block.sh` per render tick |
+| Live cost (orchestra, SoHoAI works) | SoHoAI `usage_events` SQLite (direct, subagent cost) + `cost.total_cost_usd` CC JSON (parent cost) via `sohoai-live-cost.sh` (TTL=8 s), minus per-section `CC_BASE` | SoHoAI API + CC JSON + section state |
+| Live cost (native section) | `cost.total_cost_usd` from CC `statusLine` JSON minus `CC_BASE` + `native-subagent-cost.sh` for actor JSONLs minus `SUB_BASE` (TTL=30 s subcost cache) | CC internal + JSONL pricing.yaml + section state |
+| Live cost (fallback: SoHoAI=0 or CC transient zero) | `LAST_NONZERO` from section state file (last positive display value within current section); else `~$0.00` | `orchestra-block.sh` on prior render |
 | Live cost (ctx segment) | `context_windows.yaml` + CC context width | ctx-segment.sh |
 
 #### ctx segment implementation details

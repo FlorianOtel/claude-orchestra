@@ -82,6 +82,9 @@
 - **Timestamp:** 2026-05-24T00-00
 - **Model:** claude-sonnet-4-6[1m]
 - **Reason:** fix(status-line): delta-based post-orchestra cost reset (v4, commit 3741769) — v3 regression: _cc_cost (CC's cumulative total) and _sub_cost (orchestra subagents via JSONL pricing) are both non-zero immediately after session ends, so status bar jumped to ~$24.79 on second native render instead of $0.00. Fix: at reset time, store _cc_cost and _sub_cost as baselines in ${sentinel}.cc/.sub; on every subsequent native render, override _total with delta max(0,cc-cc_base)+max(0,sub-sub_base). Shows $0.00 immediately, grows only from new activity.
+- **Timestamp:** 2026-05-24T15-30
+- **Model:** claude-opus-4-7[1m] (Brain) + claude-sonnet-4-6 (Planner / Reviewer) + claude-haiku-4-5 (Actor)
+- **Reason:** refactor(status-line): replace v1–v4 layered cost-reset machinery with single section-based state model. /brain pipeline session 20260524T135107Z-102392, cost=$34.45 (parent $24.51 + subagents $9.94), 8.96M tokens, outcome=pass. One state file (`<UUID>.section` with SECTION_ID/CC_BASE/SUB_BASE/LAST_NONZERO) replaces 6 prior files (.cost-cache, .orchcost-cache, .orchcost-reset*). One formula per section type (orchestra: SoHoAI+cc_delta or LAST_NONZERO fallback; native: cc_delta+sub_delta with transient-zero guard). Section transitions detected by SECTION_ID comparison — abandoned/passed/aborted orchestra all follow identical reset path. Validation hook in telemetry-summarize.py compares orchestra LAST_NONZERO vs cost_usd_estimate, writes `cost_divergence` event to invocations.log if > 5% drift. Manual smoke tests pending (4a–4e in PLAN.md). 3 files changed (+176 −113).
 
 ## Telemetry Smoke Tests
 
