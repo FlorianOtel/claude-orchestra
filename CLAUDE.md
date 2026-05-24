@@ -78,7 +78,10 @@
 - **Reason:** fix(status-line): post-session stale cost-cache override — after /brain session ends, status bar showed ~$9.30 (stale native cache from turns between brain sessions) instead of $16.73 (telemetry). Root cause: native cost-cache not updated during SoHoAI-path brain sessions; after telemetry.json written, native mode activated showing stale cache. Fix: in native fallback block, scan sessions_root for most recent completed session with matching .transcript-uuid, override _total with telemetry.json cost_usd_estimate (30s TTL cache in native-<UUID>.orchcost-cache). SUPERSEDED by v3 fix below.
 - **Timestamp:** 2026-05-24T00-00
 - **Model:** claude-sonnet-4-6[1m]
-- **Reason:** fix(status-line): reset native cost to $0 after orchestra session ends (v3, commit f97015e) — v2 froze cost at orchestra telemetry value; user wanted each logical CC section to start from $0. v3: on first native render after orchestra closes, detect session ID change via sentinel (native-<UUID>.orchcost-reset), delete stale cost-cache, reset _total to 0. Subsequent native renders grow from 0. _orchcost_cache now stores session ID (not cost float). Works for both /brain and /duo.
+- **Reason:** fix(status-line): reset native cost to $0 after orchestra session ends (v3, commit f97015e) — v2 froze cost at orchestra telemetry value; user wanted each logical CC section to start from $0. v3: on first native render after orchestra closes, detect session ID change via sentinel (native-<UUID>.orchcost-reset), delete stale cost-cache, reset _total to 0. Subsequent native renders grow from 0. _orchcost_cache now stores session ID (not cost float). Works for both /brain and /duo. SUPERSEDED by v4 fix below.
+- **Timestamp:** 2026-05-24T00-00
+- **Model:** claude-sonnet-4-6[1m]
+- **Reason:** fix(status-line): delta-based post-orchestra cost reset (v4, commit 3741769) — v3 regression: _cc_cost (CC's cumulative total) and _sub_cost (orchestra subagents via JSONL pricing) are both non-zero immediately after session ends, so status bar jumped to ~$24.79 on second native render instead of $0.00. Fix: at reset time, store _cc_cost and _sub_cost as baselines in ${sentinel}.cc/.sub; on every subsequent native render, override _total with delta max(0,cc-cc_base)+max(0,sub-sub_base). Shows $0.00 immediately, grows only from new activity.
 
 ## Telemetry Smoke Tests
 
