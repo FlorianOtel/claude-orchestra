@@ -88,15 +88,15 @@ done
 #   otel-headers-helper.sh   — OTEL session-ID header injection helper
 #   bash-session-init.sh     — native session registration (sourced via BASH_ENV)
 #   ctx-segment.sh           — status-line context-window bar renderer
-#   sohoai-live-cost.sh      — live cost query: SoHoAI primary + JSONL fallback
-#   native-subagent-cost.sh  — native session: walks subagent JSONLs, returns cost
-#                              float; called by the status-line orchestra block to
-#                              add subagent spend to the parent's cost.total_cost_usd
+#   section-live-cost.sh     — unified live cost for the status line: JSONL+pricing
+#                              for parent always; SoHoAI for orchestra subagents;
+#                              JSONL for native subagents. Time-windowed by
+#                              SECTION_START_UNIX (see status-line/orchestra-block.sh).
 echo "Scripts:"
 for s in \
     orchestra-hook.sh telemetry-summarize.sh telemetry-report.sh \
     otel-headers-helper.sh bash-session-init.sh ctx-segment.sh \
-    sohoai-live-cost.sh native-subagent-cost.sh; do
+    section-live-cost.sh; do
     if [ -f "$REPO/scripts/$s" ]; then
         copy_file "$REPO/scripts/$s" "$CLAUDE/scripts/$s"
         $DRY_RUN || chmod +x "$CLAUDE/scripts/$s"

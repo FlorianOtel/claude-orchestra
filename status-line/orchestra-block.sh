@@ -187,21 +187,23 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         status_line="${status_line/✦ ${model_name}/✦ ${model_name} (1M context)}"
     fi
 
-    # --- live cost (section-based state model) ---
+    # --- live cost (section-based state model, time-window formula) ---
     # State file: ~/.claude/active-sessions/<UUID>.section
-    # Four KEY=VALUE fields (sourceable by bash, atomic-rename on all writes):
-    #   SECTION_ID   — current section identifier
-    #   CC_BASE      — cost.total_cost_usd at section start
-    #   SUB_BASE     — native-subagent-cost.sh total at section start
-    #   LAST_NONZERO — last display cost > 0 in this section (transient-zero guard)
+    # Three KEY=VALUE fields (sourceable by bash, atomic-rename on all writes):
+    #   SECTION_ID         — current section identifier (orchestra basename or "native:<...>")
+    #   SECTION_START_UNIX — wall-clock start of the current section (epoch seconds)
+    #   LAST_NONZERO       — last display cost > 0 in this section (transient-zero guard)
+    #
+    # Cost itself is computed by section-live-cost.sh, which uses the *same*
+    # data sources telemetry-summarize.py uses at session close (JSONL+pricing
+    # for parent; SoHoAI for orchestra subagents; JSONL for native subagents).
+    # No CC_BASE / SUB_BASE delta math — live and final agree by construction.
     live_cost=""
     if [ -n "$live_session_id" ]; then
         _parent_uuid=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null)
         _state_file="$HOME/.claude/active-sessions/${_parent_uuid}.section"
 
-        # 1. Determine current section_id
-        #    Orchestra: active_session_dir is set (live /brain or /duo).
-        #    Native: native:<last-orch-id-or-initial>
+        # 1. Determine current section_id (orchestra basename, or "native:<...>")
         if [ -n "$active_session_dir" ]; then
             _current_section_id=$(basename "$active_session_dir")
         else
@@ -218,91 +220,55 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
             _current_section_id="native:${_last_orch_id:-initial}"
         fi
 
-        # 2. Read stored state (defaults to empty if file missing)
+        # 2. Read stored state
         _stored_section_id=""
-        _cc_base="0"
-        _sub_base="0"
+        _section_start_unix=""
         _last_nonzero="0"
         if [ -f "$_state_file" ]; then
             _stored_section_id=$(grep '^SECTION_ID=' "$_state_file" 2>/dev/null | cut -d= -f2-)
-            _cc_base=$(grep '^CC_BASE=' "$_state_file" 2>/dev/null | cut -d= -f2-)
-            _sub_base=$(grep '^SUB_BASE=' "$_state_file" 2>/dev/null | cut -d= -f2-)
+            _section_start_unix=$(grep '^SECTION_START_UNIX=' "$_state_file" 2>/dev/null | cut -d= -f2-)
             _last_nonzero=$(grep '^LAST_NONZERO=' "$_state_file" 2>/dev/null | cut -d= -f2-)
         fi
 
-        # 3. Read current raw costs
-        _cc_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null)
-
-        # Subagent costs — TTL-cached 30 s
-        _sub_cache="$HOME/.claude/active-sessions/${_parent_uuid}.subcost-cache"
-        _sub_age=$(( $(date +%s) - $(stat -c %Y "$_sub_cache" 2>/dev/null || echo 0) ))
-        if [ "$_sub_age" -gt 30 ]; then
-            _sub_cost=$(~/.claude/scripts/native-subagent-cost.sh "$_parent_uuid" 2>/dev/null || echo "")
-            printf '%s' "${_sub_cost:-0}" > "$_sub_cache.tmp" 2>/dev/null \
-                && mv -f "$_sub_cache.tmp" "$_sub_cache" 2>/dev/null || true
-        else
-            _sub_cost=$(cat "$_sub_cache" 2>/dev/null || echo "")
-        fi
-        _sub_cost="${_sub_cost:-0}"
-
-        # 4. Section transition: rewrite state file when section_id changes
-        if [ "$_current_section_id" != "$_stored_section_id" ]; then
-            printf 'SECTION_ID=%s\nCC_BASE=%s\nSUB_BASE=%s\nLAST_NONZERO=0\n' \
-                "$_current_section_id" "${_cc_cost:-0}" "${_sub_cost:-0}" \
+        # 3. Section transition: rewrite state with new start timestamp.
+        #    Reset is automatic — the new window starts in the future, so
+        #    previously-counted activity falls outside it on the next render.
+        if [ "$_current_section_id" != "$_stored_section_id" ] || [ -z "$_section_start_unix" ]; then
+            _section_start_unix=$(date +%s)
+            printf 'SECTION_ID=%s\nSECTION_START_UNIX=%s\nLAST_NONZERO=0\n' \
+                "$_current_section_id" "$_section_start_unix" \
                 > "$_state_file.tmp" 2>/dev/null \
                 && mv -f "$_state_file.tmp" "$_state_file" 2>/dev/null || true
-            _cc_base="${_cc_cost:-0}"
-            _sub_base="${_sub_cost:-0}"
             _last_nonzero="0"
         fi
 
-        # 5. Compute display cost by section type
-        _display_cost=""
-        if [ -n "$active_session_dir" ]; then
-            # Orchestra: SoHoAI subagent cost + CC parent delta
-            cost_cache="${active_session_dir}/.live-cost-sohoai"
-            started_at=$(stat -c %Y "$active_session_dir" 2>/dev/null || echo "0")
-            _sohoai_str=$(~/.claude/scripts/sohoai-live-cost.sh \
-                "$live_session_id" "$started_at" "$cost_cache" 2>/dev/null || true)
-            if [ -n "$_sohoai_str" ]; then
-                _sohoai_num=$(printf '%s' "$_sohoai_str" | grep -oE '[0-9]+\.[0-9]+' | head -1)
-                if [ -n "$_sohoai_num" ] \
-                   && [ "$(printf '%.0f' "$_sohoai_num" 2>/dev/null || echo 0)" != "0" ]; then
-                    _display_cost=$(${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3 \
-                        -c "s=float('${_sohoai_num:-0}');cc=float('${_cc_cost:-0}');cb=float('${_cc_base:-0}');print(f'{s+max(0.0,cc-cb):.4f}')" \
-                        2>/dev/null || echo "")
-                fi
-            fi
-            # SoHoAI returned nothing or zero: show LAST_NONZERO (or 0)
-            if [ -z "$_display_cost" ]; then
-                if [ -n "$_last_nonzero" ] && \
-                   printf '%s' "$_last_nonzero" | grep -qE '^[0-9]+\.?[0-9]*$' && \
-                   [ "$(printf '%.0f' "$_last_nonzero" 2>/dev/null || echo 0)" != "0" ]; then
-                    _display_cost="$_last_nonzero"
-                else
-                    _display_cost="0.00"
-                fi
-            fi
-        else
-            # Native: delta from baselines
-            _display_cost=$(${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3 \
-                -c "cc=float('${_cc_cost:-0}');sub=float('${_sub_cost:-0}');cb=float('${_cc_base:-0}');sb=float('${_sub_base:-0}');print(f'{max(0.0,cc-cb)+max(0.0,sub-sb):.4f}')" \
-                2>/dev/null || echo "0.0000")
-            # Transient-zero guard: if delta is 0 but LAST_NONZERO > 0, show cached
-            if [ "$(printf '%.0f' "$_display_cost" 2>/dev/null || echo 0)" = "0" ]; then
-                if [ -n "$_last_nonzero" ] && \
-                   printf '%s' "$_last_nonzero" | grep -qE '^[0-9]+\.?[0-9]*$' && \
-                   [ "$(printf '%.0f' "$_last_nonzero" 2>/dev/null || echo 0)" != "0" ]; then
-                    _display_cost="$_last_nonzero"
-                fi
+        # 4. Compute display cost via the unified helper (8 s TTL cache)
+        _cost_cache="$HOME/.claude/active-sessions/${_parent_uuid}.livecost-cache"
+        _display_cost=$(~/.claude/scripts/section-live-cost.sh \
+            "$_parent_uuid" "$_current_section_id" "$_section_start_unix" "$_cost_cache" \
+            2>/dev/null || echo "")
+
+        # 5. Transient-zero guard: cold cache, query failure, or genuine idle
+        #    → fall back to LAST_NONZERO so the bar doesn't flicker to $0.
+        #    The cache is always refreshed on every TTL boundary (even on zero)
+        #    so this fallback is bounded — it cannot mask a real long-term drop.
+        if [ -z "$_display_cost" ] || \
+           ! printf '%s' "$_display_cost" | grep -qE '^[0-9]+\.?[0-9]*$' || \
+           [ "$(printf '%.0f' "$_display_cost" 2>/dev/null || echo 0)" = "0" ]; then
+            if [ -n "$_last_nonzero" ] && \
+               printf '%s' "$_last_nonzero" | grep -qE '^[0-9]+\.?[0-9]*$' && \
+               [ "$(printf '%.0f' "$_last_nonzero" 2>/dev/null || echo 0)" != "0" ]; then
+                _display_cost="$_last_nonzero"
+            else
+                _display_cost="0.00"
             fi
         fi
 
-        # 6. Update LAST_NONZERO in state file if display cost > 0
+        # 6. Update LAST_NONZERO if display cost > 0
         if printf '%s' "$_display_cost" | grep -qE '^[0-9]+\.?[0-9]*$' && \
            [ "$(printf '%.0f' "$_display_cost" 2>/dev/null || echo 0)" != "0" ]; then
-            printf 'SECTION_ID=%s\nCC_BASE=%s\nSUB_BASE=%s\nLAST_NONZERO=%s\n' \
-                "$_current_section_id" "${_cc_base:-0}" "${_sub_base:-0}" "$_display_cost" \
+            printf 'SECTION_ID=%s\nSECTION_START_UNIX=%s\nLAST_NONZERO=%s\n' \
+                "$_current_section_id" "$_section_start_unix" "$_display_cost" \
                 > "$_state_file.tmp" 2>/dev/null \
                 && mv -f "$_state_file.tmp" "$_state_file" 2>/dev/null || true
         fi

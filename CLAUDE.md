@@ -85,6 +85,9 @@
 - **Timestamp:** 2026-05-24T15-30
 - **Model:** claude-opus-4-7[1m] (Brain) + claude-sonnet-4-6 (Planner / Reviewer) + claude-haiku-4-5 (Actor)
 - **Reason:** refactor(status-line): replace v1–v4 layered cost-reset machinery with single section-based state model. /brain pipeline session 20260524T135107Z-102392, cost=$34.45 (parent $24.51 + subagents $9.94), 8.96M tokens, outcome=pass. One state file (`<UUID>.section` with SECTION_ID/CC_BASE/SUB_BASE/LAST_NONZERO) replaces 6 prior files (.cost-cache, .orchcost-cache, .orchcost-reset*). One formula per section type (orchestra: SoHoAI+cc_delta or LAST_NONZERO fallback; native: cc_delta+sub_delta with transient-zero guard). Section transitions detected by SECTION_ID comparison — abandoned/passed/aborted orchestra all follow identical reset path. Validation hook in telemetry-summarize.py compares orchestra LAST_NONZERO vs cost_usd_estimate, writes `cost_divergence` event to invocations.log if > 5% drift. Manual smoke tests pending (4a–4e in PLAN.md). 3 files changed (+176 −113).
+- **Timestamp:** 2026-05-26T00-00
+- **Model:** claude-opus-4-7[1m]
+- **Reason:** refactor(status-line): replace dual-source delta formula with JSONL-derived time-windowed cost. Diagnosed via brain session octmux/20260525T113420Z-526645 — telemetry $53.95, status line displayed $27.96 just before reset. Root cause: (1) `sohoai-live-cost.sh` used `timeout_s=1` and routinely timed out against busy SoHoAI SQLite, leaving cache stale at $0.83 for 38 min; cache was only refreshed when result > 0; (2) `cc.total_cost_usd` is unreliable for parent (reported $6.03 for a session whose T2 parent was $35.82). Fix: new `section-live-cost.sh` uses same data sources as telemetry-summarize.py at session close — parent JSONL+pricing.yaml always; SoHoAI for orchestra subagents (timeout 5s, always-refresh cache); time-windowed agent-*.jsonl walk for native subagents. State file shrinks from `SECTION_ID/CC_BASE/SUB_BASE/LAST_NONZERO` to `SECTION_ID/SECTION_START_UNIX/LAST_NONZERO`. No dual-source delta math, no `cc.total_cost_usd` dependency, no native-vs-orchestra branching in orchestra-block.sh. Dead-code removed in same commit: scripts/sohoai-live-cost.sh, scripts/native-subagent-cost.sh. Manual smoke tests pending operator post-deploy.
 
 ## Telemetry Smoke Tests
 
@@ -114,10 +117,12 @@ Verify T1 (hook events) and T2 (transcript parse) after any /duo or /brain run.
 4. Test ctx 1M variant:
    `~/.claude/scripts/ctx-segment.sh 12 120000 1000000 'claude-opus-4-7[1m]'`
    → `ctx ▓░░░░░░░░░ 12% 120K/1M`
-5. Test SoHoAI helper (replace SESSION_ID with active orchestra dir
-   basename or `native-<UUID>` from `~/.claude/active-sessions/`):
-   `~/.claude/scripts/sohoai-live-cost.sh SESSION_ID $(date +%s) /tmp/test-cost-cache`
-   → `~$X.YZ` or empty; <2s wall time
+5. Test section-live-cost helper (replace PARENT_UUID with a current CC
+   session ID; SECTION_ID is either an orchestra dir basename or
+   `native:<id>` for native sections):
+   `~/.claude/scripts/section-live-cost.sh PARENT_UUID SECTION_ID $(date +%s) /tmp/test-cost-cache`
+   → 4-decimal float (`0.0000` if no in-window activity); cold path <6s
+     (parent JSONL parse + up to 5s SoHoAI for orchestra); cache hit <50ms
 6. Live render: send any message to CC; observe status bar shows
    `model | ctx ▓▓░░░░░░░░ N% XK/YM | ~$X.YZ | ◆ project | ⎇ branch`
    (cost shown for paid models; absent for local/* zero-cost models)
