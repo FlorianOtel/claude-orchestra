@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-26--19-41
+updated_by: Claude Code (Claude Opus 4.7, 1M context)
+updated_at: 2026-05-27--00-00
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -200,23 +200,19 @@ CC passes a rich JSON object to the `statusLine` command on every render. Key fi
 
 #### Cost section model — logic and flow
 
-**Semantic model.** A CC session is a sequence of logical **sections** of two kinds:
+**Semantic model — per-CC-session accumulator.** The status line displays the total cost consumed since the CC session started, growing monotonically, never resetting at section boundaries. Underlying sections still exist for telemetry, validation, and double-counting safety, but the displayed number is always `sum of all prior sections' final costs + current section's in-flight cost`.
 
-- 0 / Start of a logically new section.
-- 1 / **Native** section — non-orchestra turns. Cost accumulates from $0.
-- 2 / **Orchestra** section — an active `/brain` or `/duo`:
-  - 2.1 At session start, displayed cost resets to $0.
-  - 2.2 During the session, the status line shows the total accumulated orchestra cost (parent + planner + actor + reviewer subagents).
-  - 2.3 At session close, the displayed value is the same as `telemetry.json`'s `cost_usd_estimate` (validation hook on the same data sources guarantees this within the 8 s cache window).
-  - 2.4 After session close (`.outcome` written, inflight marker removed), the next section transition fires and the display resets to $0.
-- 3 / Loop. Subsequent turns are counted in a new section (back to 0).
+Each underlying section has its own time window and data sources:
+- **Native** section — non-orchestra turns. Live cost from parent JSONL + any in-window native subagents.
+- **Orchestra** section — an active `/brain` or `/duo`. Live cost from parent JSONL + SoHoAI for subagents. At section close, `telemetry.json`'s `cost_usd_estimate` is the authoritative final value.
 
-**Single source of state.** One file per CC session at `~/.claude/active-sessions/<UUID>.section` — three KEY=VALUE lines, sourceable by bash, atomic-rename on every write:
+**Single source of state.** One file per CC session at `~/.claude/active-sessions/<UUID>.section` — four KEY=VALUE lines, sourceable by bash, atomic-replace on every write:
 
 ```
 SECTION_ID=<orchestra-dir-basename | native:<last-orch-id-or-initial>>
 SECTION_START_UNIX=<epoch-seconds>
 LAST_NONZERO=<float, 0 if no positive display value yet this section>
+ACCUMULATED_TOTAL=<float; sum of all prior sections' frozen final costs>
 ```
 
 There is no `CC_BASE`, no `SUB_BASE`, no per-section live-cost cache file. Cost is computed by parsing JSONL within `[SECTION_START_UNIX, now]` — the time window IS the section.
@@ -227,60 +223,72 @@ There is no `CC_BASE`, no `SUB_BASE`, no per-section live-cost cache file. Cost 
    - If `${cwd}/.claude/orchestra/sessions/*/.duo-inflight` exists AND the corresponding `native-<transcript-uuid>.lck` is live → orchestra, `SECTION_ID = <orchestra-dir-basename>`.
    - Else if `${cwd}/.claude/orchestra/state.env` has `ORCHESTRA_MODE=brain` AND a session dir without `telemetry.json` exists → orchestra (brain), `SECTION_ID = <newest-orchestra-dir-basename>`.
    - Else → native, `SECTION_ID = native:<basename-of-last-orchestra-session-completed-by-this-parent_uuid>` (or `native:initial` if no prior orchestra on this CC session).
-2. **Read stored state** from `<UUID>.section` (defaults to empty/missing).
-3. **Detect transition.** If `SECTION_ID != stored_SECTION_ID` (or state file missing/empty):
-   - Set `SECTION_START_UNIX = now`.
-   - Set `LAST_NONZERO = 0`.
-   - Atomic-rewrite state file. **This is the reset.** All prior section's activity falls outside the new window on the next render.
+2. **Read stored state** from `<UUID>.section` (defaults to empty/missing). Includes `ACCUMULATED_TOTAL` (default 0 if missing or non-numeric).
+3. **Detect section transition.** If `SECTION_ID != stored_SECTION_ID` (or state file missing/empty):
+   - Compute freeze value for the just-ending section:
+     - If previous `SECTION_ID` was orchestra (does NOT start with `native:`) AND `${cwd}/.claude/orchestra/sessions/<prev_id>/telemetry.json` exists: read `cost_usd_estimate` from it (authoritative).
+     - Else (native section, or orchestra without telemetry.json yet): use `LAST_NONZERO`.
+   - `ACCUMULATED_TOTAL = stored_ACCUMULATED_TOTAL + freeze_value`.
+   - Set `SECTION_START_UNIX = now`, `LAST_NONZERO = 0`.
+   - Atomic-rewrite all four fields to state file.
 4. **Compute display** by calling `~/.claude/scripts/section-live-cost.sh <parent_uuid> <SECTION_ID> <SECTION_START_UNIX> <cache_file>` (8 s TTL, see § Live cost helper below). Returns a 4-decimal float or empty.
 5. **Transient-zero guard.** If the helper returned empty / non-numeric / 0 (cold cache, query failure, or genuinely idle):
    - If `LAST_NONZERO > 0`, use it.
-   - Else display `$0.00`.
-6. **Update `LAST_NONZERO`** in state file if computed display > 0.
-7. **Format** as `~$X.YZ` and append to status line.
+   - Else display $0.
+6. **Update `LAST_NONZERO`** in state file if computed display > 0 (preserve `ACCUMULATED_TOTAL`).
+7. **Format final display.** `final = ACCUMULATED_TOTAL + current_section_live_cost`. Format as `~$X.YZ` and append to status line.
 
-**Section transition primitive.** Step 3 is the only mechanism that resets cost. It treats every transition type identically:
+**Section transition primitive.** Step 3 computes a freeze value at every transition type:
 
 - native → orchestra (operator opens `/brain` or `/duo-plan`)
 - orchestra → native (PASS, BLOCK, abandoned, Stop-hook safety net — all write `.outcome` and remove the inflight marker)
 - orchestra → orchestra (back-to-back `/brain` then `/duo-plan` without intervening native turns)
-- first render of a new CC session (no state file yet)
-- resumed CC session whose state file persisted (transitions only if `SECTION_ID` actually differs)
+- first render of a new CC session (no state file yet; freeze value = 0)
+- resumed CC session (transitions only if `SECTION_ID` actually differs)
 
-No per-transition special cases. The single string comparison handles all of them.
+The cleanup-order tweak (see below) ensures `telemetry.json` is written before the inflight marker is removed, so the freeze always picks the authoritative value, never LAST_NONZERO.
 
 **State file lifecycle.**
 
-- **Created**: on the first render where step 3 fires (typically the first render of the CC session).
-- **Rewritten on transition**: step 3 sets new `SECTION_ID`, `SECTION_START_UNIX`, `LAST_NONZERO=0`.
-- **Rewritten on positive display**: step 6 updates `LAST_NONZERO` only.
+- **Created**: on the first render where step 3 fires (typically the first render of the CC session, with `ACCUMULATED_TOTAL=0`).
+- **Rewritten on transition**: step 3 adds freeze value to `ACCUMULATED_TOTAL`, sets new `SECTION_ID`, `SECTION_START_UNIX`, `LAST_NONZERO=0`.
+- **Rewritten on positive display**: step 6 updates `LAST_NONZERO`, preserving `ACCUMULATED_TOTAL`.
 - **Persists across renders**: tens to hundreds of writes per session.
-- **Never GC'd**: small files (~80 bytes), one per CC-session UUID; the active-sessions directory's existing housekeeping does not prune them (acceptable — they are cheap and the SECTION_ID/SECTION_START_UNIX would be re-derived correctly on any future render if the file were missing).
-- **NFS / cross-machine**: lives under `~/.claude/active-sessions/` which is on NFS. A resumed CC session on a different host sees the prior state; if absent, fresh init on first render (graceful degradation to $0 start, treated as a new section).
+- **Never GC'd**: small files (~120 bytes), one per CC-session UUID; the active-sessions directory's existing housekeeping does not prune them (acceptable — they are cheap and `ACCUMULATED_TOTAL` would restart at 0 on any future render if the file were missing).
+- **NFS / cross-machine**: lives under `~/.claude/active-sessions/` which is on NFS. A resumed CC session on a different host sees the prior `ACCUMULATED_TOTAL`; if absent, fresh init at $0.
 
-**Worked example: brain → native → brain.**
+**Worked example: `/brain` then native then `/duo-act`, all on a fresh CC session.**
 
-1. T0, fresh CC session. First render: no state file → step 3 fires. `SECTION_ID=native:initial`, `SECTION_START_UNIX=T0`. Helper walks parent JSONL since T0 (nothing yet) → display $0.
-2. T0+5min, operator types `/brain refactor X`. Brain Phase 0 setup creates `${SESSION_DIR}/.brain-inflight`. Next render: step 1 sees orchestra; `SECTION_ID=20260526T...-1234`. Step 3 fires: `SECTION_START_UNIX=T0+5min`, `LAST_NONZERO=0`, display reset to $0.
-3. T0+5min..T0+50min, brain runs. Each render computes parent JSONL cost in window `[T0+5min, now]` + SoHoAI cost for `session_id=20260526T...-1234`. Display climbs to $53 by Phase 3 review. `LAST_NONZERO` tracks the latest value.
-4. T0+50min, cleanup writes `.outcome`, removes `.brain-inflight`. Next render: step 1 sees no inflight, native; `SECTION_ID=native:20260526T...-1234`. Step 3 fires: `SECTION_START_UNIX=T0+50min`, `LAST_NONZERO=0`, display reset to $0.
-5. T0+51min, operator continues chatting natively. Display grows from $0 with each turn, summed from parent JSONL since T0+50min plus any subagent JSONLs in that window.
-6. T0+1hr, operator types `/brain another task`. Brain setup. Next render: orchestra, new `SECTION_ID`, step 3 fires, reset to $0. (And so on.)
+| Time | Event | SECTION_ID | LAST_NONZERO | ACC_TOTAL | Display |
+|---|---|---|---|---|---|
+| T0 | first render, no state | native:initial | 0 | 0 | $0.00 |
+| T0+5m | native turn, helper $0.50 | native:initial | 0.50 | 0 | $0.50 |
+| T0+10m | `/brain X` setup; transition | orch_X | 0 | 0.50 | $0.50 |
+| T0+30m | brain mid-run, helper $20.00 | orch_X | 20.00 | 0.50 | $20.50 |
+| T0+50m | brain ends; telemetry.json → $30.66; transition fires; freeze 30.66 | native:orch_X | 0 | 31.16 | $31.16 |
+| T0+51m | post-brain native turn, helper $0.20 | native:orch_X | 0.20 | 31.16 | $31.36 |
+| T0+60m | `/duo-plan Y` setup; transition | orch_Y | 0 | 31.36 | $31.36 |
+| T0+70m | duo running, helper $5.00 | orch_Y | 5.00 | 31.36 | $36.36 |
+| T0+75m | `/duo-act` → execute → cleanup; telemetry.json → $5.18; transition; freeze 5.18 | native:orch_Y | 0 | 36.54 | $36.54 |
+| … | continues to grow forever | | | | |
 
-`telemetry.json` written at step 4 contains `cost_usd_estimate=$53.95` from `cost_source="sohoai_api+t2_parent"`. The validation hook compares the orchestra section's `LAST_NONZERO` (the last positive value before the transition cleared it) against that figure, writes a `cost_divergence` event to `invocations.log` if drift > 5%. With the new formula they agree by construction modulo cache lag.
+Brain wrap-up's tokens land in the post-brain native section; they are counted in the displayed total just like any other activity. No misattribution is visible because the displayed number spans all sections.
 
 **Edge cases.**
 
 | Case | Behaviour |
 |---|---|
-| `/brain-abandon` mid-Phase-1 | Cleanup writes `.outcome=abandoned`, removes inflight. Next render: native, transition, reset to $0. |
-| Reviewer BLOCK | Same cleanup as PASS. Reset to $0 on next render. |
+| Fresh CC session, first render | No state file → init with `ACCUMULATED_TOTAL=0`. Helper returns small/zero. Display $0. ✓ |
+| Resumed CC session, plain `--resume` (same UUID) | State file persists → accumulator continues from stored value. ✓ |
+| Resumed CC session, `--resume --fork-session` (new UUID) | New UUID ⇒ no state file ⇒ fresh init at $0. New session's JSONL/subagents start empty. ✓ |
+| Resumed CC session, state file missing (NFS issue) | Fresh init at $0. Loses historical tally for this UUID; ongoing accumulation works. Graceful. |
+| `/brain-abandon` mid-Phase-1 | Cleanup writes `.outcome=abandoned`, removes inflight. Transition freezes tiny cost. `ACCUMULATED_TOTAL` ticks slightly. ✓ |
+| Reviewer BLOCK | Same cleanup as PASS. Transition freezes final orchestra cost. ✓ |
 | Cold cache during burst of activity | First render after activity ends takes ~100 ms parent JSONL parse + up to 5 s SoHoAI query. Subsequent renders within 8 s hit cache (~5 ms). |
-| SoHoAI returns 0 / times out for orchestra section | Cache rewritten with 0 (preventing stale-value persistence). Display falls to `LAST_NONZERO` for one TTL window, then refreshes on next SoHoAI success. |
-| Subagent JSONLs from earlier orchestra runs on same parent UUID | Excluded by time window — they have first-message timestamps before `SECTION_START_UNIX`. |
+| SoHoAI returns 0 / times out for orchestra section | Cache rewritten with 0. Display falls to `LAST_NONZERO` for one TTL window. At next transition, telemetry.json's `cost_usd_estimate` (which queries SoHoAI SQLite directly, persistent across restarts) is the freeze value → `ACCUMULATED_TOTAL` self-corrects. ✓ |
+| Back-to-back orchestra sessions | Each transition freezes the previous orchestra via its telemetry.json. `ACCUMULATED_TOTAL` grows by each one's authoritative value. ✓ |
+| Subagent JSONLs from earlier runs on same parent UUID | Excluded by time window — they have first-message timestamps before `SECTION_START_UNIX`. |
 | Pricing mismatch (model missing from pricing.yaml) | That subagent contributes $0; validation hook catches > 5% drift at session end. |
-| Resumed CC session, state file persists | If `SECTION_ID` still matches (e.g., native → native), display continues from where it was. If section type changed, transition fires normally. |
-| Resumed CC session, state file missing | Fresh init on first render. Earlier activity from before resume not counted (acceptable — never was). |
 
 #### Live cost helper — `section-live-cost.sh`
 

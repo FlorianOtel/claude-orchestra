@@ -593,9 +593,12 @@ def _validate_cost_display(
     warnings: list,
 ) -> None:
     """
-    Post-write validation: compare the status-line's last displayed cost
-    (LAST_NONZERO from the .section state file) against the authoritative
-    telemetry cost. Appends a structured warning to invocations.log if the
+    Post-write validation: compare the freeze value (cost added to ACCUMULATED_TOTAL
+    at orchestra-end transition) against the authoritative telemetry cost. Under the
+    accumulator model, the freeze value IS cost_usd_estimate when reconciled from
+    telemetry.json (guaranteed by cleanup-order tweak), so this function is mostly
+    defensive. For native sections the freeze source is LAST_NONZERO which can lag
+    by up to one TTL cycle. Appends a structured warning to invocations.log if
     divergence exceeds 5%. Best-effort — never raises.
     """
     try:

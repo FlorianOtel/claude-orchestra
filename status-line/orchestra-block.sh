@@ -224,19 +224,41 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         _stored_section_id=""
         _section_start_unix=""
         _last_nonzero="0"
+        _accumulated_total="0"
         if [ -f "$_state_file" ]; then
             _stored_section_id=$(grep '^SECTION_ID=' "$_state_file" 2>/dev/null | cut -d= -f2-)
             _section_start_unix=$(grep '^SECTION_START_UNIX=' "$_state_file" 2>/dev/null | cut -d= -f2-)
             _last_nonzero=$(grep '^LAST_NONZERO=' "$_state_file" 2>/dev/null | cut -d= -f2-)
+            _accumulated_total=$(grep '^ACCUMULATED_TOTAL=' "$_state_file" 2>/dev/null | cut -d= -f2-)
+        fi
+        # Validate accumulated_total is numeric, default to 0 if missing or non-numeric
+        if ! printf '%s' "$_accumulated_total" | grep -qE '^[0-9]+\.?[0-9]*$'; then
+            _accumulated_total="0"
         fi
 
-        # 3. Section transition: rewrite state with new start timestamp.
-        #    Reset is automatic — the new window starts in the future, so
-        #    previously-counted activity falls outside it on the next render.
+        # 3. Section transition: freeze the just-ending section's cost and update accumulated total.
         if [ "$_current_section_id" != "$_stored_section_id" ] || [ -z "$_section_start_unix" ]; then
+            _freeze_value="0"
+            # If previous section was orchestra (NOT starting with "native:"), try to read telemetry.json
+            if [ -n "$_stored_section_id" ] && [[ ! "$_stored_section_id" == native:* ]]; then
+                _telemetry_path="${cwd}/.claude/orchestra/sessions/${_stored_section_id}/telemetry.json"
+                if [ -f "$_telemetry_path" ]; then
+                    _freeze_value=$(jq -r '.cost_usd_estimate // 0' "$_telemetry_path" 2>/dev/null || echo "0")
+                    if ! printf '%s' "$_freeze_value" | grep -qE '^[0-9]+\.?[0-9]*$'; then
+                        _freeze_value="0"
+                    fi
+                else
+                    _freeze_value="$_last_nonzero"
+                fi
+            else
+                # Native section or first transition: use LAST_NONZERO
+                _freeze_value="$_last_nonzero"
+            fi
+            # Update accumulated total: add freeze value
+            _accumulated_total=$(python3 -c "print(f'{${_accumulated_total:-0} + ${_freeze_value:-0}:.4f}')" 2>/dev/null || echo "0")
             _section_start_unix=$(date +%s)
-            printf 'SECTION_ID=%s\nSECTION_START_UNIX=%s\nLAST_NONZERO=0\n' \
-                "$_current_section_id" "$_section_start_unix" \
+            printf 'SECTION_ID=%s\nSECTION_START_UNIX=%s\nLAST_NONZERO=0\nACCUMULATED_TOTAL=%s\n' \
+                "$_current_section_id" "$_section_start_unix" "$_accumulated_total" \
                 > "$_state_file.tmp" 2>/dev/null \
                 && mv -f "$_state_file.tmp" "$_state_file" 2>/dev/null || true
             _last_nonzero="0"
@@ -264,18 +286,19 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
             fi
         fi
 
-        # 6. Update LAST_NONZERO if display cost > 0
+        # 6. Update LAST_NONZERO if display cost > 0 (preserve ACCUMULATED_TOTAL)
         if printf '%s' "$_display_cost" | grep -qE '^[0-9]+\.?[0-9]*$' && \
            [ "$(printf '%.0f' "$_display_cost" 2>/dev/null || echo 0)" != "0" ]; then
-            printf 'SECTION_ID=%s\nSECTION_START_UNIX=%s\nLAST_NONZERO=%s\n' \
-                "$_current_section_id" "$_section_start_unix" "$_display_cost" \
+            printf 'SECTION_ID=%s\nSECTION_START_UNIX=%s\nLAST_NONZERO=%s\nACCUMULATED_TOTAL=%s\n' \
+                "$_current_section_id" "$_section_start_unix" "$_display_cost" "$_accumulated_total" \
                 > "$_state_file.tmp" 2>/dev/null \
                 && mv -f "$_state_file.tmp" "$_state_file" 2>/dev/null || true
         fi
 
-        # 7. Format for display
+        # 7. Format for display: combine accumulated total + current section cost
         if printf '%s' "$_display_cost" | grep -qE '^[0-9]+\.?[0-9]*$'; then
-            live_cost=$(LC_ALL=C printf '~$%.2f' "$_display_cost" 2>/dev/null || true)
+            _final_display=$(python3 -c "print(f'{${_accumulated_total:-0} + ${_display_cost}:.4f}')" 2>/dev/null || echo "$_display_cost")
+            live_cost=$(LC_ALL=C printf '~$%.2f' "$_final_display" 2>/dev/null || true)
         fi
     fi
 

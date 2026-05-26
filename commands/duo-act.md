@@ -89,17 +89,17 @@ Map Actor's return to a cleanup `outcome`:
 
 ## Phase 4 — Cleanup + telemetry
 
-Use the literal session dir path captured above (substitute `<SESSION_DIR>`). Order matters: write `.outcome` **before** removing `.duo-inflight` and **before** invoking the summariser, so its mtime bounds the T2 time window.
+Use the literal session dir path captured above (substitute `<SESSION_DIR>`). Order matters: (1) write `.outcome` first so its mtime bounds the T2 time window; (2) invoke the summariser **before** removing `.duo-inflight` so `telemetry.json` is guaranteed present when the next status-line render detects the section transition (accumulator reconciles against `cost_usd_estimate`).
 
 ```bash
 printf '%s' "<outcome: pass | block | partial>" > "<SESSION_DIR>/.outcome.tmp"
 mv -f "<SESSION_DIR>/.outcome.tmp" "<SESSION_DIR>/.outcome"
 # Remove session ID sidecar so otelHeadersHelper stops injecting the header.
 rm -f "${HOME}/.claude/active-sessions/$(basename "<SESSION_DIR>").lck"
-rm -f "<SESSION_DIR>/.duo-inflight"
 ~/.claude/scripts/telemetry-summarize.sh \
     "<SESSION_DIR>" duo "<outcome>" "$(cat \"<SESSION_DIR>/.transcript-uuid\" 2>/dev/null || echo \"${CLAUDE_SESSION_ID:-}\")" 2>&1 \
     | tail -n 1
+rm -f "<SESSION_DIR>/.duo-inflight"
 ```
 
 The summariser writes `<SESSION_DIR>/telemetry.json` (full record) and appends one line to `~/.claude/orchestra/telemetry.jsonl` (global trend log). Errors are logged to `parser_warnings[]` in the JSON; the script never fails the pipeline.

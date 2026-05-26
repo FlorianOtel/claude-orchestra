@@ -45,7 +45,7 @@ Capture the `session_dir=...` value; use it as the literal path for the cleanup 
 
 ## Cleanup + telemetry
 
-Order matters: write `.outcome` **before** removing `.brain-inflight` and **before** invoking the summariser, so its mtime bounds the T2 time window correctly. `RESEARCH.md` and `PLAN.md` (if present) are left in place for forensics; the 30-day session reaper will eventually remove them.
+Order matters: (1) write `.outcome` first so its mtime bounds the T2 time window correctly; (2) invoke the summariser **before** removing `.brain-inflight` so `telemetry.json` is guaranteed present when the next status-line render detects the section transition (accumulator reconciles against `cost_usd_estimate`). `RESEARCH.md` and `PLAN.md` (if present) are left in place for forensics; the 30-day session reaper will eventually remove them.
 
 Run via `Bash` (substitute `<SESSION_DIR>` with the literal value captured above):
 
@@ -54,10 +54,10 @@ printf '%s' "abandoned" > "<SESSION_DIR>/.outcome.tmp"
 mv -f "<SESSION_DIR>/.outcome.tmp" "<SESSION_DIR>/.outcome"
 # Remove session ID sidecar so otelHeadersHelper stops injecting the header.
 rm -f "${HOME}/.claude/active-sessions/$(basename "<SESSION_DIR>").lck"
-rm -f "<SESSION_DIR>/.brain-inflight"
 ~/.claude/scripts/telemetry-summarize.sh \
     "<SESSION_DIR>" brain abandoned "$(cat \"<SESSION_DIR>/.transcript-uuid\" 2>/dev/null || echo \"${CLAUDE_SESSION_ID:-}\")" 2>&1 \
     | tail -n 1
+rm -f "<SESSION_DIR>/.brain-inflight"
 ```
 
 Then clear the pipeline badge from state.env:

@@ -392,18 +392,21 @@ call and does not persist into later Bash tool calls.
 
 ### Telemetry finalisation
 
-Order matters: write `.outcome` **before** removing `.brain-inflight` and
-**before** invoking the summariser, so its mtime bounds the T2 time window.
+Order matters: (1) write `.outcome` first so its mtime bounds the T2 time
+window; (2) invoke the summariser **before** removing `.brain-inflight` so
+`telemetry.json` is guaranteed present when the next status-line render
+detects the section transition (accumulator reconciles against
+`cost_usd_estimate`).
 
 ```bash
 printf '%s' "<outcome: pass | fix-loop | block | abandoned>" > "<SESSION_DIR>/.outcome.tmp"
 mv -f "<SESSION_DIR>/.outcome.tmp" "<SESSION_DIR>/.outcome"
 # Remove session ID lock file so otelHeadersHelper stops injecting the header.
 rm -f "${HOME}/.claude/active-sessions/$(basename "<SESSION_DIR>").lck"
-rm -f "<SESSION_DIR>/.brain-inflight"
 ~/.claude/scripts/telemetry-summarize.sh \
     "<SESSION_DIR>" brain "<outcome>" "$(cat \"<SESSION_DIR>/.transcript-uuid\" 2>/dev/null || echo \"${CLAUDE_SESSION_ID:-}\")" 2>&1 \
     | tail -n 1
+rm -f "<SESSION_DIR>/.brain-inflight"
 ```
 
 The summariser writes `<SESSION_DIR>/telemetry.json` (full record) and appends one line to `~/.claude/orchestra/telemetry.jsonl` (global trend log). Errors are logged to `parser_warnings[]` in the JSON; the script never fails the pipeline.
