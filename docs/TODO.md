@@ -298,19 +298,27 @@ orchestra) is partially achieved: native T2 is now at parity with orchestra T2.
 ### What was left out of scope and why
 
 **Orchestra subagent SoHoAI attribution** — the live cost for orchestra sessions comes
-from `sohoai-live-cost.sh` which queries SoHoAI's `/v1/usage/stats?session_id=<id>`.
-This returns costs attributed to the orchestra session ID via the
-`inject_orchestra_session_id` FastAPI middleware in SoHoAI. However, it is unclear
+from `section-live-cost.sh` (formerly `sohoai-live-cost.sh`, removed 2026-05-26) which
+calls `query_sohoai_usage(session_id=<orchestra-id>)` against SoHoAI's `usage_events`
+SQLite. This returns costs attributed to the orchestra session ID via the
+`inject_orchestra_session_id` FastAPI middleware in SoHoAI. It was previously unclear
 whether **subagent** API requests (planner, actor, reviewer — each a separate CC process)
 are correctly attributed to the **parent** orchestra session_id.
 
-Left out of scope because:
-1. Answering this requires live traffic inspection (SoHoAI logs or the `usage_events`
-   table in `telemetry.db`) during an actual /brain or /duo run.
-2. Fixing it requires changes in the SoHoAI repo (`inject_orchestra_session_id`
-   middleware or a parent-child session registry) — a cross-project change.
-3. The JSONL-based T2 fallback (`process_transcript()`) already gives correct totals
-   post-session, so the live SoHoAI gap is a display-lag issue, not a data-loss issue.
+**Resolved 2026-05-26 by the smoke-session diagnostic** (octmux/20260525T113420Z-526645):
+the orchestra session's telemetry shows `cost_source="sohoai_api+t2_parent"` with
+`subagent_cost_usd=$18.13` while the JSONL-based pricing of the same six agent
+transcripts yields only $2.05. The 9× gap means subagents ARE attributed to the parent
+orchestra session in SoHoAI (the SQLite has events the JSONLs don't capture — likely
+retries / streaming events / internal proxy traffic). Therefore SoHoAI is the
+authoritative source for orchestra subagent cost both at session close and live
+(via `section-live-cost.sh` with `timeout_s=5` and always-refresh caching).
+
+Originally left out of scope because:
+1. Answering required live traffic inspection (now done).
+2. Fixing would have required cross-project changes in SoHoAI.
+3. The JSONL-based T2 fallback (`process_transcript()`) already gave correct totals
+   post-session, so the live gap was a display-lag issue, not a data-loss issue.
 
 **Native session SoHoAI attribution** — `otelHeadersHelper` is not called by
 CC 2.1.132/2.1.139, so native sessions (both parent and their subagents) send no
