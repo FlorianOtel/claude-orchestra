@@ -91,6 +91,46 @@ def get_transcript_path(session_id: str) -> Optional[Path]:
     return None
 
 
+def read_last_ts_from_jsonl(jsonl_path: Optional[Path]) -> Optional[datetime]:
+    """Return the maximum timestamp across all copies of this JSONL file.
+    A session can appear in multiple project directories when the working directory
+    changed mid-session; scanning all copies ensures we get the true last-activity time."""
+    if not jsonl_path:
+        return None
+    uuid = jsonl_path.stem
+    projects_root = Path.home() / ".claude" / "projects"
+    last_ts: Optional[datetime] = None
+    try:
+        for proj_dir in projects_root.iterdir():
+            if not proj_dir.is_dir():
+                continue
+            p = proj_dir / f"{uuid}.jsonl"
+            if not p.exists():
+                continue
+            try:
+                with open(p) as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        try:
+                            r = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        ts_str = r.get("timestamp")
+                        if ts_str:
+                            try:
+                                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                                if last_ts is None or ts > last_ts:
+                                    last_ts = ts
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return last_ts
+
+
 def parse_jsonl_tokens(jsonl_path: Optional[Path]) -> Tuple[Optional[str], Dict[str, int]]:
     """Scan JSONL file and sum all assistant message usage (NO time window).
 
@@ -435,6 +475,9 @@ def _load_sessions_from_telemetry_jsonl() -> List[Dict[str, Any]]:
                 }
                 jsonl_status = "no_jsonl"
 
+                # last_jsonl_ts: timestamp of the last JSONL message; used as the
+                # display time so the Date column shows when the session was last active.
+                last_jsonl_ts: Optional[datetime] = None
                 m = _UUID_RE.match(session_id)
                 if m:
                     uuid = m.group(1)
@@ -449,12 +492,23 @@ def _load_sessions_from_telemetry_jsonl() -> List[Dict[str, Any]]:
                         mangled = jsonl_path.parent.name
                         project_name = get_project_friendly_name(mangled)
                         project_path = "/" + mangled.replace("-", "/", 1) if mangled else ""
+                        last_jsonl_ts = read_last_ts_from_jsonl(jsonl_path)
+
+                # Display time: last JSONL message (exact last-activity) if available,
+                # else fall back to ended_at from telemetry, else started_at.
+                ended_at = record.get("ended_at", "")
+                if last_jsonl_ts is not None:
+                    display_time_str = last_jsonl_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+                elif ended_at:
+                    display_time_str = ended_at
+                else:
+                    display_time_str = started_at
 
                 sessions.append({
                     "session_id": session_id,
                     "project_path": project_path,
                     "project_name": project_name,
-                    "start_time": started_at,
+                    "start_time": display_time_str,
                     "duration_minutes": round(duration_s / 60, 1),
                     "model": model,
                     "tokens": tokens,
@@ -506,7 +560,7 @@ def print_table(
         session_id = session.get("session_id", "")
         try:
             dt = datetime.fromisoformat(session.get("start_time", "").replace("Z", "+00:00"))
-            date = dt.strftime("%Y-%m-%d--%H-%M")
+            date = dt.astimezone().strftime("%Y-%m-%d--%H-%M")
         except Exception:
             date = session.get("start_time", "")[:10]
         project = session.get("project_name", "")[:25]

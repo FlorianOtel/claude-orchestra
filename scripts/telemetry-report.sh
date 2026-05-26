@@ -99,7 +99,9 @@ tiers.sort(key=lambda x: ORDER.get(x[0], 4))
 grand_tok  = sum(sum(tok.values()) for _, _, tok in tiers)
 grand_cost = sum(cost(tok, m)      for _, m, tok in tiers)
 
-date = t["started_at"][:16].replace("T", "--")
+from datetime import datetime as _dt
+_ts = t.get("ended_at") or t["started_at"]
+date = _dt.fromisoformat(_ts.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d--%H-%M")
 dur  = t.get("duration_s", 0)
 print(f"  {date}  {t['command']:<6}  {dur}s  outcome={t['outcome']:<10}  total=${grand_cost:.4f}")
 print(f"    {'Tier':<12} {'Model':<22} {'Tokens':>10}  {'%tok':>5}  {'Cost':>8}  {'%cost':>6}")
@@ -177,7 +179,14 @@ PYEOF
     while IFS= read -r line; do
         TF=$(printf '%s' "$line" | jq -r 'if .session_dir then .session_dir + "/telemetry.json" else "" end')
         if [ ! -f "$TF" ]; then
-            DATE=$(printf '%s' "$line" | jq -r '.started_at | split("T") | .[0] + "--" + (.[1][0:5])')
+            _ts_utc=$(printf '%s' "$line" | jq -r '
+                if .ended_at then .ended_at
+                elif (.duration_s // 0) > 0 then
+                    (.started_at | split("Z")[0]) as $b |
+                    ($b | strptime("%Y-%m-%dT%H:%M:%S") | mktime) + .duration_s |
+                    strftime("%Y-%m-%dT%H:%M:%SZ")
+                else .started_at end')
+            DATE=$(date -d "$_ts_utc" +%Y-%m-%d--%H-%M 2>/dev/null || printf '%s' "$_ts_utc" | cut -c1-16 | tr 'T' '-')
             CMD=$(printf '%s' "$line" | jq -r '.command')
             COST=$(printf '%s' "$line" | jq -r '.cost_usd_estimate')
             echo "  $DATE  $CMD  total=\$$COST  (no session dir — log total only)"
@@ -199,21 +208,33 @@ PYEOF
 else
     {
         printf "Date\tCommand\tOutcome\tCost\tSource\tTokens\tDuration\tNote\n"
-        tail -n "$LAST_N" "$TELEMETRY_JSONL" | jq -r '
-            [
-              (.started_at | split("T") | .[0] + "--" + (.[1][0:5])),
-              .command,
-              .outcome,
-              ("$" + (.cost_usd_estimate | tostring)),
-              (.cost_source // "-"),
-              (.total_tokens | tostring),
-              ((.duration_s | tostring) + "s"),
-              (if .regret_flag then "⚑ regret" else "" end)
-            ] | @tsv
-        '
+        # Use last-activity time (ended_at, else started_at+duration_s) in local tz.
+        # Orchestra telemetry.jsonl omits ended_at — derive it from started_at+duration_s.
+        tail -n "$LAST_N" "$TELEMETRY_JSONL" | while IFS= read -r line; do
+            ts_utc=$(printf '%s' "$line" | jq -r '
+                if .ended_at then .ended_at
+                elif (.duration_s // 0) > 0 then
+                    (.started_at | split("Z")[0]) as $b |
+                    ($b | strptime("%Y-%m-%dT%H:%M:%S") | mktime) + .duration_s |
+                    strftime("%Y-%m-%dT%H:%M:%SZ")
+                else .started_at end')
+            date_local=$(date -d "$ts_utc" +%Y-%m-%d--%H-%M 2>/dev/null || printf '%s' "$ts_utc" | cut -c1-16 | tr 'T' '-')
+            printf '%s' "$line" | jq -r --arg d "$date_local" '
+                [
+                  $d,
+                  .command,
+                  .outcome,
+                  ("$" + (.cost_usd_estimate | tostring)),
+                  (.cost_source // "-"),
+                  (.total_tokens | tostring),
+                  ((.duration_s | tostring) + "s"),
+                  (if .regret_flag then "⚑ regret" else "" end)
+                ] | @tsv
+            '
+        done
     } | column -t -s$'\t' 2>/dev/null \
       || tail -n "$LAST_N" "$TELEMETRY_JSONL" | \
-         jq -r '[.started_at, .command, .outcome, .cost_usd_estimate, .cost_source, .total_tokens, .duration_s] | @tsv'
+         jq -r '[(.ended_at // .started_at), .command, .outcome, .cost_usd_estimate, .cost_source, .total_tokens, .duration_s] | @tsv'
 fi
 
 # =============================================================================

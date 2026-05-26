@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_at: 2026-05-26--00-00
+updated_by: Claude Code (Claude Sonnet 4.6)
+updated_at: 2026-05-26--19-41
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -487,6 +487,12 @@ The Stop hook fires per response turn. It iterates all `native-*.lck` files and 
 | `total_tokens` | parent session token count (present when transcript was parsed; excludes subagent tokens) |
 
 For past records already in `telemetry.jsonl` with a missing `model` field (written before the 2026-05-11 finalize-script fix), `session-report.py` retroactively re-reads the JSONL transcript at display time to fill in the model name.
+
+**Timestamp display (2026-05-26).** All report scripts display timestamps in the machine's **local timezone** (not UTC). The `Date` column shows the **last-activity time** — when the session was last active — rather than when it started:
+
+- **Native sessions** — `session-report.py` and `native-session-report.py` scan all project-directory copies of the JSONL (a session UUID can appear in multiple dirs when the CWD changed mid-session) and return the maximum `timestamp` field found across all records. This gives the exact last-message time in local tz.
+- **Orchestra sessions** — the global `telemetry.jsonl` omits `ended_at`; the display derives it as `started_at + duration_s`. `telemetry-report.sh` does the same via jq arithmetic.
+- Sort order and `--since`/`--month` filters also use the effective end time, so `--since 2026-05-25` includes sessions that were still active on that date even if they started earlier.
 
 **Reporting.** `native-session-report.py` reads from two sources and merges them (deduplicating by `session_id`, telemetry takes precedence, sorted newest-first):
 1. `~/.claude/native-sessions/telemetry.jsonl` — primary; contains all sessions finalized since 2026-05-07.

@@ -58,6 +58,44 @@ def _read_model_from_jsonl(uuid: str) -> Optional[str]:
     return None
 
 
+def _read_last_ts_from_jsonl(uuid: str) -> Optional[datetime]:
+    """Return the timestamp of the last message in the JSONL transcript, or None.
+    Scans ALL project directories for the UUID (a session can appear in multiple
+    project dirs when the working directory changed mid-session) and returns the
+    maximum timestamp found across all copies."""
+    projects_root = Path.home() / ".claude" / "projects"
+    last_ts: Optional[datetime] = None
+    try:
+        for proj_dir in projects_root.iterdir():
+            if not proj_dir.is_dir():
+                continue
+            p = proj_dir / f"{uuid}.jsonl"
+            if not p.exists():
+                continue
+            try:
+                with open(p) as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        try:
+                            r = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        ts_str = r.get("timestamp")
+                        if ts_str:
+                            try:
+                                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                                if last_ts is None or ts > last_ts:
+                                    last_ts = ts
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return last_ts
+
+
 def _get_project_friendly_name(mangled: str) -> str:
     """Return friendly project name from mangled ~/.claude/projects/ dir name.
     Checks *.project-name sidecar first; falls back to last path component."""
@@ -198,20 +236,36 @@ def apply_filters(records: List[Dict[str, Any]], args: argparse.Namespace) -> Li
         # specific command: "brain", "duo", etc.
         filtered = [r for r in filtered if r.get("source") == args.source]
 
-    # Sort by started_at descending (most recent first)
-    filtered.sort(
-        key=lambda r: parse_iso8601(r.get("started_at", "")).timestamp(),
-        reverse=True
-    )
+    def _sort_ts(r: Dict[str, Any]) -> float:
+        # Sort by last-activity time.
+        # If ended_at is present, use it; otherwise derive from started_at + duration_s.
+        # For native sessions we don't do a JSONL scan here for performance —
+        # ended_at (stop-hook time) is close enough to the last JSONL message.
+        ended = r.get("ended_at", "")
+        if ended:
+            return parse_iso8601(ended).timestamp()
+        started = parse_iso8601(r.get("started_at", "")).timestamp()
+        duration = r.get("duration_s", 0) or 0
+        return started + duration
 
-    # --since filter (date string YYYY-MM-DD)
+    # Sort by last-activity descending (most recent first)
+    filtered.sort(key=_sort_ts, reverse=True)
+
+    def _effective_end(r: Dict[str, Any]) -> datetime:
+        ended = r.get("ended_at", "")
+        if ended:
+            return parse_iso8601(ended)
+        started = parse_iso8601(r.get("started_at", ""))
+        duration = r.get("duration_s", 0) or 0
+        from datetime import timedelta
+        return started + timedelta(seconds=duration)
+
+    # --since filter (date string YYYY-MM-DD): use effective end time so sessions
+    # active in the window are included even if they started before it.
     if args.since:
         try:
             since_dt = datetime.strptime(args.since, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            filtered = [
-                r for r in filtered
-                if parse_iso8601(r.get("started_at", "")) >= since_dt
-            ]
+            filtered = [r for r in filtered if _effective_end(r) >= since_dt]
         except Exception:
             pass
 
@@ -220,10 +274,7 @@ def apply_filters(records: List[Dict[str, Any]], args: argparse.Namespace) -> Li
         try:
             month_dt = datetime.strptime(args.month, "%Y-%m").replace(tzinfo=timezone.utc)
             month_next = (month_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
-            filtered = [
-                r for r in filtered
-                if month_dt <= parse_iso8601(r.get("started_at", "")) < month_next
-            ]
+            filtered = [r for r in filtered if month_dt <= _effective_end(r) < month_next]
         except Exception:
             pass
 
@@ -349,8 +400,31 @@ def main():
             project = (_read_project_from_jsonl(m2.group(1)) or "-") if m2 else "-"
         else:
             project = "-"
+        # Date column: last-activity time in local timezone.
+        # Native sessions: last JSONL message timestamp (exact last user turn).
+        # Orchestra sessions: ended_at if present, else started_at + duration_s
+        #   (the global telemetry.jsonl omits ended_at; it's in per-session telemetry.json).
+        # All fall back to started_at when no better value is available.
+        display_ts: Optional[datetime] = None
+        if rec.get("source") == "native":
+            m2_id = _NATIVE_UUID_RE.match(rec.get("session_id", ""))
+            if m2_id:
+                display_ts = _read_last_ts_from_jsonl(m2_id.group(1))
+        if display_ts is None:
+            ts_str = rec.get("ended_at", "")
+            if not ts_str:
+                # Derive ended_at from started_at + duration_s for orchestra records.
+                started = parse_iso8601(rec.get("started_at", ""))
+                duration = rec.get("duration_s", 0) or 0
+                if duration > 0:
+                    from datetime import timedelta
+                    display_ts = started + timedelta(seconds=duration)
+            if display_ts is None:
+                display_ts = parse_iso8601(ts_str or rec.get("started_at", ""))
+        date_str = display_ts.astimezone().strftime("%Y-%m-%d--%H-%M")
+
         display_records.append({
-            "date": parse_iso8601(rec.get("started_at", "")).strftime("%Y-%m-%d--%H-%M"),
+            "date": date_str,
             "source": rec.get("source", "-"),
             "project": project,
             "model": raw_model,
@@ -363,7 +437,7 @@ def main():
     # Add active sessions at top
     for active in active_sessions:
         display_records.insert(0, {
-            "date": parse_iso8601(active.get("started_at", "")).strftime("%Y-%m-%d--%H-%M"),
+            "date": parse_iso8601(active.get("started_at", "")).astimezone().strftime("%Y-%m-%d--%H-%M"),
             "source": active.get("source", "-"),
             "project": "-",
             "model": "-",
