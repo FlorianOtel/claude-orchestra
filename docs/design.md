@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_at: 2026-05-27--00-00
+updated_by: Claude Code (Claude Haiku 4.5)
+updated_at: 2026-05-29--13-03
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -102,7 +102,7 @@ Five hook types in `~/.claude/settings.json`, dispatching to `~/.claude/scripts/
 1. **PreToolUse(Agent)** — `start` mode. Logs subagent invocation to invocations.log.
 2. **SubagentStop** — `end` mode. Logs subagent completion.
 3. **PreCompact** — `compact` mode. Saves `brain-state.md` (plan/task/decision snapshot for resumption post-`/clear`).
-4. **Stop** — `stop` mode (safety net). Fires at the end of **every response turn** (not only on process exit). Walks session_dirs that have no `telemetry.json` **and** no inflight marker — i.e., sessions where cleanup already started (inflight markers removed by `/duo-act`/`/duo-abandon`/`/brain`) but `telemetry-summarize.sh` failed to write `telemetry.json`. Gate (updated 2026-05-06): skip if `.duo-inflight` or `.brain-inflight` is present (session still in-progress — removing the marker here would destroy the badge and cause `NO_SESSION` errors on the next refinement turn); then check for artefacts (`PLAN.md`, `RESEARCH.md`, `telemetry-events.jsonl`). Writes `.outcome=abandoned` before invoking the summariser (mtime bounds the T2 window), and resets `state.env` when finalising a /brain session so the badge clears. Inflight marker removal is the exclusive responsibility of `/duo-act`, `/duo-abandon`, and `/brain`/`/brain-abandon` cleanup.
+4. **Stop** — `stop` mode (safety net). Fires at the end of **every response turn** (not only on process exit). Walks session_dirs that have no `telemetry.json` **and** no inflight marker — i.e., sessions where cleanup already started (inflight markers removed by `/duo-act`/`/duo-abandon`/`/brain`) but `telemetry-summarize.sh` failed to write `telemetry.json`. Gate (updated 2026-05-06): skip if `.duo-inflight` or `.brain-inflight` is present (session still in-progress — removing the marker here would destroy the badge and cause `NO_SESSION` errors on the next refinement turn); then check for artefacts (`PLAN.md`, `RESEARCH.md`, `telemetry-events.jsonl`). Writes `.outcome=abandoned` before invoking the summariser (mtime bounds the T2 window), and resets `state.env` when finalising a /brain session so the badge clears. /duo-act and /duo-abandon also reset `state.env` so a stale /brain badge cannot re-emerge after the /duo badge drops. Inflight marker removal is the exclusive responsibility of `/duo-act`, `/duo-abandon`, and `/brain`/`/brain-abandon` cleanup.
 5. (No tool-call hooks; subagent tool dispatch is opaque by design.)
 
 ### Status line

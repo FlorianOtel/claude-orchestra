@@ -60,6 +60,14 @@ rm -f "${HOME}/.claude/active-sessions/$(basename "<SESSION_DIR>").lck"
 rm -f "<SESSION_DIR>/.duo-inflight"
 ```
 
+Then clear any stale pipeline badge from state.env:
+
+```bash
+CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+printf 'ORCHESTRA_MODE=default\nORCHESTRA_TITLE=\n' \
+  >> "${CLAUDE_PROJECT_DIR}/.claude/orchestra/state.env"
+```
+
 ## Confirmation
 
 Print to the operator:

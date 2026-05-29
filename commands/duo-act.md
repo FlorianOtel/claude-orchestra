@@ -102,6 +102,14 @@ rm -f "${HOME}/.claude/active-sessions/$(basename "<SESSION_DIR>").lck"
 rm -f "<SESSION_DIR>/.duo-inflight"
 ```
 
+Then clear any stale pipeline badge from state.env:
+
+```bash
+CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+printf 'ORCHESTRA_MODE=default\nORCHESTRA_TITLE=\n' \
+  >> "${CLAUDE_PROJECT_DIR}/.claude/orchestra/state.env"
+```
+
 The summariser writes `<SESSION_DIR>/telemetry.json` (full record) and appends one line to `~/.claude/orchestra/telemetry.jsonl` (global trend log). Errors are logged to `parser_warnings[]` in the JSON; the script never fails the pipeline.
 
 ---
