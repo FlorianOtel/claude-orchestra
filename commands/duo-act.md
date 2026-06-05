@@ -89,28 +89,14 @@ Map Actor's return to a cleanup `outcome`:
 
 ## Phase 4 — Cleanup + telemetry
 
-Use the literal session dir path captured above (substitute `<SESSION_DIR>`). Order matters: (1) write `.outcome` first so its mtime bounds the T2 time window; (2) invoke the summariser **before** removing `.duo-inflight` so `telemetry.json` is guaranteed present when the next status-line render detects the section transition (accumulator reconciles against `cost_usd_estimate`).
+Run a single call — the script owns the full sequence (outcome write, lck removal,
+telemetry summariser with retry, inflight removal, badge clear):
 
 ```bash
-printf '%s' "<outcome: pass | block | partial>" > "<SESSION_DIR>/.outcome.tmp"
-mv -f "<SESSION_DIR>/.outcome.tmp" "<SESSION_DIR>/.outcome"
-# Remove session ID sidecar so otelHeadersHelper stops injecting the header.
-rm -f "${HOME}/.claude/active-sessions/$(basename "<SESSION_DIR>").lck"
-~/.claude/scripts/telemetry-summarize.sh \
-    "<SESSION_DIR>" duo "<outcome>" "$(cat \"<SESSION_DIR>/.transcript-uuid\" 2>/dev/null || echo \"${CLAUDE_SESSION_ID:-}\")" 2>&1 \
-    | tail -n 1
-rm -f "<SESSION_DIR>/.duo-inflight"
+~/.claude/scripts/orchestra-cleanup.sh "<SESSION_DIR>" "<outcome: pass | block | partial>"
 ```
 
-Then clear any stale pipeline badge from state.env:
-
-```bash
-CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-printf 'ORCHESTRA_MODE=default\nORCHESTRA_TITLE=\n' \
-  >> "${CLAUDE_PROJECT_DIR}/.claude/orchestra/state.env"
-```
-
-The summariser writes `<SESSION_DIR>/telemetry.json` (full record) and appends one line to `~/.claude/orchestra/telemetry.jsonl` (global trend log). Errors are logged to `parser_warnings[]` in the JSON; the script never fails the pipeline.
+The script writes `<SESSION_DIR>/telemetry.json` (full record) and appends one line to `~/.claude/orchestra/telemetry.jsonl` (global trend log). Errors are logged to `parser_warnings[]` in the JSON or to `<SESSION_DIR>/.cleanup-error`; the script never fails the pipeline.
 
 ---
 

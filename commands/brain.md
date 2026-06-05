@@ -10,7 +10,7 @@ No separate sessions. No `claude -p` subprocesses. No multi-run registry. If the
 
 ## Pipeline rules — READ FIRST
 
-`/brain` orchestrates **subagents**: Planner (Sonnet 4.6) produces the plan, Actor (Haiku 4.5) makes code changes, Reviewer (Sonnet 4.6) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
+`/brain` orchestrates **subagents**: Researcher (Haiku 4.5) or Researcher-deep (Sonnet 4.6 for escalation) verifies factual claims during Phase 0 under your direction; Planner (Sonnet 4.6) produces the plan; Actor (Haiku 4.5) makes code changes; Reviewer (Sonnet 4.6) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
 
 ### Override of plan-mode's plan-file directive
 
@@ -28,6 +28,7 @@ Session-dir artefacts written directly via `Bash` heredoc are exempt from this r
 
 ### Negative examples — these are pipeline violations
 
+- ❌ Asserting a load-bearing factual claim during Phase 0 without dispatching `researcher` when the claim is uncertain. → Dispatch researcher (parallel where independent claims). The whole point of Phase 0 verification is to prevent debugging against a wrong premise.
 - ❌ Writing `PLAN.md` yourself with `Write` or `Edit`. → Dispatch Planner; persist Planner's return.
 - ❌ Editing project code with `Edit/Write/Bash` while `.brain-inflight` exists. → Dispatch Actor.
 - ❌ Responding to the operator's "go ahead" / "proceed" signal by composing the plan in your reply text. → Dispatch Planner.
@@ -152,6 +153,60 @@ Print the session_dir to the operator so they can locate artifacts later.
 
 You interrogate the operator about the task **before any planning or implementation**. Do not skip ahead even if the request seems obvious.
 
+### Thorough fact-finding and hypothesis verification
+
+**You do NOT make guesses or unverified hypotheses.** Before and during your dialog with the operator, you dispatch Researcher agents — multiple in parallel, to the extent possible — to verify and double-check your hypotheses. You design and instruct those agents to perform code explorations and surgical tests to verify and double-check assumptions, to be ABSOLUTELY SURE you ground the dialog in solid, verifiable facts.
+
+#### Researcher dispatch
+
+Brain dispatches **Researcher** (`claude-haiku-4-5-20251001`) — or **Researcher-deep** (`claude-sonnet-4-6`) for escalation — via the canonical `Task` tool to verify a single, binary-answerable factual claim. Multiple researchers in parallel when hypotheses are independent.
+
+Use the default `researcher` tier for: single-file lookups, symbol existence checks, frontmatter inspection, tool-call payload shape, one-off SDK behaviour questions.
+
+Escalate to `researcher-deep` for: multi-file reasoning (e.g. event interleaving across producer / consumer), runtime probes that require interpreting variable output, or verifications that depend on understanding a system's overall behaviour.
+
+```
+Task tool invocation:
+  subagent_type: researcher          # or researcher-deep for escalation
+  description: <one-liner naming the hypothesis being verified>
+  prompt: |
+    Hypothesis to verify (binary-answerable factual claim):
+    "<exact text of the claim>"
+
+    Context:
+    - File paths to read: <file:line ranges>
+    - Code excerpt to compare against (if any):
+      ```
+      <verbatim excerpt>
+      ```
+    - Scope fence: <what is NOT being asked>
+
+    Return contract (verbatim structure):
+      VERDICT: TRUE | FALSE | UNCLEAR
+      EVIDENCE:
+      - <file:line> — <quoted code or runtime output>
+      CAVEATS:
+      - <what could not be verified>
+
+    Hard rules: default to UNCLEAR if not directly observed; cite file:line
+    for every TRUE/FALSE claim; no recommendations; no silent disambiguation.
+```
+
+#### Verdict synthesis
+
+When researcher verdicts return:
+- **FALSE** → Brain re-thinks the affected design choice. May re-interrogate the operator. May dispatch follow-up researchers for adjacent claims that were dependent on the now-falsified one.
+- **UNCLEAR** → Brain escalates to `researcher-deep`, accepts the uncertainty with explicit caveat in `RESEARCH.md` § Verified hypotheses, or re-interrogates the operator to refine the question.
+- **TRUE** → Brain records the verification in `RESEARCH.md` § Verified hypotheses (claim text, verdict, evidence pointer with file:line, caveats) and proceeds.
+
+#### Verification budget (soft check-in)
+
+After ~3 dispatch rounds in a single Phase 0, pause and ask the operator:
+
+> "Verification has dispatched N researchers across M rounds. Is this still grounding the discussion, or should we re-frame the question?"
+
+No hard cap — the soft check-in is a guard against unbounded interrogation, not a ceiling on legitimate deep-dives.
+
 ### Posture
 
 Be sceptical, not adversarial. Push back to clarify, not to obstruct. You are not a yes-machine. Demand precision.
@@ -183,10 +238,11 @@ Stop and ask if any of these are unclear:
 
 ### When to end Phase 0
 
-End ONLY when **both** are true:
+End ONLY when **all three** are true:
 
-1. You are satisfied the approach is well-formed (definition of done clear, scope fenced, alternatives considered, risks surfaced, no silent choices).
-2. The operator has signalled readiness — explicitly ("proceed", "make the plan", "go ahead") OR contextually ("yes, do that", "I agree, plan it").
+1. All load-bearing hypotheses are either verified TRUE (with file:line evidence in `RESEARCH.md` § Verified hypotheses), explicitly accepted as TRUE-without-verification (with caveat in `RESEARCH.md`), or known FALSE with the design adjusted.
+2. You are satisfied the approach is well-formed (definition of done clear, scope fenced, alternatives considered, risks surfaced, no silent choices).
+3. The operator has signalled readiness — explicitly ("proceed", "make the plan", "go ahead") OR contextually ("yes, do that", "I agree, plan it").
 
 Do not pre-emptively end Phase 0 just because the operator gave a one-line task. Interrogate first.
 
@@ -207,6 +263,13 @@ cat > "${CLAUDE_ORCHESTRA_SESSION_DIR}/RESEARCH.md.tmp" <<'EOF'
 ### Rejected alternatives
 - <alternative> — <reason rejected>
 (omit if none)
+
+## Verified hypotheses (dispatched during Phase 0)
+
+- **TRUE — <claim>** — Evidence: <file:line>. Caveats: <if any>.
+- **FALSE — <claim>** — Evidence: <file:line>. Design adjusted to: <how>.
+- **UNCLEAR — <claim>** — Caveats: <why unverifiable>. Accepted with risk.
+(omit if no researchers dispatched)
 
 ## Scope
 **In scope:**
@@ -390,36 +453,16 @@ Use the literal session dir path captured from the setup echo (`session_dir=...`
 `${CLAUDE_ORCHESTRA_SESSION_DIR}`; it is an env var exported in the setup Bash
 call and does not persist into later Bash tool calls.
 
-### Telemetry finalisation
+### Run cleanup
 
-Order matters: (1) write `.outcome` first so its mtime bounds the T2 time
-window; (2) invoke the summariser **before** removing `.brain-inflight` so
-`telemetry.json` is guaranteed present when the next status-line render
-detects the section transition (accumulator reconciles against
-`cost_usd_estimate`).
+Run a single call — the script owns the full sequence (outcome write, lck removal,
+telemetry summariser with retry, inflight removal, badge clear):
 
 ```bash
-printf '%s' "<outcome: pass | fix-loop | block | abandoned>" > "<SESSION_DIR>/.outcome.tmp"
-mv -f "<SESSION_DIR>/.outcome.tmp" "<SESSION_DIR>/.outcome"
-# Remove session ID lock file so otelHeadersHelper stops injecting the header.
-rm -f "${HOME}/.claude/active-sessions/$(basename "<SESSION_DIR>").lck"
-~/.claude/scripts/telemetry-summarize.sh \
-    "<SESSION_DIR>" brain "<outcome>" "$(cat \"<SESSION_DIR>/.transcript-uuid\" 2>/dev/null || echo \"${CLAUDE_SESSION_ID:-}\")" 2>&1 \
-    | tail -n 1
-rm -f "<SESSION_DIR>/.brain-inflight"
+~/.claude/scripts/orchestra-cleanup.sh "<SESSION_DIR>" "<outcome: pass | fix-loop | block | abandoned>"
 ```
 
-The summariser writes `<SESSION_DIR>/telemetry.json` (full record) and appends one line to `~/.claude/orchestra/telemetry.jsonl` (global trend log). Errors are logged to `parser_warnings[]` in the JSON; the script never fails the pipeline.
-
-### Clear the pipeline badge
-
-Clear the pipeline badge from state.env:
-
-```bash
-CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-printf 'ORCHESTRA_MODE=default\nORCHESTRA_TITLE=\n' \
-  >> "${CLAUDE_PROJECT_DIR}/.claude/orchestra/state.env"
-```
+The script writes `<SESSION_DIR>/telemetry.json` (full record) and appends one line to `~/.claude/orchestra/telemetry.jsonl` (global trend log). Errors are logged to `parser_warnings[]` in the JSON or to `<SESSION_DIR>/.cleanup-error`; the script never fails the pipeline.
 
 When the pipeline ends (pass, abandon, or hard-stop), print a short summary:
 
