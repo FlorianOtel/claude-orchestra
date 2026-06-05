@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Haiku 4.5)
-updated_at: 2026-05-29--13-03
+updated_at: 2026-06-05--14-35
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -55,10 +55,10 @@ When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo
 | Agent | Model | File | Tools | Role |
 |---|---|---|---|---|
 | **Brain** | Opus 4.7 (or Sonnet for /duo) | — (main session) | all | Orchestrates; calls `ExitPlanMode` at plan approval (G2) |
-| **Planner** | `deepseek-v4-pro` | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md; Sonnet 4.6 via `planner-long` for >30 KB inputs |
-| **Planner** (long) | Sonnet 4.6 | `~/.claude/agents/planner-long.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Fallback for large inputs (>30 KB); preserves Anthropic cache discount |
-| **Actor** | `qwen3-coder-next` | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
-| **Actor** (heavy) | `kimi-k2.6` | `~/.claude/agents/actor-heavy.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Complex multi-file refactors; triggered by `[tier: heavy]` step annotations |
+| **Researcher** | Haiku 4.5 | `~/.claude/agents/researcher.md` | Read, Grep, Glob, Bash, WebFetch, TodoWrite (read-only) | Phase 0 fact-finding — verifies load-bearing hypotheses about code, runtime, SDK |
+| **Researcher** (deep) | Sonnet 4.6 | `~/.claude/agents/researcher-deep.md` | Read, Grep, Glob, Bash, WebFetch, TodoWrite (read-only) | Phase 0 escalation — multi-file reasoning, subtle event interleaving, runtime probes |
+| **Planner** | Sonnet 4.6 | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md |
+| **Actor** | Haiku 4.5 | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
 | **Reviewer** | Sonnet 4.6 | `~/.claude/agents/reviewer.md` | Read, Grep, Glob, TodoWrite (read-only) | Reviews diff against PLAN.md; returns PASS / FIX / BLOCK |
 
 ### Model requirements
@@ -74,12 +74,12 @@ Both checks happen at command startup before any Bash or setup runs. The check i
 
 | Phase | Gate before | Policy | Mechanism |
 |---|---|---|---|
-| 0 RESEARCH | PLAN | skip | Brain interrogates operator inline (Brain only, not separate agent) |
+| 0 RESEARCH | PLAN | skip | Brain interrogates operator inline; dispatches Researcher / Researcher-deep subagents for load-bearing hypothesis verification |
 | 1 PLAN | IMPLEMENT | **approve (required)** | **`ExitPlanMode` called by Brain — NOT by Planner** |
 | 2 IMPLEMENT | REVIEW | follow permission mode | Standard Claude Code approval UX per tool |
 | 3 REVIEW | LOOP/DONE | **auto-loop, cap 3** | Brain counts; surfaces PASS/FIX/BLOCK verdict |
 
-RESEARCH is served by Brain itself (with user input) or by built-in `Explore` subagent. No dedicated Researcher agent in v1.
+Phase 0 verification is backed by Researcher (Haiku 4.5) for single-file lookups and simple checks, escalating to Researcher-deep (Sonnet 4.6) for multi-file reasoning or runtime probes.
 
 ### Autonomy presets
 
@@ -104,6 +104,10 @@ Five hook types in `~/.claude/settings.json`, dispatching to `~/.claude/scripts/
 3. **PreCompact** — `compact` mode. Saves `brain-state.md` (plan/task/decision snapshot for resumption post-`/clear`).
 4. **Stop** — `stop` mode (safety net). Fires at the end of **every response turn** (not only on process exit). Walks session_dirs that have no `telemetry.json` **and** no inflight marker — i.e., sessions where cleanup already started (inflight markers removed by `/duo-act`/`/duo-abandon`/`/brain`) but `telemetry-summarize.sh` failed to write `telemetry.json`. Gate (updated 2026-05-06): skip if `.duo-inflight` or `.brain-inflight` is present (session still in-progress — removing the marker here would destroy the badge and cause `NO_SESSION` errors on the next refinement turn); then check for artefacts (`PLAN.md`, `RESEARCH.md`, `telemetry-events.jsonl`). Writes `.outcome=abandoned` before invoking the summariser (mtime bounds the T2 window), and resets `state.env` when finalising a /brain session so the badge clears. /duo-act and /duo-abandon also reset `state.env` so a stale /brain badge cannot re-emerge after the /duo badge drops. Inflight marker removal is the exclusive responsibility of `/duo-act`, `/duo-abandon`, and `/brain`/`/brain-abandon` cleanup.
 5. (No tool-call hooks; subagent tool dispatch is opaque by design.)
+
+#### Cleanup consolidation — `orchestra-cleanup.sh` (2026-06-05)
+
+`scripts/orchestra-cleanup.sh` is a single-call consolidation of all end-of-session cleanup steps (written by commit 2de61dcc412eaa13f47323a525bdec495569a889). It ensures the LLM cannot shortcut the multi-step cleanup by executing only subset of steps — the entire script runs atomically or nothing is produced. Usage: `~/.claude/scripts/orchestra-cleanup.sh <session_dir> <outcome>`. Invoked at the end of `/brain`, `/duo-act`, `/duo-abandon`, and `/brain-abandon` commands. Steps (ordered, all mandatory): (1) write `.outcome` (atomic rename); (2) remove lck file; (3) auto-detect command type (brain vs duo) from inflight marker presence; (4) run `telemetry-summarize.sh` with retry; (5) verify `telemetry.json` exists; (6) remove inflight marker; (7) clear pipeline badge in `state.env`. The script exits with a summary line and never fails the pipeline (telemetry failure is logged to `.cleanup-error` for manual inspection).
 
 ### Status line
 
