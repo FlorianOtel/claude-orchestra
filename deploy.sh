@@ -83,6 +83,7 @@ done
 # ── 5. Hook scripts + telemetry tools ────────────────────────────────────────
 # All shell scripts below are deployed to ~/.claude/scripts/ and marked +x.
 #   orchestra-hook.sh        — PreToolUse/SubagentStop/PreCompact/Stop dispatcher
+#   orchestra-cleanup.sh     — single-call end-of-session cleanup (atomic all-or-nothing)
 #   telemetry-summarize.sh   — T2 transcript-parser wrapper (calls .py)
 #   telemetry-report.sh      — orchestra session cost report
 #   otel-headers-helper.sh   — OTEL session-ID header injection helper
@@ -94,7 +95,7 @@ done
 #                              SECTION_START_UNIX (see status-line/orchestra-block.sh).
 echo "Scripts:"
 for s in \
-    orchestra-hook.sh telemetry-summarize.sh telemetry-report.sh \
+    orchestra-hook.sh orchestra-cleanup.sh telemetry-summarize.sh telemetry-report.sh \
     otel-headers-helper.sh bash-session-init.sh ctx-segment.sh \
     section-live-cost.sh; do
     if [ -f "$REPO/scripts/$s" ]; then
@@ -165,11 +166,8 @@ if ! $DRY_RUN; then
         fi
     done
 
-    # 7d. Researcher agent (Phase 0 dialogue agent; Phase 0 now inline in /brain).
-    if [ -f "$CLAUDE/agents/researcher.md" ]; then
-        rm -f "$CLAUDE/agents/researcher.md"
-        ok "cleaned orphan: $CLAUDE/agents/researcher.md"
-    fi
+    # 7d. (Researcher agents are now first-class shipped agents: researcher.md + researcher-deep.md
+    # deployed in section 3 above.)
 fi
 
 # ── 6. Orchestra config ───────────────────────────────────────────────────────
