@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Reviews the output of an Actor invocation — reads the diff, checks against PLAN.md and project conventions, and returns a structured review with verdict PASS/FIX/BLOCK. Use after each Actor invocation in a /brain pipeline (or once at the end). Returns review text inline; Brain persists review-comments.md.
-model: claude-sonnet-4-6
+model: claude-sonnet-5
 tools: Read, Grep, Glob, Bash, TodoWrite
 ---
 

@@ -10,7 +10,7 @@ No separate sessions. No `claude -p` subprocesses. No multi-run registry. If the
 
 ## Pipeline rules — READ FIRST
 
-`/brain` orchestrates **subagents**: Researcher (Haiku 4.5) or Researcher-deep (Sonnet 4.6 for escalation) verifies factual claims during Phase 0 under your direction; Planner (Sonnet 4.6) produces the plan; Actor (Haiku 4.5) makes code changes; Reviewer (Sonnet 4.6) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
+`/brain` orchestrates **subagents**: Researcher (Haiku 4.5) or Researcher-deep (Sonnet 5 for escalation) verifies factual claims during Phase 0 under your direction; Planner (Sonnet 5) produces the plan; Actor (Haiku 4.5) makes code changes; Reviewer (Sonnet 5) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
 
 ### Override of plan-mode's plan-file directive
 
@@ -48,13 +48,13 @@ Each of these means a `Task`-tool dispatch was skipped. If you catch yourself ab
 
 1. **Model check (ENFORCED — do this before anything else):** Read "The exact model ID is…" from your system context and classify your model:
 
-   - Model ID contains `haiku` **or** is `claude-sonnet-4-5` or an older Sonnet → **STOP immediately.** Do not run any Bash. Output:
-     > "⛔ /brain requires minimum Sonnet 4.6. You are on [MODEL-ID]. Run `/model claude-sonnet-4-6` or `/model claude-opus-4-7` to switch, then re-run `/brain`."
-   - Model ID is `claude-sonnet-4-6*` → emit this advisory then proceed:
-     > "ℹ️ Running /brain on Sonnet 4.6 (minimum met). For hard architectural reasoning, Opus 4.7 is recommended — `/model claude-opus-4-7` to switch if needed."
+   - Model ID contains `haiku` **or** is `claude-sonnet-4-6` or an older Sonnet → **STOP immediately.** Do not run any Bash. Output:
+     > "⛔ /brain requires minimum Sonnet 5. You are on [MODEL-ID]. Run `/model claude-sonnet-5` or `/model claude-opus-4-7` to switch, then re-run `/brain`."
+   - Model ID is `claude-sonnet-5*` → emit this advisory then proceed:
+     > "ℹ️ Running /brain on Sonnet 5 (minimum met). For hard architectural reasoning, Opus 4.7 is recommended — `/model claude-opus-4-7` to switch if needed."
    - Model ID is `claude-opus-4-7*` or any newer/higher-capability version → proceed silently.
    - Model cannot be determined from system context → ask the operator before proceeding:
-     > "⚠️ Could not read model from system context. Please confirm you are on Sonnet 4.6 or higher before I continue."
+     > "⚠️ Could not read model from system context. Please confirm you are on Sonnet 5 or higher before I continue."
 
 2. **Plan mode is active.** Phase 0 and Phase 1 must run with the parent in plan mode. If the operator is not in plan mode, stop and say:
    > "Please enter plan mode first (Shift+Tab), then run `/brain` again."
@@ -159,7 +159,7 @@ You interrogate the operator about the task **before any planning or implementat
 
 #### Researcher dispatch
 
-Brain dispatches **Researcher** (`claude-haiku-4-5-20251001`) — or **Researcher-deep** (`claude-sonnet-4-6`) for escalation — via the canonical `Task` tool to verify a single, binary-answerable factual claim. Multiple researchers in parallel when hypotheses are independent.
+Brain dispatches **Researcher** (`claude-haiku-4-5-20251001`) — or **Researcher-deep** (`claude-sonnet-5`) for escalation — via the canonical `Task` tool to verify a single, binary-answerable factual claim. Multiple researchers in parallel when hypotheses are independent.
 
 Use the default `researcher` tier for: single-file lookups, symbol existence checks, frontmatter inspection, tool-call payload shape, one-off SDK behaviour questions.
 

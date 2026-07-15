@@ -7,9 +7,11 @@ A three-tier orchestration layer for [Claude Code](https://claude.ai/code) that 
 | Tier | Model | Role |
 |---|---|---|
 | **Brain** | Claude Opus 4.7 | Your main session — orchestrates, delegates, approves |
-| **Planner** | Claude Sonnet 4.6 | Decomposes tasks into numbered, reviewable plans |
+| **Researcher** | Claude Haiku 4.5 | Phase 0 fact-finding — verifies load-bearing hypotheses about code, runtime, SDK |
+| **Researcher-deep** | Claude Sonnet 5 | Phase 0 escalation tier — multi-file reasoning, subtle event interleaving, runtime probes |
+| **Planner** | Claude Sonnet 5 | Decomposes tasks into numbered, reviewable plans |
 | **Actor** | Claude Haiku 4.5 | Executes individual plan steps; scoped, fast, cheap |
-| **Reviewer** | Claude Sonnet 4.6 | Reviews Actor's output; emits PASS / FIX / BLOCK verdicts |
+| **Reviewer** | Claude Sonnet 5 | Reviews Actor's output; emits PASS / FIX / BLOCK verdicts |
 
 ## Pipelines
 
@@ -120,7 +122,7 @@ If you use a custom `status-line.sh`, `deploy.sh` appends orchestra indicators a
 Status line shows (when orchestra is installed):
 
 ```
-✦ Sonnet 4.6 | [bar] 10% | ↯ 100k/1000k | ◆ MyProject | ⎇ main | ♪ default
+✦ Sonnet 5 | [bar] 10% | ↯ 100k/1000k | ◆ MyProject | ⎇ main | ♪ default
                                                                   ▲
                                                           orchestra badge
 
@@ -160,9 +162,11 @@ and are deployed explicitly — no automatic shadowing.
 ```
 claude-orchestra/
 ├── agents/
-│   ├── planner.md         Sonnet 4.6 — writes numbered plan to PLAN.md
+│   ├── researcher.md      Haiku 4.5  — verifies load-bearing hypotheses (Phase 0 fact-finding)
+│   ├── researcher-deep.md Sonnet 5   — multi-file reasoning escalation (Phase 0)
+│   ├── planner.md         Sonnet 5   — writes numbered plan to PLAN.md
 │   ├── actor.md           Haiku 4.5  — executes one scoped step
-│   └── reviewer.md        Sonnet 4.6 — reviews diff, emits PASS/FIX/BLOCK
+│   └── reviewer.md        Sonnet 5   — reviews diff, emits PASS/FIX/BLOCK
 ├── commands/
 │   ├── brain.md           /brain slash command           — full pipeline (Phase 0 inline + Planner/Actor/Reviewer subagents)
 │   ├── duo-plan.md       /duo-plan slash command       — open a /duo planning session (multi-turn refinement)

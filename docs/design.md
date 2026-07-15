@@ -14,7 +14,7 @@ context: >
 
 # Claude Orchestra
 
-A three-tier orchestration system for Claude Code: **Brain** (Opus 4.7 or Sonnet 4.6) delegates reasoning, implementation, and review across **Planner** (Sonnet 4.6), **Actor** (Haiku 4.5), and **Reviewer** (Sonnet 4.6) tiers using Claude Code's native `Task` tool for subagent dispatch. Single global install at `~/.claude/`; usable from any project.
+A three-tier orchestration system for Claude Code: **Brain** (Opus 4.7 or Sonnet 5) delegates reasoning, implementation, and review across **Planner** (Sonnet 5), **Actor** (Haiku 4.5), and **Reviewer** (Sonnet 5) tiers using Claude Code's native `Task` tool for subagent dispatch. Single global install at `~/.claude/`; usable from any project.
 
 ## Intro
 
@@ -32,7 +32,7 @@ Talk to Brain normally. Brain delegates to Planner/Actor/Reviewer as needed. No 
 
 `/duo` is a three-command session-bracketed pipeline. `/duo-plan <task>` opens a planning session (sets up the session_dir, drafts an initial `PLAN.md`, and yields back). The operator then refines the plan across as many normal plan-mode turns as needed. `/duo-act` commits the plan, calls `ExitPlanMode`, dispatches Actor (Haiku), and runs cleanup + telemetry. `/duo-abandon` cancels the active session cleanly. No Reviewer. Example: "add a docstring to rag_engine/search.py::search_rag" — low risk, no review needed.
 
-Workflow: (1) `claude --model claude-sonnet-4-6`. (2) `Shift+Tab` to enter plan mode. (3) `/duo-plan <task>`. (4) Refine across turns until the plan is right. (5) `/duo-act` to execute (or `/duo-abandon` to cancel); on approval, `Shift+Tab` to bypassPermissions if desired, Actor runs uninterrupted.
+Workflow: (1) `claude --model claude-sonnet-5`. (2) `Shift+Tab` to enter plan mode. (3) `/duo-plan <task>`. (4) Refine across turns until the plan is right. (5) `/duo-act` to execute (or `/duo-abandon` to cancel); on approval, `Shift+Tab` to bypassPermissions if desired, Actor runs uninterrupted.
 
 Splitting the plan-approval gate into an explicit `/duo-act` (rather than the slash command barrelling through to `ExitPlanMode` in one response) means rejection-or-redirect during planning is now first-class: refinement is a normal multi-turn conversation, not a rejected-plan-and-informally-keep-chatting situation. Telemetry attribution stays correct because `.outcome`-file mtime bounds the T2 time window (see §Telemetry).
 
@@ -56,17 +56,17 @@ When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo
 |---|---|---|---|---|
 | **Brain** | Opus 4.7 (or Sonnet for /duo) | — (main session) | all | Orchestrates; calls `ExitPlanMode` at plan approval (G2) |
 | **Researcher** | Haiku 4.5 | `~/.claude/agents/researcher.md` | Read, Grep, Glob, Bash, WebFetch, TodoWrite (read-only) | Phase 0 fact-finding — verifies load-bearing hypotheses about code, runtime, SDK |
-| **Researcher** (deep) | Sonnet 4.6 | `~/.claude/agents/researcher-deep.md` | Read, Grep, Glob, Bash, WebFetch, TodoWrite (read-only) | Phase 0 escalation — multi-file reasoning, subtle event interleaving, runtime probes |
-| **Planner** | Sonnet 4.6 | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md |
+| **Researcher** (deep) | Sonnet 5 | `~/.claude/agents/researcher-deep.md` | Read, Grep, Glob, Bash, WebFetch, TodoWrite (read-only) | Phase 0 escalation — multi-file reasoning, subtle event interleaving, runtime probes |
+| **Planner** | Sonnet 5 | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md |
 | **Actor** | Haiku 4.5 | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
-| **Reviewer** | Sonnet 4.6 | `~/.claude/agents/reviewer.md` | Read, Grep, Glob, TodoWrite (read-only) | Reviews diff against PLAN.md; returns PASS / FIX / BLOCK |
+| **Reviewer** | Sonnet 5 | `~/.claude/agents/reviewer.md` | Read, Grep, Glob, TodoWrite (read-only) | Reviews diff against PLAN.md; returns PASS / FIX / BLOCK |
 
 ### Model requirements
 
 | Command | Minimum | Recommended | Enforcement |
 |---|---|---|---|
-| `/brain` | Sonnet 4.6 | Opus 4.7 | Hard block — Brain reads model ID from system context and refuses to proceed if below minimum |
-| `/duo` | none | Sonnet 4.6 | Advisory only — Brain warns and continues |
+| `/brain` | Sonnet 5 | Opus 4.7 | Hard block — Brain reads model ID from system context and refuses to proceed if below minimum |
+| `/duo` | none | Sonnet 5 | Advisory only — Brain warns and continues |
 
 Both checks happen at command startup before any Bash or setup runs. The check is LLM-enforced (Brain reads "The exact model ID is…" injected by Claude Code into every session's system context) — same trust level as the plan-mode gate. See TODO.md for the hook-based upgrade path when `$CLAUDE_MODEL` becomes available.
 
@@ -79,7 +79,7 @@ Both checks happen at command startup before any Bash or setup runs. The check i
 | 2 IMPLEMENT | REVIEW | follow permission mode | Standard Claude Code approval UX per tool |
 | 3 REVIEW | LOOP/DONE | **auto-loop, cap 3** | Brain counts; surfaces PASS/FIX/BLOCK verdict |
 
-Phase 0 verification is backed by Researcher (Haiku 4.5) for single-file lookups and simple checks, escalating to Researcher-deep (Sonnet 4.6) for multi-file reasoning or runtime probes.
+Phase 0 verification is backed by Researcher (Haiku 4.5) for single-file lookups and simple checks, escalating to Researcher-deep (Sonnet 5) for multi-file reasoning or runtime probes.
 
 ### Autonomy presets
 
@@ -701,12 +701,12 @@ Reference: [Design history & amendments](design-history.md) §Amendment 2026-05-
 | Role | Model | Trigger |
 |---|---|---|
 | Planner (normal) | `deepseek-v4-pro` | inputs ≤ 30 KB |
-| Planner (long-context fallback) | Sonnet 4.6 | inputs > 30 KB; preserves Anthropic cache discount |
+| Planner (long-context fallback) | Sonnet 5 | inputs > 30 KB; preserves Anthropic cache discount |
 | Actor (default) | `qwen3-coder-next` | all steps unless marked heavy |
 | Actor (heavy) | `kimi-k2.6` | `[tier: heavy]` annotation in PLAN.md step |
-| Reviewer | Sonnet 4.6 | all reviews (unchanged; calibration priority) |
+| Reviewer | Sonnet 5 | all reviews (unchanged; calibration priority) |
 
-**Brain** remains Opus 4.7 for `/brain` and Sonnet 4.6 for `/duo` (no change).
+**Brain** remains Opus 4.7 for `/brain` and Sonnet 5 for `/duo` (no change).
 
 ### Step-level tier annotations
 
@@ -719,13 +719,13 @@ Format: annotation appears on the same line as the step heading (e.g., `### 5. R
 
 ### Planner long-context fallback
 
-When RESEARCH + constraints + prior artifacts exceed ~30 KB, Brain runs Sonnet 4.6 via the `planner-long` agent instead of `planner`. This preserves Anthropic's prompt cache discount on large inputs (30× savings on repetitive prefix tokens) while staying in the flat-rate economy via `planner-long` as a documented SoHoAI alias. The 30 KB threshold is approximate; Brain is instructed to `wc -c` the combined input and pick the tier accordingly.
+When RESEARCH + constraints + prior artifacts exceed ~30 KB, Brain runs Sonnet 5 via the `planner-long` agent instead of `planner`. This preserves Anthropic's prompt cache discount on large inputs (30× savings on repetitive prefix tokens) while staying in the flat-rate economy via `planner-long` as a documented SoHoAI alias. The 30 KB threshold is approximate; Brain is instructed to `wc -c` the combined input and pick the tier accordingly.
 
 See TODO.md §10e for the deferred automation of this check.
 
-### Reviewer remains Sonnet 4.6
+### Reviewer remains Sonnet 5
 
-Reviewer stays Sonnet 4.6 (no multi-model routing). Rationale:
+Reviewer stays Sonnet 5 (no multi-model routing). Rationale:
 - Reviewer is a calibration touchstone — if it starts rejecting code that Sonnet previously accepted, review-loop iteration counts will spike, signaling a model regression.
 - Reviewer is called ≤ 3 times per step (review loop cap); its cost is < 15% of typical sessions.
 - Code review is a high-stakes task where Sonnet's consistency is proven; evaluation of a second-pass cross-check model is deferred (see TODO.md §10b).

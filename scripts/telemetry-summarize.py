@@ -543,7 +543,7 @@ def compute_blast_radius(session_dir: Path) -> Dict[str, int]:
 
 def compute_iterations(session_dir: Path, subagents: List[Dict[str, Any]]) -> Dict[str, int]:
     """Iteration counts derived from subagent dispatch list."""
-    counts = {"planner": 0, "actor": 0, "reviewer": 0, "Explore": 0}
+    counts = {"planner": 0, "actor": 0, "reviewer": 0, "researcher": 0, "researcher-deep": 0, "Explore": 0}
     for s in subagents:
         t = s.get("type", "")
         if t in counts:
@@ -552,6 +552,7 @@ def compute_iterations(session_dir: Path, subagents: List[Dict[str, Any]]) -> Di
         "planner_replans": max(0, counts["planner"] - 1),
         "actor_invocations": counts["actor"],
         "reviewer_fix_cycles": max(0, counts["reviewer"] - 1),
+        "researcher_dispatches": counts["researcher"] + counts["researcher-deep"],
         "explore_dispatches": counts["Explore"],
     }
 

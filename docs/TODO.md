@@ -60,7 +60,7 @@ If Explore dispatches are rare or cheap, a Researcher agent adds complexity with
 
 **Gate 2 — Haiku for planning (Planner tier cost)**
 
-The Planner is currently Sonnet 4.6. If `subagents[type=planner].cost / total_cost` consistently < 5%, the Planner tier is not a meaningful cost target and should be left alone.
+The Planner is currently Sonnet 5. If `subagents[type=planner].cost / total_cost` consistently < 5%, the Planner tier is not a meaningful cost target and should be left alone.
 
 Revisit Planner model only if `planner_replans` rate is low (< 20% of sessions) AND planner cost fraction exceeds 10%.
 
@@ -74,7 +74,7 @@ Track `reviewer_fix_cycles > 0` rate. If Reviewer rarely finds real issues (< 10
 
 **Gate 5 — Opus vs Sonnet for Brain**
 
-Compare `cost_usd_estimate` and `regret_flag` rate across sessions where Brain was Opus 4.7 vs Sonnet 4.6. If Sonnet Brain sessions have equivalent `regret_flag` rate at ~5× lower cost, Sonnet becomes the default recommendation. Currently insufficient data.
+Compare `cost_usd_estimate` and `regret_flag` rate across sessions where Brain was Opus 4.7 vs Sonnet 5. If Sonnet Brain sessions have equivalent `regret_flag` rate at ~5× lower cost, Sonnet becomes the default recommendation. Currently insufficient data.
 
 ### Retention policy
 
@@ -147,7 +147,7 @@ v2 implementation notes:
 
 ## Hook-based model enforcement via `$CLAUDE_MODEL`
 
-**Current state (v1):** `/brain` enforces minimum Sonnet 4.6 and `/duo` warns below Sonnet 4.6
+**Current state (v1):** `/brain` enforces minimum Sonnet 5 and `/duo` warns below Sonnet 5
 via **LLM instruction-following** — Brain is instructed to read "The exact model ID is…" from
 its system context, classify the model, and stop (`/brain`) or warn (`/duo`) accordingly. This
 works because Claude Code injects the model ID into every session's system prompt, and Brain
@@ -159,7 +159,7 @@ the detection, and a sufficiently degraded session state could miss it.
 
 **Upgrade path:** Migrate `/brain`'s hard block to a **PreToolUse hook** that fires before
 Brain's first tool call. The hook reads `$CLAUDE_MODEL` (or `$ANTHROPIC_MODEL`, or whatever
-env var Anthropic exposes), compares it against the minimum (`claude-sonnet-4-6`,
+env var Anthropic exposes), compares it against the minimum (`claude-sonnet-5`,
 `claude-opus-4-7`), and exits non-zero if the model is below minimum. A non-zero hook exit
 causes Claude Code to surface an error and abort the action — making this a true runtime gate
 independent of LLM instruction-following.

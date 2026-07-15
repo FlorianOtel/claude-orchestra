@@ -90,11 +90,11 @@ def cost(tok, model):
     return sum(tok.get(k, 0) * r.get(k, 0)
                for k in ["input", "output", "cache_creation", "cache_read"]) / 1_000_000
 
-ORDER = {"brain": 0, "planner": 1, "actor": 2, "reviewer": 3}
+ORDER = {"brain": 0, "researcher": 1, "researcher-deep": 1, "planner": 2, "actor": 3, "reviewer": 4}
 tiers = [("brain", t["parent"]["model"], t["parent"]["tokens"])]
 for s in t.get("subagents", []):
     tiers.append((s["type"], s.get("model", "?"), s["tokens"]))
-tiers.sort(key=lambda x: ORDER.get(x[0], 4))
+tiers.sort(key=lambda x: ORDER.get(x[0], 5))
 
 grand_tok  = sum(sum(tok.values()) for _, _, tok in tiers)
 grand_cost = sum(cost(tok, m)      for _, m, tok in tiers)
@@ -159,8 +159,8 @@ for tf_path in tf_paths:
 if n == 0:
     sys.exit(0)
 
-ORDER = {"brain": 0, "planner": 1, "actor": 2, "reviewer": 3}
-items = sorted(accum.items(), key=lambda x: ORDER.get(x[0][0], 4))
+ORDER = {"brain": 0, "researcher": 1, "researcher-deep": 1, "planner": 2, "actor": 3, "reviewer": 4}
+items = sorted(accum.items(), key=lambda x: ORDER.get(x[0][0], 5))
 grand_tok  = sum(sum(v["tokens"].values()) for _, v in items)
 grand_cost = sum(v["cost"]                 for _, v in items)
 

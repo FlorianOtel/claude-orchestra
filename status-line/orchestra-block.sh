@@ -143,7 +143,7 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
 
     # Restore [1m] suffix when settings.json configures a 1M model but the API
     # response strips it. [1m] is CC-local routing — the Anthropic API returns
-    # the plain model ID (e.g., "claude-sonnet-4-6") regardless of the context
+    # the plain model ID (e.g., "claude-sonnet-5") regardless of the context
     # tier, so ctx-segment.sh's forced_1m branch never fires after the first
     # API call unless we re-inject it here.
     _settings_model=""
@@ -159,7 +159,7 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     if [[ "$_settings_model" == *"[1m]"* ]] && [[ "$model_id" != *"[1m]"* ]] && [[ -n "$model_id" ]]; then
         _settings_base=$(echo "$_settings_model" | sed 's/\[1m\]//g; s/\[.*\]//g')
         case "$_settings_base" in
-            sonnet) _settings_base="claude-sonnet-4-6" ;;
+            sonnet) _settings_base="claude-sonnet-5"   ;;
             opus)   _settings_base="claude-opus-4-7"   ;;
             haiku)  _settings_base="claude-haiku-4-5"  ;;
         esac
