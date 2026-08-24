@@ -49,10 +49,10 @@ Each of these means a `Task`-tool dispatch was skipped. If you catch yourself ab
 1. **Model check (ENFORCED — do this before anything else):** Read "The exact model ID is…" from your system context and classify your model:
 
    - Model ID contains `haiku` **or** is `claude-sonnet-4-6` or an older Sonnet → **STOP immediately.** Do not run any Bash. Output:
-     > "⛔ /brain requires minimum Sonnet 5. You are on [MODEL-ID]. Run `/model claude-sonnet-5` or `/model claude-opus-4-7` to switch, then re-run `/brain`."
+     > "⛔ /brain requires minimum Sonnet 5. You are on [MODEL-ID]. Run `/model claude-sonnet-5` or `/model claude-opus-5` to switch, then re-run `/brain`."
    - Model ID is `claude-sonnet-5*` → emit this advisory then proceed:
-     > "ℹ️ Running /brain on Sonnet 5 (minimum met). For hard architectural reasoning, Opus 4.7 is recommended — `/model claude-opus-4-7` to switch if needed."
-   - Model ID is `claude-opus-4-7*` or any newer/higher-capability version → proceed silently.
+     > "ℹ️ Running /brain on Sonnet 5 (minimum met). For hard architectural reasoning, Opus 5 is recommended — `/model claude-opus-5` to switch if needed."
+   - Model ID is `claude-opus-5*` or any newer/higher-capability version → proceed silently.
    - Model cannot be determined from system context → ask the operator before proceeding:
      > "⚠️ Could not read model from system context. Please confirm you are on Sonnet 5 or higher before I continue."
 

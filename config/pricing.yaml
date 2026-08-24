@@ -1,4 +1,4 @@
-last_updated: 2026-07-15
+last_updated: 2026-08-24
 source: https://docs.anthropic.com/en/docs/about-claude/models/all-models
 notes: |
   Rates are USD per 1M tokens. cache_creation here = 5-minute TTL (1.25x input);
@@ -9,7 +9,17 @@ notes: |
   lapses. SoHoAI's LiteLLM-derived telemetry confirms $3/$15 is also what's
   actually billed.
 models:
-  claude-opus-4-7:
+  claude-opus-5:
+    input: 5.00
+    output: 25.00
+    cache_creation: 6.25
+    cache_read: 0.50
+  claude-fable-5:
+    input: 10.00
+    output: 50.00
+    cache_creation: 12.50
+    cache_read: 1.00
+  claude-opus-4-7:            # legacy — superseded by claude-opus-5 (2026-07-24)
     input: 15.00
     output: 75.00
     cache_creation: 18.75

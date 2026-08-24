@@ -18,10 +18,14 @@
 # regardless of map lookup — displayed as 1.0M or 1M depending on values.
 #
 # last_updated: YYYY-MM-DD
-updated_at: 2026-07-15--00-00
+updated_at: 2026-08-24--00-00
 updated_by: Claude Code (Claude Sonnet 5)
-last_updated: 2026-07-15
+last_updated: 2026-08-24
 models:
+  claude-opus-5:               1000000
+  claude-opus-5[1m]:           1000000
+  claude-fable-5:              1000000
+  claude-fable-5[1m]:          1000000
   claude-opus-4-7:            1000000
   claude-opus-4-7[1m]:        1000000
   claude-sonnet-5:            200000
