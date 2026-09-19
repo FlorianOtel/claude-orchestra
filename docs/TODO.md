@@ -2,8 +2,8 @@
 title: "Claude Orchestra — v2 Deferred & TODO items"
 created_at: 20260428-000000
 created_by: Claude Code (Claude Haiku 4.5)
-updated_by: Claude Code (Claude Opus 5)
-updated_at: 2026-09-19--02-48
+updated_by: Claude Code (Claude Haiku 4.5)
+updated_at: 2026-09-19--09-33
 context: >
   Extract from the design.md reference document, capturing all deferred
   features, v2 architectural stubs, optimization opportunities, and open
@@ -31,7 +31,7 @@ Telemetry exists to make cost/quality trade-off decisions **data-driven** rather
 | `regret_flag` | T2 | True if replans or fix cycles > 0 |
 | `duration_s` | T2 | Wall-clock session time |
 
-T1 hook events (`telemetry-events.jsonl`) capture subagent timing but have `usage=null` — hook payloads do not expose token counts. T2 is authoritative; T1 is timing-only and drives the real-time status-line cost indicator.
+T1 hook events (`telemetry-events.jsonl`) capture subagent timing but the `usage` field is no longer emitted — hook payloads never exposed token counts. T2 is authoritative; T1 is timing-only.
 
 ### Data quality baseline
 
@@ -423,3 +423,84 @@ and Option C covers native while Option A covers orchestra.
 2. Fix `scripts/section-live-cost.sh` to use the full 3-tier cascade for live badge (SoHoAI → litellm → pricing.yaml), not pricing.yaml only
 3. Add a warning in `compute_cost()` when a model key is not found (currently silent $0)
 4. Document the fallback-hierarchy precedence hazard (candidate [0] shadowing candidate [1])
+
+### Resolution (2026-09-19)
+
+**What was actually done:**
+- `config/pricing.yaml`: claude-sonnet-5 corrected 3.00/15.00 → 2.00/10.00 (cache 2.50/0.20); claude-opus-4-7 corrected 15.00/75.00 → 5.00/25.00 (cache 6.25/0.50) — a 3× overcharge that applied to many of this project's historical /brain sessions; claude-opus-4-8 and claude-fable-5-1 added; claude-fable-5-1 cache_read is 0.25 (Anthropic prices Fable 5.1 cache hits at 0.025× base input, not the standard 0.1×).
+- The `notes:` block was rewritten fairly: the original author hedged against a REAL scheduled price increase. Anthropic's pricing page ([verified 2026-09-19](https://platform.claude.com/docs/en/about-claude/pricing)) now states the Sonnet 5 introductory rate became standard and the 2026-09-01 increase to $3/$15 "will not occur".
+- `scripts/section-live-cost.sh` now uses the full 3-tier cascade for the orchestra subagent term.
+- `compute_cost()` now warns on a missing model key instead of silently contributing $0.
+- All rates verified against https://platform.claude.com/docs/en/about-claude/pricing on 2026-09-19.
+
+---
+
+## §16. Telemetry: blast_radius stub + T1 attribution + SubagentStop diagnostics (2026-09-19)
+
+**Summary:** investigation triggered by an observed `/brain` session with `blast_radius: {files_read: 0, files_edited: 0, loc_changed_estimate: 0}` despite 8 files changed. Root causes identified via live payload capture and session transcript analysis. **The git stash is SUPERSEDED and was NOT applied.** Its accepted content was re-implemented fresh; its blast_radius implementation and its filename-inference attribution cascade were both rejected.
+
+### Status of the git stash
+
+A prior session parked working code (telemetry-summarize.py +167/−63, orchestra-hook.sh +71/−16) at commit `stash@{0}`. The stash is no longer the source of truth for any of the fixes below. Recommend `git stash drop` after code review — an OPERATOR action, not done here.
+
+**Confirmed from the stashed handover:** `usage` null in 2724/2724 T1 events across 55 sessions in 9 projects; `blast_radius` a stub with zeros in all 49 telemetry.json records and read by nothing; `cross_check_t1_t2` unable to ever pass.
+
+### Falsified claims from the stashed diagnosis
+
+**Claim 1: "ends outnumber starts 2.8×–13.4× in every session across four projects"**
+
+FALSIFIED by session recount. Actual: end:start ratio ranges 0.5× to 28× across 55 sessions, median 5.0, with 17 sessions at exactly 1.0. The diagnosis assumed a uniform ratio implying a uniform cause; the distribution is episodic. [Source: retained telemetry-events.jsonl across 55 sessions in 9 projects]
+
+**Claim 2: "single-slot LAST_LOGFILE_REF under parallel dispatch explains the count anomaly"**
+
+FALSIFIED as a root-cause explanation. A filename reference clobbering corrupts a LABEL; it cannot manufacture events. It does correctly explain the attribution failure (missing subagent type in T1). [Source: scripts/orchestra-hook.sh]
+
+**Claim 3: "magnet effect — find_active_session_dir picking any unfinalised dir — caused excess events"** (raised during this session, tested, discarded)
+
+FALSIFIED by the 28× specimen analysis: only 4 subagent sidecars for 112 end events; the one concurrent session in its window dispatched no subagents; telemetry.json presence does not separate high-ratio from ratio-1.0 sessions. The vulnerability is real but was NOT the operative cause. [Source: live session inspection]
+
+### Root causes, established by live payload capture
+
+**ROOT CAUSE 1: Claude Code's own internal helper agents on ~31s ticks**
+
+Claude Code's internal agents (suggestion generator; per-background-task status describer) fire SubagentStop on a ~31 second cadence while a background task is alive, with **empty `agent_type`** and **no meta sidecar**. A REAL dispatched subagent fires SubagentStop ONCE, at completion, with `agent_type` populated and sidecar present. Captured evidence (snapshot of 59 payloads at time of writing; the probe remained live briefly afterwards so the file may contain more): every real dispatched subagent carried a populated `agent_type` (11 `actor`, 2 `reviewer`), and every internal-helper firing had it empty (46), with `last_assistant_message` values such as `<no suggestion>` and `Extracting union of capture keys` and no sidecar. [Source: raw SubagentStop payloads, captured 2026-09-19]
+
+**ROOT CAUSE 2: Wrong-key attribution bug — 89% "unknown" rate**
+
+The payload field is `.agent_type`; orchestra-hook.sh probed `.subagent_type`, `.tool_input.subagent_type`, and `.agent`, never `.agent_type`. Every end event that ever resolved did so via filename inference (logfile sidecar), which is why researcher and researcher-deep had 86 starts between them and zero ends — no `agent-*` filename pattern was recognized. [Source: scripts/orchestra-hook.sh line ~163, end-arm SUBAGENT probe (pre-2026-09-19)]
+
+### What shipped
+
+- `usage` field removed from T1 events
+- `cross_check_t1_t2()` and `read_telemetry_events()` deleted; spurious delta warnings eliminated
+- `compute_blast_radius()` and `blast_radius` field deleted (stub with zeros, unread)
+- `compute_cost()` now emits warning on missing model key instead of silent $0
+- `.agent_type` attribution cascade: payload `.agent_type` → `agent-<id>.meta.json` sidecar `agentType` → give up (drop the firing)
+- Session-identity gate: `.transcript-session-ids` companion, `~/.claude/active-sessions/*.lck` liveness check via `kill -0`, fail-open on no identity
+- `orchestra-hook.sh` drops internal-agent firings (empty agent_type, no sidecar) instead of recording as "unknown"
+- `find_active_session_dir()` now prefers inflight-marker presence (`.brain-inflight` / `.duo-inflight`) in candidate ranking — reduces "magnet" vulnerability (though the vulnerability did not cause the measured excess events)
+- Pricing corrections (Sonnet 5, Opus 4-7, new models)
+- `scripts/section-live-cost.sh` uses full 3-tier cascade for orchestra subagent term
+- Repo hygiene: `scripts/__pycache__/` gitignored (new .gitignore pattern added); `scripts/orchestra-hook.sh.orig` removed
+
+### Still open / worth filing upstream
+
+**What remains undocumented:** That SubagentStop fires for Claude Code's internal helper agents at all is undocumented. The [hooks reference](https://code.claude.com/docs/en/hooks) describes the event only as running "when a Claude Code subagent has finished responding", with no mention of repeats or internal agents. A documentation clarification upstream would help others building telemetry on top of this hook.
+
+**Why the earlier hypotheses were incomplete:** The original stashed diagnosis considered `LAST_LOGFILE_REF` single-slot clobbering, filename pattern gaps, and parallel-dispatch "magnet" effects — all real vulnerabilities — but none of them explain a 28:1 ratio with only 4 sidecars. The internal helper agents firing every 31s while a background task is alive is the primary volume driver. The variable distribution (not uniform 2.8–13.4 as claimed) is consistent with a hypothesis that sessions with no background tasks during dispatch run at 1:1 (one end per start), while sessions with background activity see higher ratios as internal agents contribute repeat firings. However, this hypothesis about why 17 sessions sit at exactly 1.0 was not verified — we did not check whether those sessions actually lacked background tasks during their dispatch phases.
+
+### Unresolved, recorded as inconsequential
+
+Two Phase-0 researchers disagreed on how many retained sessions sit at exactly 1.0 ratio (one reported 17, the other ~34). The discrepancy was not run to ground because it affects no decision: all sessions are processed correctly regardless. The measurement is included here for transparency.
+
+---
+
+## §17. Context-window staleness in config/context-windows.yaml (2026-09-19, flagged not-scheduled)
+
+**Status:** deliberately NOT changed in this session; flagged for awareness and future work.
+
+**Finding:** `config/context-windows.yaml` contains stale context-window entries for production models:
+- `claude-sonnet-5: 200000` — STALE. Anthropic's live model page lists Claude Sonnet 5's context window as 1M tokens (verified 2026-09-19 against https://platform.claude.com/docs/en/about-claude/models).
+- Missing entries: `claude-opus-4-8` and `claude-fable-5-1` are absent from that file.
+
+Changing the context denominator affects the status-line `ctx` segment display (e.g., `12% 120K/200K` becomes `1% 120K/1M`) and warrants a separate review to verify no unintended consequence. Not changed here; flagged for deliberate operator decision in a follow-up session.

@@ -48,21 +48,46 @@ stamp_fields() {
 }
 
 # Find the most recent orchestra session_dir without a telemetry.json
-# (i.e., still active or unfinalised). Prefer one with .duo-inflight or
-# an in-flight ORCHESTRA_TITLE in state.env. Echoes the path or empty.
+# (i.e., still active or unfinalised). Among candidates lacking telemetry.json,
+# prefer the first (most recent by mtime) that also has .brain-inflight or
+# .duo-inflight; only if none carry a marker, fall back to the most recent one.
+#
+# This closes only the abandoned-before-any-marker case (session started but no
+# marker written yet). It does NOT close the stale-marker case — a real example
+# exists on disk at SoHoAI/.claude/orchestra/sessions/20260730T103150Z-4080513,
+# carrying a .duo-inflight dated 2026-07-30 with no telemetry.json. The stale-marker
+# case is closed by the session-identity gate in Step 8c below.
 find_active_session_dir() {
   local sessions_root="${ORCHESTRA_DIR}/sessions"
-  [ -d "$sessions_root" ] || return 0
-  # Pick the most recently modified subdir that lacks telemetry.json
-  find "$sessions_root" -mindepth 1 -maxdepth 1 -type d \
-       -printf '%T@ %p\n' 2>/dev/null \
-    | sort -rn \
-    | while read -r _ts dir; do
-        if [ ! -f "$dir/telemetry.json" ]; then
-          echo "$dir"
-          break
-        fi
-      done
+  if [ ! -d "$sessions_root" ]; then
+    return 0
+  fi
+  local _candidates=""
+  _candidates="$(find "$sessions_root" -mindepth 1 -maxdepth 1 -type d \
+                   -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)"
+  if [ -z "$_candidates" ]; then
+    return 0
+  fi
+  local _fallback=""
+  local dir=""
+  # Pass 1: newest-first; take the first unfinalised dir that carries an inflight
+  # marker. Remember the newest unfinalised markerless dir as a fallback.
+  while IFS= read -r dir; do
+    if [ -n "$dir" ] && [ ! -f "$dir/telemetry.json" ]; then
+      if [ -f "$dir/.brain-inflight" ] || [ -f "$dir/.duo-inflight" ]; then
+        echo "$dir"
+        return 0
+      fi
+      if [ -z "$_fallback" ]; then
+        _fallback="$dir"
+      fi
+    fi
+  done <<< "$_candidates"
+  # Pass 2: no marker anywhere — behave as before.
+  if [ -n "$_fallback" ]; then
+    echo "$_fallback"
+  fi
+  return 0
 }
 
 stage_for_subagent() {
@@ -75,6 +100,62 @@ stage_for_subagent() {
     general-purpose) echo "implement" ;;
     *)               echo "agent" ;;
   esac
+}
+
+# Session-identity gate: verify that CURRENT_SID belongs to the active session.
+# Returns 0 if the event should be appended, 1 if it should be rejected.
+# On ambiguous cases (missing .lck, empty SID), fails open and returns 0.
+should_append_t1_event() {
+  local active_session_dir="$1"
+  local current_sid="$2"
+
+  # Fail open if both SID sources are empty or unknown
+  if [ -z "$current_sid" ] || [ "$current_sid" = "unknown" ]; then
+    return 0
+  fi
+
+  local session_ids_file="${active_session_dir}/.transcript-session-ids"
+
+  # Seed the file if it doesn't exist
+  if [ ! -f "$session_ids_file" ]; then
+    if [ -f "${active_session_dir}/.transcript-uuid" ]; then
+      cat "${active_session_dir}/.transcript-uuid" > "$session_ids_file" 2>/dev/null || true
+    else
+      printf '%s\n' "$current_sid" > "$session_ids_file" 2>/dev/null || true
+    fi
+  fi
+
+  # Check if CURRENT_SID is already in the file
+  if grep -qxF "$current_sid" "$session_ids_file" 2>/dev/null; then
+    return 0
+  fi
+
+  # SID not in file — check if the owning process is still alive via .lck
+  local lck_file="${HOME}/.claude/active-sessions/$(basename "$active_session_dir").lck"
+  if [ ! -f "$lck_file" ]; then
+    # .lck missing: process is provably dead, reject this event.
+    # (The .lck may have been pruned by another session's housekeeping.)
+    return 1
+  fi
+
+  # Extract cc_pid from .lck and check if process is alive
+  local cc_pid=""
+  cc_pid="$(grep '^cc_pid=' "$lck_file" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+  if [ -z "$cc_pid" ]; then
+    # Malformed .lck, fail open
+    return 0
+  fi
+
+  # Check if process is alive
+  if kill -0 "$cc_pid" 2>/dev/null; then
+    # Process is alive: adopt the new SID and allow append
+    printf '%s\n' "$current_sid" >> "$session_ids_file" 2>/dev/null || true
+    return 0
+  else
+    # Process is dead: reject this event
+    # (Bounded T1-only degradation; T2 walks all in-window JSONLs independently.)
+    return 1
+  fi
 }
 
 # Returns 0 if a /brain or /duo session is currently in-flight.
@@ -130,16 +211,18 @@ case "$MODE" in
 
     # T1 telemetry: append start-event to active session's telemetry-events.jsonl
     ACTIVE_SESSION_DIR="$(find_active_session_dir)"
+    # (8c) Session-identity gate: prefer payload's .session_id, else STAMP_SESSION
+    CURRENT_SID="$(printf '%s' "$INPUT_JSON" | jq -r '.session_id // empty' 2>/dev/null || true)"
+    if [ -z "$CURRENT_SID" ]; then
+      CURRENT_SID="$STAMP_SESSION"
+    fi
     # Override STAMP_SESSION with the actual transcript UUID if available
     if [ -n "$ACTIVE_SESSION_DIR" ] && [ -f "${ACTIVE_SESSION_DIR}/.transcript-uuid" ]; then
         STAMP_SESSION="$(cat "${ACTIVE_SESSION_DIR}/.transcript-uuid" 2>/dev/null | tr -d '[:space:]' || true)"
     fi
-    if [ -n "$ACTIVE_SESSION_DIR" ]; then
-      USAGE_JSON="$(printf '%s' "$INPUT_JSON" \
-        | jq -c '.tool_input.usage // .params.usage // null' 2>/dev/null \
-        || echo "null")"
-      printf '{"event":"start","subagent":"%s","stage":"%s","usage":%s,%s}\n' \
-        "$SUBAGENT" "$STAGE" "$USAGE_JSON" "$(stamp_fields)" \
+    if [ -n "$ACTIVE_SESSION_DIR" ] && should_append_t1_event "$ACTIVE_SESSION_DIR" "$CURRENT_SID"; then
+      printf '{"event":"start","subagent":"%s","stage":"%s",%s}\n' \
+        "$SUBAGENT" "$STAGE" "$(stamp_fields)" \
         >> "${ACTIVE_SESSION_DIR}/telemetry-events.jsonl" 2>/dev/null || true
       # Capture transcript path using CLAUDE_PROJECT_DIR (reliable in hook env)
       if [ ! -f "${ACTIVE_SESSION_DIR}/.transcript-path" ]; then
@@ -159,26 +242,52 @@ case "$MODE" in
     ;;
 
   end)
-    SUBAGENT="$(printf '%s' "$INPUT_JSON" \
-      | jq -r '.subagent_type // .tool_input.subagent_type // .agent // "unknown"' 2>/dev/null \
-      || echo "unknown")"
+    # (8a) Attribution cascade: documented field → sidecar fallback → unknown
+    # (a) Documented top-level field — populated for real dispatched subagents.
+    #     Capture jq's exit status separately: an empty result means "no agent_type"
+    #     (an internal helper agent, safe to drop), but a NON-ZERO status means jq itself
+    #     failed, and dropping a real subagent's event on a parse failure would lose
+    #     telemetry silently. Those two cases must not be conflated.
+    SUBAGENT="$(printf '%s' "$INPUT_JSON" | jq -r '.agent_type // empty' 2>/dev/null)"
+    JQ_STATUS=$?
+
+    # (b) Belt-and-braces: derive agent-<id>.meta.json from .agent_transcript_path and read
+    #     its agentType — the same field telemetry-summarize.py reads for T2.
+    if [ -z "$SUBAGENT" ]; then
+      AGENT_TRANSCRIPT_PATH="$(printf '%s' "$INPUT_JSON" | jq -r '.agent_transcript_path // empty' 2>/dev/null || true)"
+      if [ -n "$AGENT_TRANSCRIPT_PATH" ]; then
+        META_PATH="$(dirname "$AGENT_TRANSCRIPT_PATH")/$(basename "$AGENT_TRANSCRIPT_PATH" .jsonl).meta.json"
+        if [ -f "$META_PATH" ]; then
+          SUBAGENT="$(jq -r '.agentType // empty' "$META_PATH" 2>/dev/null || true)"
+        fi
+      fi
+    fi
+
+    # (c) Neither the payload field nor the sidecar resolved a type. This is one of
+    #     Claude Code's own internal helper agents (suggestion generator, or the
+    #     per-background-task status describer), which fire SubagentStop on a ~31s
+    #     cadence while a background task is alive, carry an empty agent_type, and
+    #     have no agent-<id>.meta.json sidecar. They are not orchestra subagents.
+    #     Drop the firing entirely rather than recording it as "unknown" — and do it
+    #     HERE, before the $LAST_LOGFILE_REF sidecar below is read and deleted, so
+    #     internal firings no longer consume another subagent's logfile reference.
+    if [ -z "$SUBAGENT" ]; then
+      if [ "$JQ_STATUS" -ne 0 ]; then
+        # jq failed — record a visible event rather than dropping it silently, matching
+        # the pre-2026-09-19 behaviour. A malformed payload is a real anomaly and must
+        # remain observable.
+        SUBAGENT="unknown"
+      else
+        # Genuine internal helper agent (see comment above) — drop the firing.
+        exit 0
+      fi
+    fi
     STAGE="$(stage_for_subagent "$SUBAGENT")"
 
     LOGFILE=""
     if [ -f "$LAST_LOGFILE_REF" ]; then
       LOGFILE="$(cat "$LAST_LOGFILE_REF" 2>/dev/null || true)"
       rm -f "$LAST_LOGFILE_REF" 2>/dev/null || true
-    fi
-
-    # Derive subagent type from logfile name when SubagentStop JSON omits it
-    if [ "$SUBAGENT" = "unknown" ] && [ -n "$LOGFILE" ]; then
-        case "$(basename "$LOGFILE")" in
-            plan-*)      SUBAGENT="planner"  ;;
-            implement-*) SUBAGENT="actor"    ;;
-            review-*)    SUBAGENT="reviewer" ;;
-            research-*)  SUBAGENT="Explore"  ;;
-        esac
-        STAGE="$(stage_for_subagent "$SUBAGENT")"
     fi
 
     if [ -n "$LOGFILE" ] && [ -f "$LOGFILE" ]; then
@@ -197,16 +306,18 @@ case "$MODE" in
 
     # T1 telemetry: append end-event to active session's telemetry-events.jsonl
     ACTIVE_SESSION_DIR="$(find_active_session_dir)"
+    # (8c) Session-identity gate: prefer payload's .session_id, else STAMP_SESSION
+    CURRENT_SID="$(printf '%s' "$INPUT_JSON" | jq -r '.session_id // empty' 2>/dev/null || true)"
+    if [ -z "$CURRENT_SID" ]; then
+      CURRENT_SID="$STAMP_SESSION"
+    fi
     # Override STAMP_SESSION with the actual transcript UUID if available
     if [ -n "$ACTIVE_SESSION_DIR" ] && [ -f "${ACTIVE_SESSION_DIR}/.transcript-uuid" ]; then
         STAMP_SESSION="$(cat "${ACTIVE_SESSION_DIR}/.transcript-uuid" 2>/dev/null | tr -d '[:space:]' || true)"
     fi
-    if [ -n "$ACTIVE_SESSION_DIR" ]; then
-      USAGE_JSON="$(printf '%s' "$INPUT_JSON" \
-        | jq -c '.usage // .tool_input.usage // .params.usage // null' 2>/dev/null \
-        || echo "null")"
-      printf '{"event":"end","subagent":"%s","stage":"%s","usage":%s,%s}\n' \
-        "$SUBAGENT" "$STAGE" "$USAGE_JSON" "$(stamp_fields)" \
+    if [ -n "$ACTIVE_SESSION_DIR" ] && should_append_t1_event "$ACTIVE_SESSION_DIR" "$CURRENT_SID"; then
+      printf '{"event":"end","subagent":"%s","stage":"%s",%s}\n' \
+        "$SUBAGENT" "$STAGE" "$(stamp_fields)" \
         >> "${ACTIVE_SESSION_DIR}/telemetry-events.jsonl" 2>/dev/null || true
     fi
     ;;

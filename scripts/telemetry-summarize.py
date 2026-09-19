@@ -357,21 +357,6 @@ def query_litellm_cost(parent: Dict, subagents: List[Dict], warnings: List[str])
         return None
 
 
-def read_telemetry_events(session_dir: Path) -> List[Dict[str, Any]]:
-    """Read telemetry-events.jsonl if it exists."""
-    events_file = session_dir / "telemetry-events.jsonl"
-    events = []
-    if events_file.exists():
-        try:
-            with open(events_file) as f:
-                for line in f:
-                    if line.strip():
-                        events.append(json.loads(line))
-        except Exception:
-            pass
-    return events
-
-
 def read_outcome(session_dir: Path) -> str:
     """Read outcome from .outcome file, or return 'partial' as default."""
     outcome_file = session_dir / ".outcome"
@@ -516,6 +501,8 @@ def compute_cost(parent: Dict, subagents: List[Dict], pricing_data: Dict, warnin
             tokens = parent["tokens"].get(tier_key, 0)
             rate = rates.get(tier_name, 0.0)
             total_cost += (tokens * rate) / 1_000_000.0
+    elif parent_model_key:
+        warnings.append(f"Model '{parent['model']}' not found in pricing.yaml; parent cost contribution is $0")
 
     # Subagent costs
     for subagent in subagents:
@@ -526,19 +513,10 @@ def compute_cost(parent: Dict, subagents: List[Dict], pricing_data: Dict, warnin
                 tokens = subagent["tokens"].get(tier_key, 0)
                 rate = rates.get(tier_name, 0.0)
                 total_cost += (tokens * rate) / 1_000_000.0
+        elif sub_model_key:
+            warnings.append(f"Model '{subagent['model']}' not found in pricing.yaml; subagent cost contribution is $0")
 
     return round(total_cost, 4)
-
-
-def compute_blast_radius(session_dir: Path) -> Dict[str, int]:
-    """Estimate blast radius from PLAN.md, TASKS.json, etc."""
-    blast = {
-        "files_read": 0,
-        "files_edited": 0,
-        "loc_changed_estimate": 0,
-    }
-    # For now, return stub values; detailed parsing would require reading JSONL for tool_use blocks
-    return blast
 
 
 def compute_iterations(session_dir: Path, subagents: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -557,34 +535,7 @@ def compute_iterations(session_dir: Path, subagents: List[Dict[str, Any]]) -> Di
     }
 
 
-def cross_check_t1_t2(session_dir: Path, subagents: List[Dict], warnings: List[str]) -> None:
-    """Compare T1 token counts with T2 if telemetry-events.jsonl exists."""
-    events = read_telemetry_events(session_dir)
-    if not events:
-        return
-
-    t1_tokens: Dict[str, int] = {}
-    for event in events:
-        subagent_type = event.get("subagent", event.get("subagent_type", "unknown"))
-        if subagent_type not in t1_tokens:
-            t1_tokens[subagent_type] = 0
-        usage = event.get("usage") or {}
-        t1_tokens[subagent_type] += sum(usage.values())
-
-    # Compare with T2 subagents by type
-    t2_tokens: Dict[str, int] = {}
-    for subagent in subagents:
-        subagent_type = subagent.get("type", "unknown")
-        if subagent_type not in t2_tokens:
-            t2_tokens[subagent_type] = 0
-        tokens = subagent.get("tokens", {})
-        t2_tokens[subagent_type] += sum(tokens.values())
-
-    for subagent_type, t2_total in t2_tokens.items():
-        if subagent_type in t1_tokens:
-            t1_total = t1_tokens[subagent_type]
-            if t2_total > 0 and abs(t1_total - t2_total) > 0.05 * t2_total:
-                warnings.append(f"T1/T2 token delta on {subagent_type}: T1={t1_total} T2={t2_total}")
+# T1 token usage not available to hooks (anthropics/claude-code#80446); T1-vs-T2 cross-check removed.
 
 
 def _validate_cost_display(
@@ -752,12 +703,8 @@ def main():
     if cost_usd is None:
         cost_usd = 0.0
 
-    # Compute iterations and blast radius
+    # Compute iterations
     iterations = compute_iterations(session_dir, subagents)
-    blast_radius = compute_blast_radius(session_dir)
-
-    # Cross-check T1 vs T2
-    cross_check_t1_t2(session_dir, subagents, warnings)
 
     # Build telemetry.json
     telemetry = {
@@ -778,7 +725,6 @@ def main():
             "subagent_cost_usd": _subagent_cost_usd,
             "parent_cost_usd": _parent_cost_usd,
         } if _subagent_cost_usd is not None else {}),
-        "blast_radius": blast_radius,
         "pricing_snapshot_date": str(pricing_data.get("last_updated") or datetime.now(timezone.utc).strftime("%Y-%m-%d")),
     }
 

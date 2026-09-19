@@ -1,34 +1,47 @@
-last_updated: 2026-08-24
-source: https://docs.anthropic.com/en/docs/about-claude/models/all-models
+last_updated: 2026-09-19
+source: https://platform.claude.com/docs/en/about-claude/pricing
 notes: |
-  Rates are USD per 1M tokens. cache_creation here = 5-minute TTL (1.25x input);
-  long-cache (1h TTL, 2x input) is not yet tracked separately. Verify against
-  the source URL above on every bump and update last_updated.
-  claude-sonnet-5 uses the standard rate ($3/$15), not the introductory rate
-  ($2/$10 through 2026-08-31) — avoids an underreport once the intro period
-  lapses. SoHoAI's LiteLLM-derived telemetry confirms $3/$15 is also what's
-  actually billed.
+  Rates are USD per 1M tokens.
+  cache_creation = 5-minute TTL cache write (1.25x base input); 1-hour TTL (2x)
+  is not tracked separately.
+  cache_read = 0.1x base input for all models EXCEPT claude-fable-5-1, which is
+  0.025x (not derived from the multiplier rule — Anthropic prices Fable 5.1 cache
+  hits at 0.025x base input).
+  The claude-sonnet-5 introductory rate became the standard rate; the planned
+  increase to $3/$15 scheduled for Sept 1, 2026 was cancelled by Anthropic.
+  Hence $2/$10 is the current standard price.
+  Verify against the source URL on every bump and update last_updated.
 models:
   claude-opus-5:
     input: 5.00
     output: 25.00
     cache_creation: 6.25
     cache_read: 0.50
+  claude-opus-4-8:
+    input: 5.00
+    output: 25.00
+    cache_creation: 6.25
+    cache_read: 0.50
+  claude-fable-5-1:
+    input: 10.00
+    output: 50.00
+    cache_creation: 12.50
+    cache_read: 0.25                       # literal 0.25, NOT 1.25x*0.1 (Anthropic uses 0.025x for Fable 5.1)
   claude-fable-5:
     input: 10.00
     output: 50.00
     cache_creation: 12.50
     cache_read: 1.00
-  claude-opus-4-7:            # legacy — superseded by claude-opus-5 (2026-07-24)
-    input: 15.00
-    output: 75.00
-    cache_creation: 18.75
-    cache_read: 1.50
+  claude-opus-4-7:            # legacy — same rate as claude-opus-5 (2026-07-24)
+    input: 5.00
+    output: 25.00
+    cache_creation: 6.25
+    cache_read: 0.50
   claude-sonnet-5:
-    input: 3.00
-    output: 15.00
-    cache_creation: 3.75
-    cache_read: 0.30
+    input: 2.00
+    output: 10.00
+    cache_creation: 2.50
+    cache_read: 0.20
   claude-sonnet-4-6:            # legacy alias — appears in transcripts predating the Sonnet 5 cutover (~2026-07-07)
     input: 3.00
     output: 15.00

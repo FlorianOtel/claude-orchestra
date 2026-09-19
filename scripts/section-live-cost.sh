@@ -101,9 +101,9 @@ if is_native:
                 if c:
                     subagent_cost += c
 else:
-    # SoHoAI path — same source as orchestra session-end telemetry.
-    # 5 s timeout (sohoai-live-cost.sh used 1 s and routinely timed out
-    # against a busy DB, leaving the cache stale for the rest of the session).
+    # Orchestra session: 3-tier cascade for subagent cost (mirrors telemetry-summarize.py).
+    # Tier 1: SoHoAI query (same source as orchestra session-end telemetry,
+    #         5 s timeout to avoid stale cache from busy DB).
     try:
         usage = ts.query_sohoai_usage(
             session_id=section_id,
@@ -117,6 +117,39 @@ else:
             subagent_cost = float(usage["cost_usd"])
     except Exception:
         pass
+
+    # Tier 2: litellm (if Tier 1 failed or returned None/0)
+    # NOTE: Script stdout is cost-only; cascading warnings suppressed.
+    if subagent_cost == 0.0:
+        sub_dir_hits = glob.glob(f"{projects_root}/*/{parent_uuid}/subagents")
+        if sub_dir_hits:
+            # Build subagents list from agent-*.jsonl files (same walk as is_native branch)
+            subagents_list = []
+            for meta_path in sorted(Path(sub_dir_hits[0]).glob("agent-*.meta.json")):
+                sub_jsonl = meta_path.with_suffix("").with_suffix(".jsonl")
+                model, tokens, first_ts, _ = ts._walk_jsonl_for_tokens(
+                    sub_jsonl, section_start_unix, ended_at_unix
+                )
+                if first_ts is None or not model:
+                    continue
+                subagents_list.append({"model": model, "tokens": tokens})
+
+            # Try litellm (no parent in this context; warnings suppressed)
+            litellm_cost = None
+            if subagents_list:
+                try:
+                    litellm_cost = ts.query_litellm_cost({"model": None, "tokens": {}}, subagents_list, [])
+                    if litellm_cost is not None:
+                        subagent_cost = litellm_cost
+                except Exception:
+                    pass
+
+            # Tier 3: pricing.yaml fallback (only if Tier 2 returned None, not if it returned 0.0)
+            if litellm_cost is None and subagents_list and pricing_data:
+                try:
+                    subagent_cost = ts.compute_cost({"model": None, "tokens": {}}, subagents_list, pricing_data, []) or 0.0
+                except Exception:
+                    pass
 
 total = parent_cost + subagent_cost
 out = f"{total:.4f}"

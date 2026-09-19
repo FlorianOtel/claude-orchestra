@@ -91,6 +91,9 @@
 - **Timestamp:** 2026-05-27T00-00
 - **Model:** claude-opus-4-7[1m]
 - **Reason:** refactor(status-line): per-CC-session accumulator. Display = total cost since CC session start, growing monotonically, never resetting at section transitions. State file gains `ACCUMULATED_TOTAL` field; transitions freeze just-ended section's final cost (telemetry.json `cost_usd_estimate` for orchestra, LAST_NONZERO for native) into the total. Cleanup-order tweak in /brain and /duo-act runs telemetry-summarize.sh BEFORE inflight removal so telemetry.json is guaranteed present at transition (race-free reconciliation). Manual smoke tests pending operator post-deploy: accumulator never resets, telemetry reconciliation visible at brain-end, back-to-back orchestra growth, `--resume --fork-session` resets to $0 (new UUID = no state file).
+- **Timestamp:** 2026-09-19T07-33
+- **Model:** claude-opus-5[1m] (Brain) + claude-sonnet-5 (Planner) + claude-haiku-4-5-20251001 (Actor) + claude-haiku-4-5-20251001 / claude-sonnet-5 (Researcher / Researcher-deep, Phase 0)
+- **Reason:** removed the T1/T2 cross-check and the blast_radius stub (both dead code contradicting the settled "T2 authoritative, T1 timing-only" design); stopped emitting the always-null `usage` field; fixed subagent attribution (the payload field is `.agent_type`, which the hook never probed — hence 89% of end events recorded as `unknown`); added a filter for Claude Code's internal helper agents, which fire SubagentStop on a ~31s cadence and accounted for 42 end events against 5 real subagents in one measured session; added a session-identity gate closing a stale session-dir magnet; corrected config/pricing.yaml (claude-sonnet-5 3/15 -> 2/10, claude-opus-4-7 15/75 -> 5/25, added claude-opus-4-8 and claude-fable-5-1 with its non-standard 0.25 cache_read); gave section-live-cost.sh the full 3-tier cascade; repo hygiene. Note that manual smoke tests are PENDING operator post-deploy.
 
 ## Telemetry Smoke Tests
 

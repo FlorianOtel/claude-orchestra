@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Haiku 4.5)
-updated_at: 2026-06-05--14-35
+updated_at: 2026-09-19--09-33
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -441,7 +441,7 @@ Two complementary approaches cover the full cost picture. They are tried in prio
 
 Two layers instrument every orchestra session:
 
-**T1 — hook-based, real-time.** `orchestra-hook.sh` appends one JSON event per subagent dispatch / completion to `${SESSION_DIR}/telemetry-events.jsonl`. Captures subagent type, timing, and stage identity. Token counts are always `null` (hook payloads do not expose them). T1 drives the live `~$X.YZ` status-line badge.
+**T1 — hook-based, real-time.** `orchestra-hook.sh` appends one JSON event per subagent dispatch / completion to `${SESSION_DIR}/telemetry-events.jsonl`. Captures subagent type, timing, and stage identity. The `usage` field is no longer emitted at all as of 2026-09-19; hook payloads never carried token counts and the request to expose them was closed not-planned (anthropics/claude-code#80446). The live `~$X.YZ` status-line badge is driven by `scripts/section-live-cost.sh` (querying SoHoAI → litellm → pricing.yaml), independent of T1.
 
 **T2 — transcript parsing, authoritative.** Runs once at cleanup. `telemetry-summarize.py` walks all `*.jsonl` files in the project's transcripts directory whose records fall within the session time window — capturing content split across multiple JSONLs by `--fork-session` or `/clear`-induced UUID rotation. For each in-window parent JSONL, it walks `<uuid>/subagents/agent-*.jsonl` (subagent transcripts), attributed via `agent-*.meta.json` sidecars (`{"agentType": "…"}`). Token counts accumulate across all contributing JSONLs; USD cost is computed via the cost-source cascade (see §Cost-source cascade).
 
@@ -450,9 +450,32 @@ T2 writes:
 - `~/.claude/orchestra/telemetry.jsonl` — global append-only trend log; one line per session (includes `session_dir` for cross-project lookup).
 - T2 supersedes T1 for all cost figures.
 
+**Removed fields and validation checks (2026-09-19):**
+- `blast_radius` field REMOVED — it was a stub returning three hardcoded zeros in all 49 retained records and was read by nothing (`compute_blast_radius()` function deleted).
+- `cross_check_t1_t2()` and `read_telemetry_events()` DELETED — the check compared T1 (always 0, because hook payloads never carried token counts) against T2 and emitted a spurious delta warning for every subagent type in every session. The spurious warnings made `parser_warnings` useless as a signal channel.
+- `compute_cost()` now emits a warning when a model key is missing from `pricing.yaml` instead of silently contributing $0.
+
+#### SubagentStop repeat firings — internal helper agents
+
+Claude Code runs INTERNAL helper agents — a suggestion generator, and a per-background-task status describer — which fire SubagentStop roughly every 31 seconds while a background task is alive. These carry an EMPTY `agent_type` and have NO `agent-<id>.meta.json` sidecar. A REAL dispatched subagent fires SubagentStop ONCE, at completion, with `agent_type` populated and a sidecar present.
+
+This fully accounts for the previously-unexplained event counts: one measured session recorded 42 end events for 5 dispatched subagents; across 55 retained sessions the end:start ratio ranged 0.5x to 28x (median 5.0, with 17 sessions at exactly 1.0). Captured evidence (snapshot of 59 payloads at time of writing; the probe remained live briefly afterwards so the file may contain more): every real dispatched subagent carried a populated `agent_type` (11 `actor`, 2 `reviewer`), and every internal-helper firing had it empty (46), with `last_assistant_message` values such as `<no suggestion>` and `Extracting union of capture keys` and no sidecar. `orchestra-hook.sh` now drops firings with no resolvable agent type instead of recording them as "unknown". (The sidecar fallback `agent-<id>.meta.json` → `agentType` exists as a defence-in-depth; across the sample of 59 captured firings, the top-level `.agent_type` always resolved directly, so the sidecar has never been exercised in practice.)
+
+What remains undocumented upstream is that SubagentStop fires for Claude Code's own internal helper agents at all; the [hooks reference](https://code.claude.com/docs/en/hooks) describes the event only as running "when a Claude Code subagent has finished responding", with no mention of repeats or of internal agents.
+
 **T2 time window:** `[started_at, ended_at]`. `started_at` is parsed from the session-dir basename (`<YYYYMMDDTHHMMSSZ>-<PID>`). `ended_at` is the mtime of `${SESSION_DIR}/.outcome` when present, falling back to `time.time()`. All exit paths — `/duo-act`, `/duo-abandon`, `/brain` cleanup (all verdicts), `/brain-abandon`, and the Stop-hook safety net — write `.outcome` before invoking the summariser. This makes the window deterministic and re-runs of the summariser idempotent (the window does not expand to "now").
 
 **Safety net:** the `Stop` hook runs T2 on session dirs where cleanup started (inflight markers already removed) but `telemetry.json` was never written. Sessions that still have `.duo-inflight` or `.brain-inflight` are skipped — they are in-progress.
+
+#### Session-identity gate
+
+Early T1 events may arrive before the payload carries a usable session identity (the `.transcript-session-ids` companion file seeded from `.transcript-uuid`, appended to on adoption). `orchestra-hook.sh` gate: for a T1 event that carries a resolvable session identity, test whether that identity is already known to the session (the `.transcript-session-ids` companion file, seeded from `.transcript-uuid` and appended to on adoption) or whether its owning process can be verified alive (`~/.claude/active-sessions/<session-dir>.lck` present and `kill -0 <cc_pid>` succeeds). Events carrying no resolvable identity fail open and are written — see below. The `.lck` file is cleaned up by the Stop hook when the CC session ends.
+
+**Rejection path:** If the `.lck` is missing or `kill -0` fails, the gate returns 1 and the `if ... && should_append_t1_event ...` guard is false. **No event is written** — rejected silently.
+
+**Fail-open paths:** (1) If `CURRENT_SID` is empty or "unknown", the gate returns 0 (no identity to check); the event is written using whatever `STAMP_SESSION` resolves to, normally the real transcript UUID from `.transcript-uuid`. (2) If the `.lck` is malformed (no parseable `cc_pid`), the gate returns 0 and the event is written using `STAMP_SESSION`. In both cases, the event is preserved (not discarded with a placeholder), but uses the transcript UUID (not a literal "unknown" string).
+
+Two accepted failure modes: (1) a pruned `.lck` can cause bounded T1-only rejection for a rotating session (T2 is unaffected — it walks all in-window JSONLs and cares only about `.transcript-uuid`); (2) `kill -0` carries the usual PID-reuse risk already accepted elsewhere in this codebase. No changes to `commands/brain.md` or `commands/duo-plan.md` were required — the gate is entirely internal to `orchestra-hook.sh` and T2.
 
 ---
 
@@ -519,7 +542,7 @@ For sessions with a `native-<UUID>` session ID, the report also looks up the tra
 #### Inspecting per-session data
 
 ```bash
-# T1 live events for an orchestra session (timing and stage identity; usage=null)
+# T1 live events for an orchestra session (timing and stage identity)
 cat ~/.claude/orchestra/sessions/<session-id>/telemetry-events.jsonl
 
 # T2 authoritative per-session record
@@ -630,6 +653,8 @@ T2 applies sources in priority order; first non-zero value wins:
 | — | none (0.0) | `"none"` | All three unavailable or return zero |
 
 `pricing.yaml` carries a `last_updated` field. `telemetry-report.sh` warns if rates are > 90 days stale; bump manually after verifying against https://docs.anthropic.com/en/docs/about-claude/models/all-models.
+
+**Pricing-precedence hazard:** `load_pricing_yaml()` checks `~/.claude/config/pricing.yaml` as candidate [0], which would silently shadow the deployed `~/.claude/orchestra/pricing.yaml` if created. Brain verified on 2026-09-19 that candidate [0] does NOT exist, so the hazard is LATENT, not active. Also note that nothing validates `pricing.yaml` against live Anthropic rates; two errors persisted undetected (see TODO section 15).
 
 **Caveats:**
 - Per-session `telemetry.json` is the authoritative source (T2). The global `telemetry.jsonl` stores totals only.

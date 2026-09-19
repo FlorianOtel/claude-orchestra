@@ -20,3 +20,7 @@ logs/
 *~
 *.swp
 utils/codebase_snapshot.md
+
+# Python bytecode — regenerated automatically, never commit
+__pycache__/
+*.pyc
