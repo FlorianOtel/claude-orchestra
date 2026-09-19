@@ -2,8 +2,8 @@
 title: "Claude Orchestra — v2 Deferred & TODO items"
 created_at: 20260428-000000
 created_by: Claude Code (Claude Haiku 4.5)
-updated_by: Claude Code (Claude Haiku 4.5)
-updated_at: 2026-05-06--00-00
+updated_by: Claude Code (Claude Opus 5)
+updated_at: 2026-09-19--02-48
 context: >
   Extract from the design.md reference document, capturing all deferred
   features, v2 architectural stubs, optimization opportunities, and open
@@ -380,3 +380,46 @@ files, attribution is ambiguous. Left out of scope for the same reasons as above
 attribution is already working → only the native attribution gap remains, and Option C
 is the pragmatic fix. If orchestra attribution is also broken → Option A is needed,
 and Option C covers native while Option A covers orchestra.
+
+---
+
+## §15. Pricing.yaml staleness and live-cost badge exposure (2026-09-18 audit)
+
+**Summary:** `config/pricing.yaml` contains stale rates for Anthropic models; live-cost badge accuracy depends on `section-live-cost.sh` which only uses tier-3 fallback (pricing.yaml), not the 3-tier cascade (SoHoAI → litellm → pricing.yaml). Session-end telemetry accuracy is unaffected because it uses the full cascade.
+
+### Findings
+
+**Stale Claude Sonnet 5 rates:**
+- `config/pricing.yaml` declares: `claude-sonnet-5: input=$3.00, output=$15.00, cache_write=$3.75, cache_read=$0.30` (per MTok)
+- Actual current rate (verified 2026-09-18 against live Anthropic price list): `input=$2.00, output=$10.00, cache_write=$2.50, cache_read=$0.20`
+- The live Anthropic price list shows no introductory-versus-standard distinction for Sonnet 5 — it lists a single rate of $2/$10. The stale rates ($3/$15) are Sonnet 4.6 and 4.5's rates, which appear as legacy rows directly above Sonnet 5 on the same page.
+- The `pricing.yaml notes:` block incorrectly asserts "introductory rate $2/$10 through 2026-08-31 vs standard $3/$15" — unsupported by the current live price list and contradicted by SoHoAI `main.py:112-115`.
+
+**Missing model entries:**
+- `claude-opus-4-8` and `claude-fable-5-1` are absent from `config/pricing.yaml` `models:` map entirely
+- Both appear as parent models in retained telemetry (` claude-opus-4-8` $60.32, `claude-fable-5-1` $22.56, both `cost_source: litellm` — session-end telemetry priced them correctly via litellm fallback)
+
+**Live badge exposure:**
+- `scripts/section-live-cost.sh` calls `ts.compute_cost()` directly (tier-3 pricing.yaml fallback), **not** the full cascade
+- `query_litellm_cost()` is never imported or called by `section-live-cost.sh`
+- When a parent model is missing from pricing.yaml, `compute_cost()` silently returns $0 for that term with no warning
+- **Derived, not observed:** reading the code path implies the live badge renders a $0 parent term for a parent model absent from pricing.yaml. This was NOT confirmed at runtime — a related prediction about `claude-opus-5[1m]` was made the same way and proved wrong (the bracketed id never reaches the pricing lookup; transcripts record plain `claude-opus-5`). Verify against a live Fable 5.1 or Opus 4.8 session before acting on it.
+
+**Fallback-hierarchy gap:**
+- `~/.claude/config/pricing.yaml` (candidate [0] in `load_pricing_yaml()` candidate list) does not exist but **would silently shadow** the deployed `~/.claude/orchestra/pricing.yaml` if created
+- No protection against this precedence hazard
+
+**Blast-radius measurement:**
+- Across 208 telemetry records in `~/.claude/orchestra/telemetry.jsonl`: `cost_source` was `litellm` 125×, `sohoai_api*` 58×, `pricing_yaml` 1× (2026-05-06, predating the bad rate)
+- Session-end telemetry largely unaffected by stale pricing (only 1 record used pricing.yaml, and it was before the rate changed)
+- Live badge accuracy is the exposed surface (real-time display via `section-live-cost.sh`)
+
+**Documentation drift:**
+- `docs/Telemetry.md:467` in SoHoAI repo describes a "pricing.yaml override in `query_litellm_cost()`" — this override does not exist in the code
+
+### What needs to be done
+
+1. Update `config/pricing.yaml`: Sonnet 5 rates ($2/$10, cache $2.50/$0.20), add `claude-opus-4-8` and `claude-fable-5-1` entries
+2. Fix `scripts/section-live-cost.sh` to use the full 3-tier cascade for live badge (SoHoAI → litellm → pricing.yaml), not pricing.yaml only
+3. Add a warning in `compute_cost()` when a model key is not found (currently silent $0)
+4. Document the fallback-hierarchy precedence hazard (candidate [0] shadowing candidate [1])
