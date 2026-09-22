@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Haiku 4.5)
-updated_at: 2026-09-19--09-33
+updated_by: Claude Code (Claude Opus 5)
+updated_at: 2026-09-22--18-45
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -156,6 +156,20 @@ At section transition, the just-ending section's final cost is frozen into `ACCU
 
 The status line script is called by Claude Code on each render tick — after every model turn and when tool calls are shown in the UI. **The active-subagent indicator (`▶ stage`) appears in real-time**: the `PreToolUse(Agent)` hook writes the `start` event to `invocations.log` *before* the Task tool executes, so the indicator is already present by the time the subagent begins running.
 
+**How "active" is decided (2026-09-22).** `scripts/subagent-active-indicator.sh` returns the stage of the most recent `start` whose `logfile` appears in no `end`'s `logfile`, and whose `ts` falls inside a staleness window. It replaced a rule that compared the newest `start`'s timestamp against the newest `end`'s, which had no per-agent identity and no notion of staleness. Two failures followed from that, both reproduced against fixtures before the replacement was written:
+
+- an unmatched `start` rendered as active **forever** — nothing ever retired it;
+- with two agents in flight, the second one's `end` blanked the badge **while the first was still running** — a false negative, and the worse direction.
+
+Measured across real logs before the fix: 61 permanently-unmatched starts in one project, 88 (51% of all starts) in another, 45 in a third.
+
+Pairing is per-stage. `start` files one marker per dispatch under `.claude/orchestra/.pending-agents/<stage>/`, named with epoch-nanoseconds so lexicographic order is dispatch order; an identified `end` retires the oldest marker **in its own stage**. Two consequences worth knowing:
+
+- **Only identified ends consume a marker.** An `end` whose `agent_type` could not be read arrives as subagent `unknown` and is mapped to stage `agent`. Such events outnumbered real agents roughly 5:1 (1784 of 2086 in one project) and previously fell through to the sidecar read, deleting a live agent's logfile. They are now skipped, and their log line — which carried no information once no logfile resolved — is no longer written at all. That removed 86–93% of `invocations.log` volume, which is what makes the bounded tail read in the indicator safe.
+- **Within a stage, ordering is FIFO, not identity.** Genuinely out-of-order completion inside one stage can attach the wrong *label*. The *count* is always right — exactly one marker retires per identified end — so the active/inactive decision holds even when the label transiently does not.
+
+The staleness window is `status_line.stale_subagent_ttl_minutes` in `config/config.yaml` (default 30). It is the guarantee rather than an optimisation: a subagent that is killed, or whose `end` write is gated off by session-marker removal mid-flight, never produces an `end` at all, and only a clock can retire those. The status line reads the key with `grep` rather than a YAML parse because it renders on every prompt; measured cost is ~21 ms against a 3,278-line log.
+
 #### Data sources
 
 | Signal | Source | Written by |
@@ -163,7 +177,7 @@ The status line script is called by Claude Code on each render tick — after ev
 | `/duo` title and inflight state | `${SESSION_DIR}/.duo-inflight` (live only — liveness verified via `native-<uuid>.lck`; stale markers from crashed sessions are skipped silently) | `/duo-plan` command setup |
 | `/brain` title and mode | `.claude/orchestra/state.env` (`ORCHESTRA_MODE=brain`, `ORCHESTRA_TITLE=…`) | `/brain` command setup |
 | `/brain` inflight marker (session-discovery for `/brain-abandon` and explicit CMD-classification by Stop-hook) | `${SESSION_DIR}/.brain-inflight` | `/brain` command setup |
-| Active subagent stage | `.claude/orchestra/invocations.log` (last `start` event with no matching `end`) | `orchestra-hook.sh start` (PreToolUse) |
+| Active subagent stage | `.claude/orchestra/invocations.log` via `scripts/subagent-active-indicator.sh` (newest `start` with no matching `end`, inside `stale_subagent_ttl_minutes`) | `orchestra-hook.sh start` (PreToolUse) / `end` (SubagentStop) |
 | Section state (per-CC-session) | `~/.claude/active-sessions/<UUID>.section` — KEY=VALUE: `SECTION_ID`, `SECTION_START_UNIX`, `LAST_NONZERO`, `ACCUMULATED_TOTAL`. Atomic rename on every transition and on each `LAST_NONZERO`/`ACCUMULATED_TOTAL` update. | `orchestra-block.sh` per render tick |
 | Live cost (parent — always) | Parent JSONL walked with `[SECTION_START_UNIX, now]` window, priced via `pricing.yaml` — same code path as T2 end-of-session parent cost | `section-live-cost.sh` (TTL 8 s cache) |
 | Live cost (orchestra subagents) | `query_sohoai_usage(session_id=SECTION_ID, …, timeout_s=5)` — same source as `cost_source="sohoai_api+t2_parent"` at session close | `section-live-cost.sh` → `telemetry-summarize.py` |
@@ -359,7 +373,10 @@ sessions/
     PLAN.md, TASKS.json, review-comments.md
     .duo-inflight          (present during /duo planning phase + execution; removed by /duo-act or /duo-abandon)
     .brain-inflight        (present throughout /brain Phase 0/1/2/3; removed by cleanup block or /brain-abandon)
-    .last-logfile          (sidecar: hook start writes logfile path; end reads+deletes)
+    .pending-agents/<stage>/  (one marker per pending dispatch; start writes, an
+                               identified end retires the oldest in its own stage)
+    .last-logfile          (legacy single-slot sidecar; read only as a fallback so a
+                            deploy landing mid-flight does not orphan in-flight agents)
     .outcome               (pass | block | partial | abandoned)
     telemetry-events.jsonl (T1 live hook stream)
     telemetry.json         (T2 final record, written at cleanup)
@@ -394,7 +411,7 @@ Quick-ref troubleshooting:
 | Status-line badge doesn't appear | `config.yaml` missing or `cwd` unset in status-line input | `ls ~/.claude/orchestra/config.yaml`; run `status-line.sh` manually with test JSON |
 | `PLAN.md` garbled | Atomic-rename not used — direct write instead | Inspect for `.tmp` sibling; check Planner prompt |
 | `/brain` command unrecognised | `~/.claude/commands/brain.md` missing or malformed | `/help` lists commands; inspect file frontmatter |
-| `.last-logfile.*` files accumulating in `orchestra/` | Old bug: sidecar used PID of hook process so `end` could never find and delete `start`'s file | Fixed: sidecar now lives in session dir (shared path for start and end); stale files auto-cleaned after 120 min at hook startup |
+| `.last-logfile.*` files accumulating in `orchestra/` | Sidecar was named with the hook process's own PID, which differs between the `start` and `end` invocations — so `end` could never find or delete `start`'s file. A later move into the session dir fixed the naming but left a single slot that any concurrent `start` clobbered. | Superseded 2026-09-22 by one marker per dispatch under `.pending-agents/<stage>/`. Legacy files are still read as a fallback and auto-cleaned after 120 min; stale markers are pruned after 24 h. |
 | `logs/*.log` growing unbounded | No rotation | Auto-rotated at hook startup: files older than 30 days deleted |
 | `~$X.YZ` cost never appears | T1 hook not writing to `telemetry-events.jsonl` | Check `orchestra-hook.sh` is executable and wired in `settings.json` |
 

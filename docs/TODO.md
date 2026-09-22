@@ -2,8 +2,8 @@
 title: "Claude Orchestra — v2 Deferred & TODO items"
 created_at: 20260428-000000
 created_by: Claude Code (Claude Haiku 4.5)
-updated_by: Claude Code (Claude Haiku 4.5)
-updated_at: 2026-09-19--09-33
+updated_by: Claude Code (Claude Opus 5)
+updated_at: 2026-09-22--18-45
 context: >
   Extract from the design.md reference document, capturing all deferred
   features, v2 architectural stubs, optimization opportunities, and open
@@ -489,6 +489,8 @@ The payload field is `.agent_type`; orchestra-hook.sh probed `.subagent_type`, `
 
 **Why the earlier hypotheses were incomplete:** The original stashed diagnosis considered `LAST_LOGFILE_REF` single-slot clobbering, filename pattern gaps, and parallel-dispatch "magnet" effects — all real vulnerabilities — but none of them explain a 28:1 ratio with only 4 sidecars. The internal helper agents firing every 31s while a background task is alive is the primary volume driver. The variable distribution (not uniform 2.8–13.4 as claimed) is consistent with a hypothesis that sessions with no background tasks during dispatch run at 1:1 (one end per start), while sessions with background activity see higher ratios as internal agents contribute repeat firings. However, this hypothesis about why 17 sessions sit at exactly 1.0 was not verified — we did not check whether those sessions actually lacked background tasks during their dispatch phases.
 
+**Update 2026-09-22 — the other tail is now diagnosed.** §16 explained only ratios *above* 1.0 (internal helpers firing repeatedly). Ratios *below* 1.0 — starts with no end, which is what leaves the `▶` badge lit forever — were recorded as an observed number and never root-caused. See §18.
+
 ### Unresolved, recorded as inconsequential
 
 Two Phase-0 researchers disagreed on how many retained sessions sit at exactly 1.0 ratio (one reported 17, the other ~34). The discrepancy was not run to ground because it affects no decision: all sessions are processed correctly regardless. The measurement is included here for transparency.
@@ -504,3 +506,82 @@ Two Phase-0 researchers disagreed on how many retained sessions sit at exactly 1
 - Missing entries: `claude-opus-4-8` and `claude-fable-5-1` are absent from that file.
 
 Changing the context denominator affects the status-line `ctx` segment display (e.g., `12% 120K/200K` becomes `1% 120K/1M`) and warrants a separate review to verify no unintended consequence. Not changed here; flagged for deliberate operator decision in a follow-up session.
+
+---
+
+## §18. Starts without ends — the low-ratio tail, diagnosed and fixed (2026-09-22)
+
+§16 measured end:start ratios of 0.5×–28× and explained only the high side: Claude Code's
+internal helper agents fire `SubagentStop` on a ~31 s cadence. The **low** side — ratios below
+1.0, meaning a `start` that never got a matching `end` — was left as an observed number. That is
+the tail that leaves the status line's `▶ stage` badge lit indefinitely, because nothing ever
+retired an unmatched start.
+
+### Measured before the fix
+
+| project | starts | ends | matched | unmatched starts |
+|---|---|---|---|---|
+| AYA | 351 | 2086 | 290 | 61 |
+| claude-orchestra | 174 | 360 | 86 | **88 (51%)** |
+| octmux | 329 | 409 | 284 | 45 |
+
+The dominant cause was **not** concurrency. `end` events whose `agent_type` could not be read
+arrive as subagent `unknown` and previously fell through to the sidecar read, deleting a live
+agent's logfile:
+
+| project | `end` with `subagent:"unknown"` | of which consumed a sidecar |
+|---|---|---|
+| AYA | 1784 / 2086 (86%) | 33 |
+| claude-orchestra | 335 / 360 (93%) | 61 |
+
+Unmatched starts are long-standing — 13–22% per month since May, stable. The unknown-end flood
+is recent: 1952 in September against 110 in June on comparable start volume. That coincides with
+agent dispatch becoming asynchronous; recorded as correlation with a plausible mechanism (more
+background agents → more `SubagentStop` firings with unparseable payloads), not as established
+causation.
+
+### Two further defects found while reading
+
+- **The PID fallback could never match.** `.last-logfile.${STAMP_PID}` keyed on `$$`, the hook
+  process's own PID, which differs between the `start` and `end` invocations. The 120-minute
+  prune existed to sweep the resulting litter.
+- **`researcher` and `researcher-deep` had no case in `stage_for_subagent`**, so they fell
+  through to `agent` — the same bucket unidentified ends map to. An `unknown` end could
+  therefore retire a live researcher's marker. This is why researcher starts paired so badly
+  (45 starts / 10 ends in AYA), and is the concrete mechanism behind §16's note at line 470 that
+  "researcher and researcher-deep had 86 starts between them and zero ends".
+
+### Disposition — what the fix does and does not do
+
+| Path | Disposition |
+|---|---|
+| Unidentified `end` consumes a live marker | **Eliminated** — only identified ends retire a marker; the line itself is no longer written |
+| Single-slot clobbering under concurrency | **Eliminated** — one marker per dispatch under `.pending-agents/<stage>/` |
+| PID-keyed fallback can never match | **Eliminated** — markers live under `ORCHESTRA_DIR`, stable across both invocations |
+| `researcher`/`researcher-deep` sharing the `agent` bucket | **Eliminated** — both now map to `research` |
+| `SubagentStop` never fires (killed subagent) | **Mitigated only**, by the TTL reaper |
+| `has_active_orchestra_session()` strips the `end` write mid-flight | **Mitigated only**, by the TTL reaper |
+| A genuine subagent whose payload lacks `agent_type` hits the internal-helper `exit 0` | **Mitigated only**, by the TTL reaper |
+
+### Separate phenomenon, deliberately not fixed here
+
+Agents also linger in **Claude Code's own task rows** — distinct from the orchestra badge — when
+a subagent shells out to an unbounded command and the grandchild outlives it: the agent cannot
+finalise until every child exits. One `find /` ran as `bfs` for 74 minutes at load ~9.6, with its
+parent reported `completed` an hour earlier. Orchestra cannot make the harness close such a row.
+What it can do, and now does:
+
+- **Prevent** — `agents/{actor,researcher,researcher-deep,reviewer}.md` gained a shell-discipline
+  block (never search from `/`; bound long commands with `timeout`; go to the path rather than
+  scanning for it; confirm children have exited before returning). `planner.md` is untouched — it
+  has no `Bash`, and is the only tier never observed stalling.
+- **Detect** — `scripts/check-orphans.sh`, called advisorily from the `start` hook. It matches the
+  binary (`pgrep -x`), never a pattern string, and excludes its **whole ancestor chain**: a
+  two-level `$$`/`$PPID` guard is not enough, because under command substitution the caller is the
+  grandparent, and that caller is typically Claude Code's own Bash wrapper. That was observed
+  during development, not theorised.
+- **Surface** — `/brain` and `/duo-act` now treat the harness's "background work of its own still
+  running… the result below may be interim" notice as a signal that the returned result may be
+  **partial**, not merely that a row is untidy.
+
+Recorded as prevented and detected, **not** eliminated.

@@ -2,8 +2,8 @@
 title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design notes & open questions"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Sonnet 4.6)
-updated_at: 2026-05-22--19-00
+updated_by: Claude Code (Claude Opus 5)
+updated_at: 2026-09-22--18-45
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1674,3 +1674,54 @@ fi
 Guard `[[ "$model_id" == *"[1m]"* ]]` covers both paths: injection fired (settings.json → [1m] added) and [1m] already present from CC on turn 1 (harmless double-compute, same result).
 
 **Files changed:** `status-line/orchestra-block.sh`, `docs/design-history.md` (this amendment).
+
+## Amendment 2026-09-22 — stuck subagents: orphaned shell work, and the stale `▶` badge (uncommitted)
+
+Two problems had been conflated under "agents get stuck". They turned out to be distinct, with
+different mechanisms and different histories, and only one was what the operator was hitting.
+
+**The reported pain was harness task rows, not the orchestra badge.** Across four incidents
+(19–22 Sep) the operator described rows shaped `"<agent-type> -- <task description>"`, cleared
+with `TaskStop`. The orchestra badge cannot render that — it prints a single stage word. The
+mechanism: a subagent shells out to an unbounded command and the grandchild outlives it; the
+agent cannot finalise until every child exits. One `find /` ran as `bfs` for 74 minutes at load
+~9.6 while `ListAgents` reported its parent `completed`. The correlation is clean — the four
+tiers that stalled are exactly the four with `Bash`; `planner` has none and never stalled.
+
+**The badge defect was real but separate, and older.** Unmatched starts have run at 13–22% every
+month since May. The dominant cause was not concurrency but `end` events whose `agent_type` could
+not be read: they arrive as subagent `unknown`, and previously fell through to the sidecar read
+and deleted a live agent's logfile. In one project those were 1784 of 2086 end events.
+
+Two further defects surfaced while reading the code: the `.last-logfile.${STAMP_PID}` fallback
+keyed on the hook's own PID, which differs between `start` and `end`, so it could never match;
+and `researcher`/`researcher-deep` had no case in `stage_for_subagent`, falling through to
+`agent` — the same bucket unidentified ends map to. Full measurements and the per-path
+disposition table are in `docs/TODO.md` §18.
+
+**Two findings came out of testing rather than reading, and both were the tests catching the
+author.** First, `check-orphans.sh`'s original two-level self-guard (`$$` and `$PPID`) was
+insufficient: under command substitution the caller is the grandparent, and that caller is
+Claude Code's own Bash wrapper, whose command line contains `shell-snapshots`. A `--kill` run
+would have terminated the session that invoked it. Replaced with a full ancestor walk, and the
+decoy test that caught it is kept. Second, the pending-marker invariant test initially passed
+with the guard deliberately removed — it filed its marker under `review`, a stage unidentified
+ends never search, so it could not fail on the defect it named. Refiled under `agent` and
+re-proved by break-and-restore.
+
+**Deliberately not done:** making the harness close a row it holds open (not orchestra's to fix);
+`has_active_orchestra_session()` gate semantics; the internal-helper `exit 0` branch; root causes
+of `SubagentStop` never firing. Those last three are mitigated by the TTL reaper, not eliminated,
+and the disposition table says so.
+
+**Files changed:** `agents/{actor,researcher,researcher-deep,reviewer}.md` (shell discipline),
+`commands/brain.md` and `commands/duo-act.md` (interim-result handling, `ListAgents` before
+`TaskStop`), `scripts/orchestra-hook.sh` (per-stage pending markers, identified-end gate,
+unknown-end suppression, stage mapping, pruning + log size guard, advisory orphan check),
+`scripts/check-orphans.sh` (new), `scripts/subagent-active-indicator.sh` (new),
+`scripts/test-active-indicator.sh` (new, 16 assertions), `status-line/orchestra-block.sh`,
+`config/config.yaml` (`status_line.stale_subagent_ttl_minutes`), `deploy.sh` (register both new
+scripts), `docs/design.md`, `docs/TODO.md` (§18), `docs/design-history.md` (this amendment).
+
+**Not deployed and not committed** — `./deploy.sh` swaps the hook under any live session, so the
+timing is the operator's call.
