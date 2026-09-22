@@ -73,16 +73,20 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
     invlog="$cwd/.claude/orchestra/invocations.log"
     active_indicator=""
     if [ -f "$invlog" ]; then
-        last_start_line=$(grep '"event":"start"' "$invlog" 2>/dev/null | tail -n 1)
-        last_end_line=$(grep   '"event":"end"'   "$invlog" 2>/dev/null | tail -n 1)
-        if [ -n "$last_start_line" ]; then
-            IFS=$'\t' read -r last_start_ts active_stage active_subagent < <(
-                echo "$last_start_line" | jq -r '[.ts // "", .stage // "", .subagent // ""] | @tsv'
-            )
-            last_end_ts=$(echo "$last_end_line" | jq -r '.ts // ""')
-            if [ -n "$last_start_ts" ] && [ "$last_start_ts" \> "${last_end_ts:-}" ]; then
-                active_indicator=$(printf "${ACTIVE_COLOR}▶ %s${RESET}" "$active_stage")
-            fi
+        # Active = a start whose logfile no end has claimed, within the staleness TTL.
+        # The previous rule compared the newest start's ts against the newest end's ts, with
+        # no per-agent identity and no TTL: an unmatched start rendered active forever, and
+        # with two agents in flight the second's end blanked the badge while the first still
+        # ran. Both reproduced against fixtures; see scripts/test-active-indicator.sh.
+        #
+        # TTL is read with grep rather than a YAML parse — this renders on every prompt.
+        _ttl=$(grep -m1 '^[[:space:]]*stale_subagent_ttl_minutes:' \
+                   "$HOME/.claude/orchestra/config.yaml" 2>/dev/null \
+               | sed 's/.*:[[:space:]]*//' | tr -dc '0-9')
+        active_stage=$(bash "$HOME/.claude/scripts/subagent-active-indicator.sh" \
+                            "$invlog" "${_ttl:-30}" 2>/dev/null)
+        if [ -n "$active_stage" ]; then
+            active_indicator=$(printf "${ACTIVE_COLOR}▶ %s${RESET}" "$active_stage")
         fi
     fi
 

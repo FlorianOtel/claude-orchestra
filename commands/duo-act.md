@@ -87,6 +87,16 @@ Map Actor's return to a cleanup `outcome`:
 
 ---
 
+## Interim results — a completion notice is not a completion
+
+If Actor's completion notice carries *"This agent stopped with background work of its own still running... the result below may be interim"*, the diff summary in front of you may be incomplete, and Actor's row will stay listed until its orphaned child exits.
+
+- **Treat the result as interim** — re-verify the step against the tree before accepting `ready_for_review`.
+- **Run `check-orphans.sh`** (`~/.claude/scripts/check-orphans.sh`). A subagent's "I cleaned up" is the least-checked claim in its report.
+- **`ListAgents` before `TaskStop`** — a listed agent is not necessarily a working one, and killing a live one costs its work.
+
+`/duo` has no Reviewer, so this check is yours or it does not happen.
+
 ## Phase 4 — Cleanup + telemetry
 
 Run a single call — the script owns the full sequence (outcome write, lck removal,

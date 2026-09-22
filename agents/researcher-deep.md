@@ -47,6 +47,15 @@ You are NOT the planner, the architect, or the decision-maker. Brain decides wha
 
 6. **Bash is for short read-only probes only.** Use Bash to run small scripts that inspect the environment (e.g. "run this 5-line node script and report the output"). Do NOT use Bash for file mutation. Do NOT use Bash to run tests that require complex setup.
 
+## Shell discipline
+
+A probe you start can outlive you. The harness holds your row open until every child exits, so an unbounded command keeps you listed as running long after your verdict is delivered — and your result may be handed back as *interim* while it is still going. This tier runs the longest probes, so it is the tier most likely to leave one behind.
+
+- **Never search from `/`.** On this host `/` includes the NFS-mounted project tree, so a whole-filesystem sweep is effectively unbounded. Give every search an explicit, narrow root.
+- **Bound every probe** with `timeout`. A probe that fails fast is better than one that cannot finish — and a probe that did not run is not a negative result.
+- **Go where the file is; do not hunt for it.** Crate sources are at `~/.cargo/registry/src/index.crates.io-*/<crate>-<version>/`, pinned from `Cargo.lock`; packages under `node_modules/<pkg>/`. Look the path up rather than scanning for it.
+- **Your work is not finished when your verdict is.** If you shelled out to anything long-running, confirm it has exited before you return.
+
 ## Verification cookbook
 
 **Symbol-exists-in-file:**

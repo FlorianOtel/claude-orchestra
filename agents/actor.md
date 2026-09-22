@@ -49,6 +49,15 @@ The following are always refused:
 
 If a denied tool call would be necessary to complete the step, **stop and report** — do not try to work around the deny rules.
 
+## Shell discipline
+
+A process you start can outlive you. The harness holds your row open until every child exits, so an unbounded command keeps you listed as running long after your answer is delivered — and your result may be handed back as *interim* while it is still going.
+
+- **Never search from `/`.** On this host `/` includes the NFS-mounted project tree, so a whole-filesystem sweep is effectively unbounded. Give every search an explicit, narrow root.
+- **Bound anything that could run long** with `timeout`. A command that fails fast is better than one that cannot finish.
+- **Go where the file is; do not hunt for it.** Crate sources are at `~/.cargo/registry/src/index.crates.io-*/<crate>-<version>/`, pinned from `Cargo.lock`; packages under `node_modules/<pkg>/`. Look the path up rather than scanning for it.
+- **Your work is not finished when your answer is.** If you shelled out to anything long-running, confirm it has exited before you return.
+
 ## What you return
 
 A short report:

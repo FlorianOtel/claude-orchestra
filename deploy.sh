@@ -93,11 +93,17 @@ done
 #                              for parent always; SoHoAI for orchestra subagents;
 #                              JSONL for native subagents. Time-windowed by
 #                              SECTION_START_UNIX (see status-line/orchestra-block.sh).
+#   subagent-active-indicator.sh — decides whether a subagent is genuinely running, from
+#                              unmatched starts within a staleness TTL. Replaces the old
+#                              newest-start-vs-newest-end heuristic in the status line.
+#   check-orphans.sh         — finds shell processes that outlived the subagent that spawned
+#                              them (they hold the agent's harness row open). Report by
+#                              default; --kill terminates, always by PID, never by pattern.
 echo "Scripts:"
 for s in \
     orchestra-hook.sh orchestra-cleanup.sh telemetry-summarize.sh telemetry-report.sh \
     otel-headers-helper.sh bash-session-init.sh ctx-segment.sh \
-    section-live-cost.sh; do
+    section-live-cost.sh subagent-active-indicator.sh check-orphans.sh; do
     if [ -f "$REPO/scripts/$s" ]; then
         copy_file "$REPO/scripts/$s" "$CLAUDE/scripts/$s"
         $DRY_RUN || chmod +x "$CLAUDE/scripts/$s"

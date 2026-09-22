@@ -58,6 +58,18 @@ housekeeping:
   session_retention_days: 30       # delete sessions/ subdirs older than N days
 
 # -----------------------------------------------------------------------------
+# Status line
+# -----------------------------------------------------------------------------
+# How long an unmatched `start` may keep rendering the ▶ active-subagent badge.
+# Some dispatches never produce an `end` at all — a killed subagent, or a session
+# marker removed mid-flight — so pairing alone cannot retire them; only a clock can.
+# 30 min comfortably covers a long research or actor dispatch (typical: 2-4 min)
+# while guaranteeing an abandoned badge clears inside the same working session.
+# Read by scripts/subagent-active-indicator.sh; see docs/design.md.
+status_line:
+  stale_subagent_ttl_minutes: 30
+
+# -----------------------------------------------------------------------------
 # SoHoAI cost API (Stage 2 telemetry)
 # When enabled, telemetry-summarize.py queries GET ${ANTHROPIC_BASE_URL}/v1/usage/stats
 # for cost_usd as primary source; falls back to litellm then pricing.yaml.

@@ -37,6 +37,18 @@ Session-dir artefacts written directly via `Bash` heredoc are exempt from this r
 
 Each of these means a `Task`-tool dispatch was skipped. If you catch yourself about to do any of them, stop and dispatch the appropriate subagent.
 
+### Interim results — a completion notice is not a completion
+
+A subagent's completion notice can carry:
+
+> *"This agent stopped with background work of its own still running... the result below may be interim."*
+
+When it does, the result in front of you may be **partial**, and that agent's row will stay listed until its orphaned child exits. Both matter; the first matters more.
+
+- **Treat the result as interim.** Do NOT persist it into `RESEARCH.md`, a verdict synthesis, or a Planner brief as settled. Re-dispatch, or verify the load-bearing claim yourself, before building on it. A researcher that returned early may have returned less than it found.
+- **Run `check-orphans.sh`** (deployed at `~/.claude/scripts/check-orphans.sh`). A subagent's own "I cleaned up" is the least-checked claim in its report — one Reviewer cited a wrapper's `exit 144` as proof of a kill while the `bfs` grandchild it had spawned ran for another hour at load ~10.
+- **`ListAgents` before `TaskStop`.** A subagent showing in the status line is not necessarily still working — and one that genuinely is will lose its work if you kill it. Establish which you are looking at before reaching for the kill.
+
 ## When to use /brain vs /duo
 
 | Situation | Use |

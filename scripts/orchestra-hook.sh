@@ -32,6 +32,8 @@ STAMP_PID=$$
 STAMP_SESSION="${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-unknown}}"
 STAMP_TS="$(date -u +%Y%m%dT%H%M%SZ)"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+
 PROJECT_DIR="$(realpath "${CLAUDE_PROJECT_DIR:-$PWD}" 2>/dev/null || echo "${CLAUDE_PROJECT_DIR:-$PWD}")"
 ORCHESTRA_DIR="${PROJECT_DIR}/.claude/orchestra"
 INVOCATIONS_LOG="${ORCHESTRA_DIR}/invocations.log"
@@ -41,6 +43,18 @@ mkdir -p "${LOGS_DIR}" 2>/dev/null || true
 touch "${INVOCATIONS_LOG}" 2>/dev/null || true
 find "${ORCHESTRA_DIR}" -maxdepth 1 -name ".last-logfile.*" -mmin +120 -delete 2>/dev/null || true
 find "${LOGS_DIR}" -maxdepth 1 -name "*.log" -mtime +30 -delete 2>/dev/null || true
+# Pending markers whose `end` never arrived (killed subagent, gated-off write). The display
+# layer's TTL already ignores them; this stops the directory growing without bound.
+find "${ORCHESTRA_DIR}/.pending-agents" -type f -mmin +1440 -delete 2>/dev/null || true
+# invocations.log is append-only. Rare backstop so it cannot grow without limit; the size
+# test is a single stat, and truncation is atomic.
+if [ -n "$(find "${INVOCATIONS_LOG}" -maxdepth 0 -size +5M 2>/dev/null)" ]; then
+    if tail -n 5000 "${INVOCATIONS_LOG}" > "${INVOCATIONS_LOG}.tmp" 2>/dev/null; then
+        mv -f "${INVOCATIONS_LOG}.tmp" "${INVOCATIONS_LOG}" 2>/dev/null || true
+    else
+        rm -f "${INVOCATIONS_LOG}.tmp" 2>/dev/null || true
+    fi
+fi
 
 stamp_fields() {
   printf '"host":"%s","pid":"%s","session":"%s","ts":"%s"' \
@@ -93,10 +107,15 @@ find_active_session_dir() {
 stage_for_subagent() {
   case "$1" in
     planner)         echo "plan" ;;
-    actor)           echo "implement" ;;
+    actor|actor-heavy) echo "implement" ;;
     reviewer)        echo "review" ;;
     Plan)            echo "plan" ;;
     Explore)         echo "research" ;;
+    # researcher / researcher-deep previously fell through to "agent" — the same bucket
+    # unidentified ends land in — so an `unknown` end could retire a live researcher's
+    # pending marker. That is why researcher starts paired so badly (45 starts / 10 ends in
+    # one measured project; docs/TODO.md records a stretch with 86 starts and zero ends).
+    researcher|researcher-deep) echo "research" ;;
     general-purpose) echo "implement" ;;
     *)               echo "agent" ;;
   esac
@@ -200,13 +219,41 @@ case "$MODE" in
       echo "## Subagent running..."
     } > "$LOGFILE" 2>/dev/null || true
 
-    # Remember this logfile so `end` can find it
-    printf '%s\n' "$LOGFILE" > "$LAST_LOGFILE_REF" 2>/dev/null || true
+    # Remember this logfile so `end` can find it.
+    #
+    # One marker per pending dispatch, filed under its stage. The previous single-slot
+    # sidecar ($LAST_LOGFILE_REF) was clobbered by any concurrent start before the first end
+    # could read it; its PID-named fallback keyed on $$, which differs between the start and
+    # end processes and so could never match at all.
+    #
+    # Name sorts chronologically: epoch-nanoseconds is fixed-width, so lexicographic order is
+    # dispatch order. Stage-keying means an end can only ever consume a marker of its own kind.
+    PENDING_DIR="${ORCHESTRA_DIR}/.pending-agents/${STAGE}"
+    mkdir -p "$PENDING_DIR" 2>/dev/null || true
+    printf '%s\n' "$LOGFILE" \
+      > "${PENDING_DIR}/$(date -u +%s%N)-${STAMP_PID}" 2>/dev/null || true
 
     if has_active_orchestra_session; then
       printf '{"event":"start","stage":"%s","subagent":"%s","logfile":"%s",%s}\n' \
         "$STAGE" "$SUBAGENT" "$LOGFILE" "$(stamp_fields)" \
         >> "$INVOCATIONS_LOG" 2>/dev/null || true
+    fi
+
+    # Advisory orphan check — surfaces shell work left running by PREVIOUS subagents at the
+    # moment a new one is dispatched. SubagentStop cannot serve here: the hook fires at
+    # finalisation, and finalisation is exactly what an orphaned child blocks.
+    #
+    # Report only. A hook must never kill a process on its own initiative, and it must never
+    # block a dispatch, hence `timeout`.
+    if [ -n "$SCRIPT_DIR" ] && [ -f "${SCRIPT_DIR}/check-orphans.sh" ]; then
+      _ORPHAN_OUT="$(timeout 5 bash "${SCRIPT_DIR}/check-orphans.sh" 2>/dev/null || true)"
+      _ORPHAN_N="$(printf '%s' "$_ORPHAN_OUT" \
+        | sed -n 's/^check-orphans: \([0-9][0-9]*\) orphan.*/\1/p' | head -n 1)"
+      if [ -n "$_ORPHAN_N" ]; then
+        printf '{"event":"orphans","count":"%s","stage":"%s",%s}\n' \
+          "$_ORPHAN_N" "$STAGE" "$(stamp_fields)" \
+          >> "$INVOCATIONS_LOG" 2>/dev/null || true
+      fi
     fi
 
     # T1 telemetry: append start-event to active session's telemetry-events.jsonl
@@ -284,10 +331,26 @@ case "$MODE" in
     fi
     STAGE="$(stage_for_subagent "$SUBAGENT")"
 
+    # Consume a pending marker ONLY for an identified subagent.
+    #
+    # `unknown` reaches here when jq failed to read .agent_type (the empty-but-jq-succeeded
+    # case already exited above as an internal helper). Such events outnumber real agents by
+    # roughly 5:1 — 1784 of 2086 end events in one measured project — and previously they fell
+    # through to the sidecar read and DELETED a live agent's logfile. That is the main reason
+    # starts went unmatched, ahead of concurrency.
     LOGFILE=""
-    if [ -f "$LAST_LOGFILE_REF" ]; then
-      LOGFILE="$(cat "$LAST_LOGFILE_REF" 2>/dev/null || true)"
-      rm -f "$LAST_LOGFILE_REF" 2>/dev/null || true
+    if [ "$SUBAGENT" != "unknown" ]; then
+      PENDING_DIR="${ORCHESTRA_DIR}/.pending-agents/${STAGE}"
+      _MARKER="$(ls -1 "$PENDING_DIR" 2>/dev/null | sort | head -n 1)"
+      if [ -n "$_MARKER" ] && [ -f "${PENDING_DIR}/${_MARKER}" ]; then
+        LOGFILE="$(cat "${PENDING_DIR}/${_MARKER}" 2>/dev/null || true)"
+        rm -f "${PENDING_DIR}/${_MARKER}" 2>/dev/null || true
+      elif [ -f "$LAST_LOGFILE_REF" ]; then
+        # Legacy fallback: this dispatch's `start` ran under pre-fix code (e.g. a deploy
+        # landed mid-flight). Read the old single-slot sidecar rather than orphan the agent.
+        LOGFILE="$(cat "$LAST_LOGFILE_REF" 2>/dev/null || true)"
+        rm -f "$LAST_LOGFILE_REF" 2>/dev/null || true
+      fi
     fi
 
     if [ -n "$LOGFILE" ] && [ -f "$LOGFILE" ]; then
@@ -298,7 +361,11 @@ case "$MODE" in
       } >> "$LOGFILE" 2>/dev/null || true
     fi
 
-    if has_active_orchestra_session; then
+    # An unidentified end now resolves no logfile, so its line would carry no information at
+    # all — stage "agent", subagent "unknown", empty logfile. Suppress it. This removes
+    # 86-93% of invocations.log volume and is what makes a bounded tail read meaningful for
+    # the status line. T1 telemetry below is unaffected and still records the event.
+    if [ "$SUBAGENT" != "unknown" ] && has_active_orchestra_session; then
       printf '{"event":"end","stage":"%s","subagent":"%s","logfile":"%s",%s}\n' \
         "$STAGE" "$SUBAGENT" "$LOGFILE" "$(stamp_fields)" \
         >> "$INVOCATIONS_LOG" 2>/dev/null || true

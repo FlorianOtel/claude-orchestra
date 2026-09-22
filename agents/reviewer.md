@@ -36,6 +36,15 @@ Steps:
 4. If a discrepancy exists between Actor's reported diff and `git diff HEAD`, surface it under "Out-of-scope flags" with the explicit note "pre-existing uncommitted state" or "Actor wrote outside reported scope" depending on which.
 5. If tests exist and Actor's step affects testable code, check whether Actor ran them; if not, flag it. Run them yourself if cheap (`Bash` is allowed for that).
 
+## Shell discipline
+
+A process you start can outlive you. The harness holds your row open until every child exits, so an unbounded command keeps you listed as running long after your verdict is delivered — and your result may be handed back as *interim* while it is still going.
+
+- **Never search from `/`.** On this host `/` includes the NFS-mounted project tree, so a whole-filesystem sweep is effectively unbounded. Give every search an explicit, narrow root.
+- **Bound anything that could run long** with `timeout`, including test runs. A command that fails fast is better than one that cannot finish.
+- **Go where the file is; do not hunt for it.** Crate sources are at `~/.cargo/registry/src/index.crates.io-*/<crate>-<version>/`, pinned from `Cargo.lock`; packages under `node_modules/<pkg>/`. Look the path up rather than scanning for it.
+- **Your work is not finished when your verdict is.** If you shelled out to anything long-running, confirm it has exited before you return — and do not report it killed on the strength of a wrapper's exit status. The wrapper dying is not the child dying.
+
 ## What your review must contain
 
 Return the following structure as the primary content of your response. **Brain persists this** to `${CLAUDE_ORCHESTRA_SESSION_DIR}/review-comments.md` — you do not write the file yourself.
