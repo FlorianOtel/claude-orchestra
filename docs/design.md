@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Opus 5)
-updated_at: 2026-09-22--18-45
+updated_at: 2026-09-22--19-30
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -107,7 +107,7 @@ Five hook types in `~/.claude/settings.json`, dispatching to `~/.claude/scripts/
 
 #### Cleanup consolidation — `orchestra-cleanup.sh` (2026-06-05)
 
-`scripts/orchestra-cleanup.sh` is a single-call consolidation of all end-of-session cleanup steps (written by commit 2de61dcc412eaa13f47323a525bdec495569a889). It ensures the LLM cannot shortcut the multi-step cleanup by executing only subset of steps — the entire script runs atomically or nothing is produced. Usage: `~/.claude/scripts/orchestra-cleanup.sh <session_dir> <outcome>`. Invoked at the end of `/brain`, `/duo-act`, `/duo-abandon`, and `/brain-abandon` commands. Steps (ordered, all mandatory): (1) write `.outcome` (atomic rename); (2) remove lck file; (3) auto-detect command type (brain vs duo) from inflight marker presence; (4) run `telemetry-summarize.sh` with retry; (5) verify `telemetry.json` exists; (6) remove inflight marker; (7) clear pipeline badge in `state.env`. The script exits with a summary line and never fails the pipeline (telemetry failure is logged to `.cleanup-error` for manual inspection).
+`scripts/orchestra-cleanup.sh` is a single-call consolidation of all end-of-session cleanup steps (written by commit 2de61dcc412eaa13f47323a525bdec495569a889). It ensures the LLM cannot shortcut the multi-step cleanup by executing only subset of steps — the entire script runs atomically or nothing is produced. Usage: `~/.claude/scripts/orchestra-cleanup.sh <session_dir> <outcome>`. Invoked at the end of `/brain`, `/duo-act`, `/duo-abandon`, and `/brain-abandon` commands. Steps (ordered, all mandatory): (1) write `.outcome` (atomic rename); (2) remove lck file; (3) auto-detect command type (brain vs duo) from inflight marker presence; (4) run `telemetry-summarize.sh` with retry; (5) verify `telemetry.json` exists; (6) remove inflight marker; (7) clear the pipeline badge in **the owning project's** `state.env`. Step 7 derives the owning project by stripping the `/.claude/orchestra/sessions/<id>` suffix from the session dir, **not** from `CLAUDE_PROJECT_DIR` — a cleanup invoked from a second project (a fork that changed working directory, for instance) previously wrote the clear into the wrong project and left the owner's badge stuck on `ORCHESTRA_MODE=brain` indefinitely. When the two differ the script says so on stdout; silence is what let the original mismatch pass unnoticed. The script exits with a summary line and never fails the pipeline (telemetry failure is logged to `.cleanup-error` for manual inspection).
 
 ### Status line
 

@@ -3,7 +3,7 @@ title: "Claude Orchestra — v2 Deferred & TODO items"
 created_at: 20260428-000000
 created_by: Claude Code (Claude Haiku 4.5)
 updated_by: Claude Code (Claude Opus 5)
-updated_at: 2026-09-22--18-45
+updated_at: 2026-09-22--19-30
 context: >
   Extract from the design.md reference document, capturing all deferred
   features, v2 architectural stubs, optimization opportunities, and open
@@ -585,3 +585,43 @@ What it can do, and now does:
   **partial**, not merely that a row is untidy.
 
 Recorded as prevented and detected, **not** eliminated.
+
+---
+
+## §19. Session-owned state derived from the ambient project (2026-09-22)
+
+Two defects, one root cause: state that belongs to a *session* was being resolved against
+whatever project the caller happened to be in. Both surfaced while closing out a `/brain` session
+from a fork that had moved to a different project.
+
+### `orchestra-cleanup.sh` cleared the wrong project's badge — fixed
+
+Step 7 appended `ORCHESTRA_MODE=default` to `${CLAUDE_PROJECT_DIR}/.claude/orchestra/state.env`,
+while taking the **session dir** as its argument. Running it from project B to close a session
+owned by project A left A's badge stuck on `ORCHESTRA_MODE=brain` and wrote a stray clear into B.
+Reproduced in a scratch fixture before the fix; owner not cleared, bystander written.
+
+Now derived by stripping `/.claude/orchestra/sessions/<id>` from the session dir, with a fallback
+to `CLAUDE_PROJECT_DIR` for non-standard layouts, and a stdout note whenever the two differ.
+Three cases covered: cross-project, same-project (no spurious note), non-standard layout.
+
+### `/brain` carries a session-dir path that a fork invalidates — documented, not automated
+
+The session directory is created once by the setup block and its path then lives only in Brain's
+context. A fork or resume into a different project leaves that path pointing at the original
+project's tree. Observed: a fork kept writing `RESEARCH.md` into the first project's session dir
+while a parallel session in that project overwrote a version snapshot meant to be preserved.
+
+`commands/brain.md` § "Forked or resumed sessions" now requires an ownership check after any
+working-directory change, with the exact one-liner. **This is an instruction, not a mechanism** —
+Brain writes session artefacts via `Bash` heredoc, so no hook can intercept a write to a stale
+path. Recorded as mitigated by discipline, not eliminated.
+
+`/duo` is not exposed: `/duo-act` re-derives its session dir by searching the current project for
+a `.duo-inflight` marker on every invocation, so a fork reports `NO_SESSION` rather than writing
+cross-project.
+
+### Not addressed
+
+`state.env` is append-only and never truncated (93 lines in claude-orchestra at time of writing).
+Correct behaviour — the last value wins — but it grows without bound. Flagged, not scheduled.

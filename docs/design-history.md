@@ -3,7 +3,7 @@ title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design not
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Opus 5)
-updated_at: 2026-09-22--18-45
+updated_at: 2026-09-22--19-30
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1725,3 +1725,25 @@ scripts), `docs/design.md`, `docs/TODO.md` (§18), `docs/design-history.md` (thi
 
 **Not deployed and not committed** — `./deploy.sh` swaps the hook under any live session, so the
 timing is the operator's call.
+
+## Amendment 2026-09-22 (b) — session-owned state resolved against the ambient project
+
+Found while closing out the `/brain` session from the fork that produced the previous amendment,
+which is the only reason it was found at all: the two projects differed, so the bug had somewhere
+to show.
+
+`orchestra-cleanup.sh` takes a session dir but resolved the badge target from
+`CLAUDE_PROJECT_DIR`. Closing a project-A session from project B therefore left A's badge lit and
+appended a stray clear to B. Fixed by deriving the owner from the session-dir suffix, with a
+fallback for non-standard layouts and an explicit stdout note when caller and owner differ —
+the absence of that note is what let the original case pass unnoticed.
+
+The same root cause has a second face that cannot be fixed in code: `/brain` carries its session
+dir as a literal path in context, so a fork into another project keeps writing there. That one is
+now an instruction in `commands/brain.md` with a concrete ownership check, and is recorded in
+`docs/TODO.md` §19 as mitigated by discipline rather than eliminated. `/duo` is immune because it
+re-derives the path from the current project on every invocation — worth noting as the pattern to
+prefer.
+
+**Files changed:** `scripts/orchestra-cleanup.sh`, `commands/brain.md`, `docs/design.md`
+(cleanup step 7), `docs/TODO.md` (§19), `docs/design-history.md` (this amendment).
