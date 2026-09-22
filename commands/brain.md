@@ -26,6 +26,35 @@ Before any `Edit`, `Write`, or code-modifying `Bash` call, ask: does `.brain-inf
 
 Session-dir artefacts written directly via `Bash` heredoc are exempt from this rule. Project code is not.
 
+### Forked or resumed sessions — re-derive the session dir, never trust the one in context
+
+The session directory is created once, by the setup block, under whichever project you were in at
+the time. Its path then lives **only in your context**. If the session is forked or resumed into a
+*different* project — the environment update announces the new working directory — that path is
+now cross-project. Artefacts land in the other project's tree, where a parallel session may
+overwrite them and where that project's 30-day reaper eventually deletes them.
+
+This has happened. A fork that moved to a second project kept writing `RESEARCH.md` into the
+first project's session dir; a parallel session still running in the original project then
+overwrote a version snapshot that was meant to be preserved.
+
+**After any working-directory change, verify ownership before writing another session artefact:**
+
+```bash
+SD="<the session dir path you are carrying in context>"
+CUR="$(realpath "${CLAUDE_PROJECT_DIR:-$(pwd)}")"
+OWNER="${SD%/.claude/orchestra/sessions/*}"
+[ "$OWNER" = "$CUR" ] && echo "OK: session belongs to this project" \
+                      || echo "MISMATCH: session belongs to ${OWNER}, you are in ${CUR}"
+```
+
+On `MISMATCH`, stop and choose deliberately: either re-run the setup block to create a session
+directory in the current project, or keep writing to the original one and say so out loud. Do not
+drift into it silently — that is how the collision above happened.
+
+`/duo` is not exposed to this: `/duo-act` re-derives its session dir by searching the *current*
+project for a `.duo-inflight` marker on every invocation, so a fork simply reports `NO_SESSION`.
+
 ### Negative examples — these are pipeline violations
 
 - ❌ Asserting a load-bearing factual claim during Phase 0 without dispatching `researcher` when the claim is uncertain. → Dispatch researcher (parallel where independent claims). The whole point of Phase 0 verification is to prevent debugging against a wrong premise.
@@ -34,6 +63,7 @@ Session-dir artefacts written directly via `Bash` heredoc are exempt from this r
 - ❌ Responding to the operator's "go ahead" / "proceed" signal by composing the plan in your reply text. → Dispatch Planner.
 - ❌ Using the plan-mode plan file at `~/.claude/plans/<name>.md` as the authoritative plan. → That file is for operator display only.
 - ❌ Skipping Phase 3 (Reviewer) because Actor's diff "looks fine". → Dispatch Reviewer; let it return PASS / FIX / BLOCK.
+- ❌ Writing session artefacts to the session-dir path in your context after the working directory changed. → Verify ownership first (see § Forked or resumed sessions); a stale path writes into another project's tree.
 
 Each of these means a `Task`-tool dispatch was skipped. If you catch yourself about to do any of them, stop and dispatch the appropriate subagent.
 

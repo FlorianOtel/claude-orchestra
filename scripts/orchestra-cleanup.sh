@@ -16,7 +16,7 @@
 #   4. Run telemetry-summarize.sh (before removing inflight marker)
 #   5. Verify telemetry.json exists; retry once if not; log .cleanup-error on failure
 #   6. Remove inflight marker (.brain-inflight or .duo-inflight)
-#   7. Append ORCHESTRA_MODE=default to state.env (clears status-line badge)
+#   7. Append ORCHESTRA_MODE=default to the OWNING project's state.env (clears its badge)
 
 set -euo pipefail
 
@@ -25,6 +25,19 @@ OUTCOME="${2:?Usage: orchestra-cleanup.sh <session_dir> <outcome>}"
 # CLAUDE_PROJECT_DIR may be unset when called from a Bash tool call in a later turn.
 CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The badge belongs to the project that OWNS the session, which is not necessarily the
+# project this script is invoked from. Deriving it from CLAUDE_PROJECT_DIR meant a cleanup
+# run from a second project wrote the clear into that project's state.env and left the
+# owning project's badge stuck on ORCHESTRA_MODE=brain indefinitely. Observed 2026-09-22
+# closing a /brain session from a fork that had moved to a different project.
+#
+# Session dirs are always <project>/.claude/orchestra/sessions/<id>, so strip that suffix.
+SESSION_PROJECT_DIR="${SESSION_DIR%/.claude/orchestra/sessions/*}"
+if [ "$SESSION_PROJECT_DIR" = "$SESSION_DIR" ] || [ ! -d "${SESSION_PROJECT_DIR}/.claude/orchestra" ]; then
+  # Non-standard layout — fall back rather than write somewhere unexpected.
+  SESSION_PROJECT_DIR="$CLAUDE_PROJECT_DIR"
+fi
 
 # Validate outcome value.
 case "$OUTCOME" in
@@ -69,8 +82,14 @@ fi
 # Step 6: Remove inflight marker. Badge clears on next status-line render.
 rm -f "$INFLIGHT_FILE"
 
-# Step 7: Clear the pipeline badge in state.env.
+# Step 7: Clear the pipeline badge in the OWNING project's state.env.
 printf 'ORCHESTRA_MODE=default\nORCHESTRA_TITLE=\n' \
-  >> "${CLAUDE_PROJECT_DIR}/.claude/orchestra/state.env"
+  >> "${SESSION_PROJECT_DIR}/.claude/orchestra/state.env"
 
-echo "cleanup: ${COMMAND} outcome=${OUTCOME} session=$(basename "${SESSION_DIR}")"
+# Name the project the badge was cleared in. When it differs from where the script was
+# invoked, say so — silence is what let the original mismatch go unnoticed.
+if [ "$(realpath "$SESSION_PROJECT_DIR" 2>/dev/null)" != "$(realpath "$CLAUDE_PROJECT_DIR" 2>/dev/null)" ]; then
+  echo "cleanup: note — session is owned by $(basename "${SESSION_PROJECT_DIR}"), invoked from $(basename "${CLAUDE_PROJECT_DIR}"); badge cleared in the owner"
+fi
+
+echo "cleanup: ${COMMAND} outcome=${OUTCOME} session=$(basename "${SESSION_DIR}") project=$(basename "${SESSION_PROJECT_DIR}")"
