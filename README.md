@@ -4,9 +4,11 @@ A three-tier orchestration layer for [Claude Code](https://claude.ai/code) that 
 
 ## Model tiers
 
+What matters here is the *tier* — the role each model plays and its relative cost — not the model version, which changes rapidly. The mapping below is the working assumption at the time of writing and may evolve as model versions (and, more slowly, the tiers themselves) change.
+
 | Tier | Model | Role |
 |---|---|---|
-| **Brain** | Claude Opus 4.7 | Your main session — orchestrates, delegates, approves |
+| **Brain** | Claude Opus (4.7 at time of writing) | Your main session — orchestrates, delegates, approves |
 | **Researcher** | Claude Haiku 4.5 | Phase 0 fact-finding — verifies load-bearing hypotheses about code, runtime, SDK |
 | **Researcher-deep** | Claude Sonnet 5 | Phase 0 escalation tier — multi-file reasoning, subtle event interleaving, runtime probes |
 | **Planner** | Claude Sonnet 5 | Decomposes tasks into numbered, reviewable plans |
