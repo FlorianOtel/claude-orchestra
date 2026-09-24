@@ -5,6 +5,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/os.sh"
+PYTHON3="$(orchestra_venv_dir)/bin/python3"
+
 # Validate args
 if [ $# -lt 4 ]; then
     exit 0
@@ -40,7 +44,7 @@ fi
 # Lookup in YAML (fallback to CC size if missing/not found)
 yaml_file="$HOME/.claude/orchestra/context-windows.yaml"
 if [ -f "$yaml_file" ]; then
-    advertised_size=$("${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3" -c "
+    advertised_size=$("${PYTHON3}" -c "
 import sys, yaml
 model = '$normalised_id'.lower()
 yaml_path = '$yaml_file'

@@ -33,6 +33,7 @@ STAMP_SESSION="${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-unknown}}"
 STAMP_TS="$(date -u +%Y%m%dT%H%M%SZ)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+[ -n "$SCRIPT_DIR" ] && source "${SCRIPT_DIR}/lib/os.sh" 2>/dev/null || true
 
 PROJECT_DIR="$(realpath "${CLAUDE_PROJECT_DIR:-$PWD}" 2>/dev/null || echo "${CLAUDE_PROJECT_DIR:-$PWD}")"
 ORCHESTRA_DIR="${PROJECT_DIR}/.claude/orchestra"
@@ -512,7 +513,7 @@ case "$MODE" in
     # It writes native-<UUID>.lck on the first Bash tool call of each native session,
     # using the session UUID as the primary key and cc_pid for liveness only.
     NATIVE_FINALIZER="${HOME}/.claude/scripts/native-session-finalize.py"
-    NATIVE_VENV="${HOME}/Gin-AI/.Gin-AI-python-3.12"
+    NATIVE_VENV="$(orchestra_venv_dir)"
     for _lck in "${ACTIVE_SESSIONS_DIR}/native-"*.lck; do
         [ -f "$_lck" ] || continue
         _pid="$(grep '^cc_pid=' "$_lck" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"

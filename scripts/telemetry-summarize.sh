@@ -9,8 +9,9 @@
 
 set -uo pipefail
 
-VENV="${HOME}/Gin-AI/.Gin-AI-python-3.12"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/os.sh"
+VENV="$(orchestra_venv_dir)"
 PY_SCRIPT="${SCRIPT_DIR}/telemetry-summarize.py"
 
 if [ ! -d "$VENV" ]; then

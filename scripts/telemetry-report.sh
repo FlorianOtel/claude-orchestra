@@ -15,6 +15,9 @@
 
 set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/os.sh"
+
 # --- arg parsing ---
 LAST_N=20
 SHOW_TIER=false
@@ -30,7 +33,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 TELEMETRY_JSONL="${HOME}/.claude/orchestra/telemetry.jsonl"
-PYTHON3="${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3"
+PYTHON3="$(orchestra_venv_dir)/bin/python3"
 PRICING_FILE="${HOME}/.claude/orchestra/pricing.yaml"
 
 if [ ! -f "$TELEMETRY_JSONL" ]; then
@@ -42,8 +45,8 @@ fi
 if [ -f "$PRICING_FILE" ]; then
     LAST_UPDATED=$(grep "^last_updated:" "$PRICING_FILE" | head -1 | awk '{print $2}' | tr -d '"')
     if [ -n "$LAST_UPDATED" ]; then
-        LAST_UPDATED_EPOCH=$(date -d "$LAST_UPDATED" +%s 2>/dev/null || echo 0)
-        TODAY_EPOCH=$(date -d "$(date +%Y-%m-%d)" +%s 2>/dev/null || echo 0)
+        LAST_UPDATED_EPOCH=$(orchestra_epoch_from_ymd "$LAST_UPDATED" 2>/dev/null || echo 0)
+        TODAY_EPOCH=$(orchestra_epoch_from_ymd "$(date +%Y-%m-%d)" 2>/dev/null || echo 0)
         DAYS_AGO=$(( (TODAY_EPOCH - LAST_UPDATED_EPOCH) / 86400 ))
         if [ "$DAYS_AGO" -gt 90 ]; then
             echo "⚠ pricing.yaml last updated $LAST_UPDATED ($DAYS_AGO days ago)."
@@ -186,7 +189,12 @@ PYEOF
                     ($b | strptime("%Y-%m-%dT%H:%M:%S") | mktime) + .duration_s |
                     strftime("%Y-%m-%dT%H:%M:%SZ")
                 else .started_at end')
-            DATE=$(date -d "$_ts_utc" +%Y-%m-%d--%H-%M 2>/dev/null || printf '%s' "$_ts_utc" | cut -c1-16 | tr 'T' '-')
+            if [ "$ORCHESTRA_OS" = "darwin" ]; then
+                _epoch=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$_ts_utc" +%s 2>/dev/null)
+                DATE=$( [ -n "$_epoch" ] && date -j -f "%s" "$_epoch" +%Y-%m-%d--%H-%M 2>/dev/null || printf '%s' "$_ts_utc" | cut -c1-16 | tr 'T' '-')
+            else
+                DATE=$(date -d "$_ts_utc" +%Y-%m-%d--%H-%M 2>/dev/null || printf '%s' "$_ts_utc" | cut -c1-16 | tr 'T' '-')
+            fi
             CMD=$(printf '%s' "$line" | jq -r '.command')
             COST=$(printf '%s' "$line" | jq -r '.cost_usd_estimate')
             echo "  $DATE  $CMD  total=\$$COST  (no session dir — log total only)"
@@ -218,7 +226,12 @@ else
                     ($b | strptime("%Y-%m-%dT%H:%M:%S") | mktime) + .duration_s |
                     strftime("%Y-%m-%dT%H:%M:%SZ")
                 else .started_at end')
-            date_local=$(date -d "$ts_utc" +%Y-%m-%d--%H-%M 2>/dev/null || printf '%s' "$ts_utc" | cut -c1-16 | tr 'T' '-')
+            if [ "$ORCHESTRA_OS" = "darwin" ]; then
+                _epoch=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts_utc" +%s 2>/dev/null)
+                date_local=$( [ -n "$_epoch" ] && date -j -f "%s" "$_epoch" +%Y-%m-%d--%H-%M 2>/dev/null || printf '%s' "$ts_utc" | cut -c1-16 | tr 'T' '-')
+            else
+                date_local=$(date -d "$ts_utc" +%Y-%m-%d--%H-%M 2>/dev/null || printf '%s' "$ts_utc" | cut -c1-16 | tr 'T' '-')
+            fi
             printf '%s' "$line" | jq -r --arg d "$date_local" '
                 [
                   $d,

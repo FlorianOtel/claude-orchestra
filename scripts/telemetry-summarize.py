@@ -20,6 +20,7 @@ Produces:
 import argparse
 import json
 import os
+import platform
 import re
 import sys
 import time
@@ -113,6 +114,16 @@ def load_pricing_yaml() -> Dict[str, Dict[str, float]]:
     return {}
 
 
+def _translate_nfs_path(path: str) -> str:
+    """Translate a Linux-canonical NFS path (/mnt/nfs/...) to this host's local
+    mount point for the same share. No-op on Linux, or for any path that
+    doesn't use the /mnt/nfs/ prefix. Both mountpoints back the same NFS
+    export (192.168.1.96:/volume1/Disks) — confirmed live."""
+    if platform.system() == "Darwin" and path.startswith("/mnt/nfs/"):
+        return "/Volumes/Disks/" + path[len("/mnt/nfs/"):]
+    return path
+
+
 def _load_sohoai_config() -> Dict[str, Any]:
     """Load SoHoAI config from config/config.yaml or ~/.claude/orchestra/config.yaml"""
     if yaml is None:
@@ -129,7 +140,10 @@ def _load_sohoai_config() -> Dict[str, Any]:
                 with open(candidate) as f:
                     data = yaml.safe_load(f)
                     if data and "sohoai" in data:
-                        return data["sohoai"]
+                        cfg = dict(data["sohoai"])
+                        if cfg.get("db_path"):
+                            cfg["db_path"] = _translate_nfs_path(cfg["db_path"])
+                        return cfg
             except Exception:
                 continue
 
@@ -177,6 +191,7 @@ def query_sohoai_usage(
     if sqlite3 is not None and Path is not None:
         cfg = _load_sohoai_config()
         db_path = os.environ.get("SOHOAI_DB_PATH", "") or cfg.get("db_path", "")
+        db_path = _translate_nfs_path(db_path) if db_path else db_path
         if db_path and Path(db_path).exists():
             try:
                 uri = Path(db_path).as_uri() + "?mode=ro"

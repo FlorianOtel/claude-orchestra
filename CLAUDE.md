@@ -12,6 +12,7 @@
 - `agents/`   — planner (Sonnet 5), actor (Haiku 4.5), reviewer (Sonnet 5)
 - `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents) + /brain-abandon (explicit cancel); /duo-plan, /duo-act, /duo-abandon (lightweight session-bracketed pipeline: Sonnet plans interactively across multiple turns, Haiku acts after /duo-act)
 - `scripts/orchestra-hook.sh` — PreToolUse / SubagentStop / PreCompact / Stop dispatcher
+- `scripts/lib/os.sh` — shared Linux/macOS helpers (sourced, not executed): `ORCHESTRA_OS`, venv dir, pid comm/ppid, ISO/YMD → epoch
 - `scripts/otel-headers-helper.sh` — X-Orchestra-Session-ID injection; auto-creates native session entries (CC 2.1.132: not called — fallback via bash-session-init.sh)
 - `scripts/bash-session-init.sh` — sourced via `BASH_ENV`; registers native session as `native-<UUID>.lck` on first Bash call (UUID-keyed, cc_pid for liveness only)
 - `scripts/native-session-finalize.py` — Stop-hook helper: finalise one native session; T2 fallback via `_walk_jsonl_for_tokens` + `pricing.yaml`
@@ -94,6 +95,9 @@
 - **Timestamp:** 2026-09-19T07-33
 - **Model:** claude-opus-5[1m] (Brain) + claude-sonnet-5 (Planner) + claude-haiku-4-5-20251001 (Actor) + claude-haiku-4-5-20251001 / claude-sonnet-5 (Researcher / Researcher-deep, Phase 0)
 - **Reason:** removed the T1/T2 cross-check and the blast_radius stub (both dead code contradicting the settled "T2 authoritative, T1 timing-only" design); stopped emitting the always-null `usage` field; fixed subagent attribution (the payload field is `.agent_type`, which the hook never probed — hence 89% of end events recorded as `unknown`); added a filter for Claude Code's internal helper agents, which fire SubagentStop on a ~31s cadence and accounted for 42 end events against 5 real subagents in one measured session; added a session-identity gate closing a stale session-dir magnet; corrected config/pricing.yaml (claude-sonnet-5 3/15 -> 2/10, claude-opus-4-7 15/75 -> 5/25, added claude-opus-4-8 and claude-fable-5-1 with its non-standard 0.25 cache_read); gave section-live-cost.sh the full 3-tier cascade; repo hygiene. Note that manual smoke tests are PENDING operator post-deploy.
+- **Timestamp:** 2026-09-24T20-21
+- **Model:** claude-opus-5-5[1m] (Brain) + claude-sonnet-5 (Planner / Reviewer / Researcher-deep) + claude-haiku-4-5-20251001 (Actor / Researcher)
+- **Reason:** platform-aware deploy (new scripts/lib/os.sh; Linux/macOS branches for venv path, pid introspection, date parsing, BSD ps etime, /mnt/nfs -> /Volumes/Disks SoHoAI db path) verified identical on Linux before commit. /brain session 20260924T195735Z-1977065. Sandbox A/B (HEAD vs working tree deployed into two identically-seeded scratch HOMEs): exactly the 16 expected deployed differences (15 changed shipped files + new scripts/lib/os.sh), settings.json and .gitignore_global identical. Runtime A/B on real data: telemetry-report, session-report, native-session-report, ctx-segment (3 samples), smoke-test, check-orphans, section-live-cost (0.0000/0.0000 empty window, 3.1329/3.1329 1h window) all identical. Live ./deploy.sh on Linux was a no-op (managed-file checksums identical). Also fixes deploy.sh --diff (`&& true` -> `|| true`; --diff now implies --dry-run). macOS real deploy still pending (dry-run only).
 
 ## Telemetry Smoke Tests
 
@@ -149,7 +153,7 @@ Verify T1 (hook events) and T2 (transcript parse) after any /duo or /brain run.
 - `CLAUDE_CODE_SESSION_ID` is available in Bash subprocesses but NOT in hooks — registration happens in bash-session-init.sh, not the Stop hook
 - Stop hook only finalizes dead sessions: iterates `native-*.lck`, checks `kill -0 <cc_pid>`, runs `native-session-finalize.py` when dead → T2 parses JSONL → `cost_source: "pricing_yaml"`
 - Session IDs: `native-<UUID>` (stable, globally unique — no timestamp-PID suffix)
-- **Requires**: `BASH_ENV=/home/florian/.claude/scripts/bash-session-init.sh` in `settings.json` env (NOT managed by deploy.sh — must be set manually or kept in settings.json)
+- **Requires**: `BASH_ENV=$HOME/.claude/scripts/bash-session-init.sh` in `settings.json` env (NOT managed by deploy.sh — must be set manually or kept in settings.json). bash expands `$HOME` in `BASH_ENV`'s value at shell-startup time, so this one line works unmodified on both Linux and macOS. Concrete examples if you'd rather write it out literally: Linux `/home/florian/.claude/scripts/bash-session-init.sh`, macOS `/Users/fotel/.claude/scripts/bash-session-init.sh`.
 
 ### Reading the unified session report
 ```bash

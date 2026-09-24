@@ -28,10 +28,17 @@ for arg in "$@"; do
     esac
 done
 
+# --diff is a preview mode too: it must never write, only show what would
+# change. Without this, brand-new files (copy_file's [ -f "$dst" ] guard is
+# false, so its diff branch is skipped) and the settings.json/status-line.sh/
+# CLAUDE.md sections below (gated on $DRY_RUN only) would write for real
+# under a bare `--diff` run.
+$SHOW_DIFF && DRY_RUN=true
+
 copy_file() {
     local src="$1" dst="$2"
     if $SHOW_DIFF && [ -f "$dst" ]; then
-        diff -u "$dst" "$src" && true
+        diff -u "$dst" "$src" || true
         return
     fi
     if $DRY_RUN; then
@@ -59,11 +66,17 @@ $SHOW_DIFF && echo "  mode:   DIFF (no writes)"
 echo ""
 
 # ── 1. Prerequisite checks ────────────────────────────────────────────────────
-command -v jq >/dev/null 2>&1 || die "jq is required (sudo apt install jq)"
+if ! command -v jq >/dev/null 2>&1; then
+    if [ "$(uname -s)" = "Darwin" ]; then
+        die "jq is required (brew install jq)"
+    else
+        die "jq is required (sudo apt install jq)"
+    fi
+fi
 [ -d "$CLAUDE" ] || die "~/.claude does not exist — is Claude Code installed?"
 
 # ── 2. Create target directories ─────────────────────────────────────────────
-for dir in agents commands scripts orchestra; do
+for dir in agents commands scripts scripts/lib orchestra; do
     $DRY_RUN || mkdir -p "$CLAUDE/$dir"
 done
 $DRY_RUN || mkdir -p "$CLAUDE/orchestra/logs"
@@ -131,6 +144,12 @@ fi
 if [ -f "$REPO/scripts/session-report.sh" ]; then
     copy_file "$REPO/scripts/session-report.sh" "$CLAUDE/scripts/session-report.sh"
     $DRY_RUN || chmod +x "$CLAUDE/scripts/session-report.sh"
+fi
+
+# Shared OS-detection helper (sourced, never executed — no chmod)
+echo "Lib:"
+if [ -f "$REPO/scripts/lib/os.sh" ]; then
+    copy_file "$REPO/scripts/lib/os.sh" "$CLAUDE/scripts/lib/os.sh"
 fi
 
 # Clean up artifacts deleted in the headless→subagents revert (idempotent).

@@ -10,7 +10,7 @@ exists under the project root), the pipeline owns code changes:
 - Plan production for `/brain` MUST go through the Planner subagent (Task
   tool, `subagent_type: planner`). You (Brain) persist Planner's returned
   plan to `${SESSION_DIR}/PLAN.md` via Bash atomic-rename.
-- Plan-mode's "build your plan at `/home/florian/.claude/plans/<name>.md`"
+- Plan-mode's "build your plan at `~/.claude/plans/<name>.md`"
   reminder does NOT apply in `/brain` mode. The plan-mode plan file is for
   operator display only; the authoritative plan is at `${SESSION_DIR}/PLAN.md`.
 - Session-dir artefacts (`RESEARCH.md`, `PLAN.md`, `.outcome`, `state.env`,

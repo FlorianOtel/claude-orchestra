@@ -270,8 +270,15 @@ def is_session_active() -> bool:
                     pid = int(content.split("\n")[0].split("=", 1)[1].strip())
                 else:
                     pid = int(content)
-                # Check if process exists
-                if os.path.exists(f"/proc/{pid}"):
+                # Check if process exists (portable: works on Linux and macOS —
+                # os.kill(pid, 0) sends no signal, just validates existence/permission).
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    continue  # process is dead
+                except PermissionError:
+                    return True  # exists, just owned by another user
+                else:
                     return True
             except (ValueError, Exception):
                 continue

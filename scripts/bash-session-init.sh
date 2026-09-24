@@ -15,14 +15,17 @@ find "${HOME}/.claude/orchestra/sessions" \
     \( -name ".brain-inflight" -o -name ".duo-inflight" \) \
     2>/dev/null | grep -q . && return 0
 
+_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${_script_dir}/lib/os.sh"
+
 # Find stable CC main PID (top-level 'claude' process, not ephemeral node subprocesses).
 # Normal case: PPID is the claude process directly.
 # Ephemeral case: PPID is a transient node subprocess whose parent is claude.
 _cc_main_pid=$PPID
-_ppid_comm=$(cat /proc/$PPID/comm 2>/dev/null)
+_ppid_comm=$(orchestra_pid_comm "$PPID")
 if [ "$_ppid_comm" != "claude" ]; then
-    _parent=$(awk '{print $4}' /proc/$PPID/stat 2>/dev/null)
-    _parent_comm=$(cat /proc/$_parent/comm 2>/dev/null)
+    _parent=$(orchestra_pid_ppid "$PPID")
+    _parent_comm=$(orchestra_pid_comm "$_parent")
     [ "$_parent_comm" = "claude" ] && _cc_main_pid=$_parent
 fi
 

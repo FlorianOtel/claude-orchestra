@@ -21,8 +21,11 @@
 # (orchestra-block.sh) uses LAST_NONZERO in the section state file as the
 # transient-zero fallback during the first refresh after activity ends.
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/os.sh"
+
 TTL=8
-PYTHON3="${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3"
+PYTHON3="$(orchestra_venv_dir)/bin/python3"
 
 parent_uuid="${1:-}"
 section_id="${2:-}"

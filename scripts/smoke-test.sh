@@ -8,9 +8,12 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/os.sh"
+
 CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 SESSIONS_ROOT="${CLAUDE_PROJECT_DIR}/.claude/orchestra/sessions"
-PYTHON3="${HOME}/Gin-AI/.Gin-AI-python-3.12/bin/python3"
+PYTHON3="$(orchestra_venv_dir)/bin/python3"
 GLOBAL_LOG="${HOME}/.claude/orchestra/telemetry.jsonl"
 
 if [ -n "${1:-}" ]; then

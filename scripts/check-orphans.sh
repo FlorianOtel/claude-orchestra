@@ -24,6 +24,9 @@
 
 set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/os.sh"
+
 DO_KILL=false
 MIN_SECONDS=600
 
@@ -64,7 +67,28 @@ is_self() {
 
 # Snapshot ps ONCE, before any filtering runs. Filtering after the snapshot means the
 # filter's own process cannot appear in the data it filters — the self-match trap.
-PS_SNAPSHOT="$(ps -eo pid=,etimes=,args= 2>/dev/null || true)"
+if [ "$ORCHESTRA_OS" = "darwin" ]; then
+    # BSD ps has only `etime` ([[dd-]hh:]mm:ss), not `etimes` (plain seconds) —
+    # normalize to the same "pid secs args..." shape the Linux branch produces
+    # below, so nothing downstream needs to know which platform ran.
+    PS_SNAPSHOT="$(ps -eo pid=,etime=,args= 2>/dev/null | awk '
+        {
+            pid = $1; etime = $2
+            cmd = ""
+            for (i = 3; i <= NF; i++) cmd = cmd (i > 3 ? " " : "") $i
+            days = 0
+            n = split(etime, dparts, "-")
+            if (n == 2) { days = dparts[1]; rest = dparts[2] } else { rest = dparts[1] }
+            m = split(rest, tparts, ":")
+            if (m == 3)      secs = tparts[1]*3600 + tparts[2]*60 + tparts[3]
+            else if (m == 2) secs = tparts[1]*60 + tparts[2]
+            else             secs = tparts[1]
+            secs += days * 86400
+            print pid, secs, cmd
+        }' || true)"
+else
+    PS_SNAPSHOT="$(ps -eo pid=,etimes=,args= 2>/dev/null || true)"
+fi
 
 FOUND_PIDS=""
 FOUND_REPORT=""

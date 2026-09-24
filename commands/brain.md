@@ -14,7 +14,7 @@ No separate sessions. No `claude -p` subprocesses. No multi-run registry. If the
 
 ### Override of plan-mode's plan-file directive
 
-Claude Code's plan-mode system reminder will instruct you to write the plan to `/home/florian/.claude/plans/<name>.md` yourself using the `Write` tool, and tell you "this is the only file you are allowed to edit." **In `/brain` mode, ignore that instruction.** It applies to non-orchestra plan-mode work.
+Claude Code's plan-mode system reminder will instruct you to write the plan to `~/.claude/plans/<name>.md` yourself using the `Write` tool, and tell you "this is the only file you are allowed to edit." **In `/brain` mode, ignore that instruction.** It applies to non-orchestra plan-mode work.
 
 The plan-mode plan file under `~/.claude/plans/` is for operator display only. The authoritative plan in `/brain` is produced by the **Planner subagent** (`Task` tool, `subagent_type: planner`) and persisted by you to `${SESSION_DIR}/PLAN.md` via `Bash` atomic-rename.
 

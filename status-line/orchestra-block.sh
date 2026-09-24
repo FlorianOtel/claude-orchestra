@@ -12,7 +12,6 @@
 #   - $input        (JSON for model_id extraction via jq)
 #   - $used_percentage (Ctx segment: fill percentage 0-100)
 #   - $context_window_size (Ctx segment: model's context window in tokens)
-
 # ORCHESTRA_BLOCK_START — do not remove; deploy.sh uses this as presence sentinel
 
 if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
@@ -122,7 +121,11 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         if [ -f "$_lck" ]; then
             _sat_raw=$(grep '^started_at=' "$_lck" 2>/dev/null | cut -d= -f2-)
             if [ -n "$_sat_raw" ]; then
-                _real_started_at=$(date -d "$_sat_raw" +%s 2>/dev/null || echo "")
+                if [ "$(uname -s)" = "Darwin" ]; then
+                    _real_started_at=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$_sat_raw" +%s 2>/dev/null || echo "")
+                else
+                    _real_started_at=$(date -d "$_sat_raw" +%s 2>/dev/null || echo "")
+                fi
             fi
         fi
     fi

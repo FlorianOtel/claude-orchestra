@@ -77,4 +77,8 @@ status_line:
 sohoai:
   enabled: true
   timeout_s: 5
+  # Linux-canonical NFS path. telemetry-summarize.py's _translate_nfs_path()
+  # rewrites this to /Volumes/Disks/... at read time on macOS (same NFS
+  # export, different local mountpoint — see scripts/lib/os.sh for the
+  # OS-detection convention used elsewhere in this repo).
   db_path: "/mnt/nfs/__Backups/SoHoAI--databases/sqlite/telemetry.db"

@@ -26,7 +26,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path("/mnt/nfs/Florian/Gin-AI/projects/claude-orchestra")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = PROJECT_ROOT / "utils" / "codebase_snapshot.md"
 INCLUDE_EXTENSIONS: set[str] = {".py", ".yaml", ".yml", ".sh", ".md", ".json"}
 

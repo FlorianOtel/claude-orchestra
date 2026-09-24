@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Opus 5)
-updated_at: 2026-09-22--19-30
+updated_by: Claude Code (Claude Haiku 4.5)
+updated_at: 2026-09-24--22-27
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -501,7 +501,7 @@ Two accepted failure modes: (1) a pruned `.lck` can cause bounded T1-only reject
 Native (non-orchestra) CC sessions are tracked via a two-step mechanism that avoids the need for any per-request header or proxy instrumentation.
 
 **Registration — `scripts/bash-session-init.sh` (sourced via `BASH_ENV`).**
-Claude Code sets `CLAUDE_CODE_SESSION_ID` in the environment of every Bash tool call, but not in hook subprocesses. `bash-session-init.sh` exploits this: it is sourced automatically at the start of each Bash tool call (via `BASH_ENV=/home/florian/.claude/scripts/bash-session-init.sh` in `settings.json`). On the first call it writes a `.lck` file to `~/.claude/active-sessions/native-<UUID>.lck` containing:
+Claude Code sets `CLAUDE_CODE_SESSION_ID` in the environment of every Bash tool call, but not in hook subprocesses. `bash-session-init.sh` exploits this: it is sourced automatically at the start of each Bash tool call (via `BASH_ENV=$HOME/.claude/scripts/bash-session-init.sh` in `settings.json`). On the first call it writes a `.lck` file to `~/.claude/active-sessions/native-<UUID>.lck` containing:
 
 ```
 cc_pid=<stable-claude-PID>
@@ -554,7 +554,18 @@ For past records already in `telemetry.jsonl` with a missing `model` field (writ
 
 For sessions with a `native-<UUID>` session ID, the report also looks up the transcript JSONL to obtain per-type token breakdown and project name. For old-format `native-<timestamp>-<PID>` sessions, `total_tokens` from the telemetry record is used directly and project name shows as `native`. `session-report.py` (unified report) applies the same project-name lookup for native sessions, using `*.project-name` sidecar files and NFS path unmangling. `native-session-report.py` defaults to 20 sessions when no date filter is given; when `--since` or `--month` is active and `--last` is not explicitly set, no cap is applied (all matching sessions are shown).
 
-**Requirement.** `BASH_ENV=/home/florian/.claude/scripts/bash-session-init.sh` must be set in `settings.json` env. This is **not** managed by `deploy.sh` — it must be set manually or persisted in `settings.json`. Without it, `bash-session-init.sh` is never sourced and no `.lck` is written; native sessions appear as `cost_source: "none"` with zero cost.
+**Requirement.** `BASH_ENV=$HOME/.claude/scripts/bash-session-init.sh` must be set in `settings.json` env (bash expands `$HOME` at shell-startup, so this line is correct verbatim on both Linux and macOS — literal examples: `/home/florian/.claude/scripts/bash-session-init.sh` on Linux, `/Users/fotel/.claude/scripts/bash-session-init.sh` on macOS). This is **not** managed by `deploy.sh` — it must be set manually or persisted in `settings.json`. Without it, `bash-session-init.sh` is never sourced and no `.lck` is written; native sessions appear as `cost_source: "none"` with zero cost.
+
+#### Platform support (Linux / macOS)
+
+All orchestra scripts are platform-aware via `scripts/lib/os.sh` (sourced, not executed directly). This shared helper exposes environment detection (`ORCHESTRA_OS`) and abstractions over OS-specific paths and tools:
+
+- **Venv discovery:** `orchestra_venv_dir` returns `~/Gin-AI/.Gin-AI-python-3.12` on Linux, `~/.python-3.12` on macOS.
+- **PID introspection:** `orchestra_pid_comm()` reads `/proc/<pid>/comm` and `orchestra_pid_ppid()` reads field 4 of `/proc/<pid>/stat` on Linux; on macOS (no `/proc`) both use `ps -p <pid> -o comm=` / `-o ppid=`.
+- **Time conversion:** `orchestra_epoch_from_iso()` and `orchestra_epoch_from_ymd()` use GNU `date -d` on Linux and BSD `date -j -f` on macOS. Caveat: BSD `date -j -f "%Y-%m-%d"` fills the missing H:M:S with the *current* wall-clock time rather than midnight, so `orchestra_epoch_from_ymd` appends a fixed `T00:00:00Z` on macOS. The two branches therefore differ for the same date — Linux returns local midnight, macOS UTC midnight — which is benign for the only caller, `telemetry-report.sh`'s pricing-staleness `DAYS_AGO` check, since it subtracts two epochs from the same helper on the same host.
+- **SoHoAI db path translation:** `telemetry-summarize.py`'s `_translate_nfs_path()` rewrites the generic prefix `/mnt/nfs/` → `/Volumes/Disks/` on macOS (both mountpoints back the same NFS export); it is applied to the `sohoai.db_path` config value.
+- **Elapsed-time normalization:** `check-orphans.sh` normalizes BSD `ps etime` output (`[[dd-]hh:]mm:ss`) to plain elapsed seconds — the shape Linux's `ps etimes` already produces — so the rest of the script, which compares elapsed seconds against the `--min-seconds` orphan-age threshold, is platform-agnostic.
+- **Deployment:** `deploy.sh` creates `scripts/lib/` and ships `os.sh` without `chmod +x` (it is sourced, not executed); `--diff` now implies `--dry-run`. Risk: most scripts source `lib/os.sh` unguarded (only `orchestra-hook.sh` guards it), so it must be deployed alongside them.
 
 #### Inspecting per-session data
 
