@@ -183,7 +183,10 @@ claude-orchestra/
 │   └── settings-hooks.json    Hook entries to merge into settings.json
 ├── docs/
 │   ├── design.md              Full design reference (architecture, decisions, TO DOs)
-│   └── design-history.md      Design session notes and change log
+│   ├── design-history.md      Design session notes and change log
+│   ├── OnePager--claude-orchestra--2026-09-24.md       Executive-summary briefing (business case, design, metrics)
+│   ├── InsightPack--claude-orchestra--2026-09-24.md    Fast-lookup reference pack backing the OnePager/SpeakerNotes
+│   └── SpeakerNotes--claude-orchestra--2026-09-24.md   Scripted narrative + prepared answers for presenting the briefing
 ├── deploy.sh                  Install / update to ~/.claude/
 └── collect.sh                 Sync changes from ~/.claude/ back to repo
 ```
