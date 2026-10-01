@@ -133,6 +133,10 @@ Status line shows (when orchestra is installed):
 ♪ orchestra -> brain <title> ⚠ >200K       — Brain context too large to delegate safely
 ```
 
+Example of how this renders in Claude Code (2026-10-01): a `/brain` session in plan mode with the Planner subagent running in the background. The status line shows the model, context bar (`18% 180K/1M`), live session cost (`~$4.31`), project, branch and the orchestra badge (`♪ orchestra -> brain PhaseC1 bake-off datasets ▶ plan`); the agent panel below it lists the backgrounded `planner`.
+
+![claude-orchestra status line in Claude Code, 2026-10-01](claude-orchestra--screenshot--2026-10-01.png)
+
 ## Updating
 
 After iterating on files directly in `~/.claude/`:
@@ -188,7 +192,8 @@ claude-orchestra/
 │   ├── InsightPack--claude-orchestra--2026-09-24.md    Fast-lookup reference pack backing the OnePager/SpeakerNotes
 │   └── SpeakerNotes--claude-orchestra--2026-09-24.md   Scripted narrative + prepared answers for presenting the briefing
 ├── deploy.sh                  Install / update to ~/.claude/
-└── collect.sh                 Sync changes from ~/.claude/ back to repo
+├── collect.sh                 Sync changes from ~/.claude/ back to repo
+└── claude-orchestra--screenshot--2026-10-01.png   Example status-line rendering in Claude Code
 ```
 
 ## Architecture
