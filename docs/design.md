@@ -2,8 +2,8 @@
 title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude Code"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Haiku 4.5)
-updated_at: 2026-09-24--22-27
+updated_by: Claude Code (Claude Sonnet 5.5)
+updated_at: 2026-10-08--11-45
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -45,6 +45,8 @@ Enter plan mode, type `/brain <task>`. Opus runs Phase 0 (RESEARCH, inline — i
 **Pipeline-rules guard (2026-05-05):** plan-mode and `/brain` give Brain conflicting instructions about who produces the plan — plan-mode's per-turn "build your plan in `~/.claude/plans/<name>.md` using Write" reminder out-competed `/brain.md`'s loaded-once "dispatch Planner via Task tool" instruction in long Phase 0 sessions, causing Brain to write the plan and execute the implementation directly under Opus 4.7. Hybrid fix: (a) `commands/brain.md` reinforced with an explicit override clause, concrete `Task`-tool dispatch templates at the top of each Phase, a self-check guard, phase-boundary reinforcement, and a negative-examples block; (b) a per-turn guard block at `claude-md-block/orchestra-guard.md` injected by `deploy.sh` into `~/.claude/CLAUDE.md` between sentinels `<!-- ORCHESTRA_GUARD_START -->` / `<!-- ORCHESTRA_GUARD_END -->`. The CLAUDE.md guard is the load-bearing component because it loads on every turn (parallel to plan-mode's reminder cadence), while `/brain.md` reinforcement makes the command body self-coherent. Cost overhead is < 5% of typical /brain session due to prompt caching of stable system-prompt content.
 
 **`/duo-plan` setup-bash override (2026-05-06):** the same plan-mode override conflict affects `/duo-plan`'s setup phase: plan-mode's "MUST NOT run non-readonly tools" clause suppressed the refusal-check and session-dir-creation bash calls, meaning `.duo-inflight` was never written, /duo mode never activated, and the session ran as plain plan mode + direct edits. Fix: `commands/duo-plan.md` now opens with a prominent `PLAN-MODE OVERRIDE` callout at line 11, before `## When to use /duo vs /brain`, explicitly exempting the setup bash calls (lifecycle management, not code edits) from the plan-mode restriction.
+
+**Setup moved into `scripts/session-setup.sh` (2026-10-08):** `/duo-plan` and `/brain` used to embed a ~60-line setup bash block for the model to retype. In AYA session `20261008T092158Z-3274438` the model ran a shortened version that dropped the transcript-UUID step; the status line treats a `.duo-inflight` without `.transcript-uuid` as stale, so no badge appeared. Fix: all setup (refusal check for duo, retention reap, session dir, `.transcript-uuid`, inflight marker, `.lck`) lives in one deployed script; the command files say to run it verbatim and act on `REFUSE:` / `SETUP_FAILED:` / `SETUP_OK`. The script writes `.transcript-uuid` before the marker, prefers `CLAUDE_CODE_SESSION_ID` over the newest-jsonl guess, walks up to the real `claude` PID for the `.lck` (`$PPID` is the tool shell once run as a child script), and self-verifies its invariants, removing the marker on failure.
 
 When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo instead.
 
@@ -358,7 +360,7 @@ commands/
   brain.md, brain-abandon.md
   duo-plan.md, duo-act.md, duo-abandon.md
 scripts/
-  orchestra-hook.sh, ctx-segment.sh, section-live-cost.sh
+  orchestra-hook.sh, ctx-segment.sh, section-live-cost.sh, session-setup.sh
 orchestra/
   config.yaml, context-windows.yaml
   invocations.log (append-only)

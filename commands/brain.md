@@ -104,90 +104,20 @@ When it does, the result in front of you may be **partial**, and that agent's ro
 
 ## Setup — per-invocation artifact directory + housekeeping
 
-Before Phase 0 begins, create a fresh per-invocation subdirectory under `.claude/orchestra/sessions/`, export its path as an environment variable that subagents read for artifact paths, and lazily clean up any subdirs older than the configured retention window.
+Before Phase 0 begins, create the per-invocation session directory, write the `.brain-inflight` marker and the status-line badge state, and reap session dirs past the retention window.
 
-Run via `Bash`:
+Run **exactly this one command** via `Bash` — verbatim, as a single call. Do **not** inline, shorten, reorder or re-implement the script's steps yourself: skipping the transcript-UUID step makes the status line treat the marker as stale and hides the badge.
 
-```bash
-# CLAUDE_PROJECT_DIR may be unset in Bash subprocesses — resolve it first.
-CLAUDE_PROJECT_DIR="$(realpath "${CLAUDE_PROJECT_DIR:-$(pwd)}" 2>/dev/null || echo "${CLAUDE_PROJECT_DIR:-$(pwd)}")"
-# 1. Read retention window from config (default 30 if not set / not parseable).
-SESSIONS_ROOT="${CLAUDE_PROJECT_DIR}/.claude/orchestra/sessions"
-_parse_retention() {
-  awk '
-    /^housekeeping:/ { in_hk = 1; next }
-    in_hk && /^[^ ]/ { in_hk = 0 }
-    in_hk && /session_retention_days:/ {
-      gsub(/[^0-9]/, "", $2); print $2; exit
-    }
-  ' "$1" 2>/dev/null
-}
-# Precedence: per-project override > global default > hardcoded 30.
-RETENTION_DAYS=$(_parse_retention "${CLAUDE_PROJECT_DIR}/.claude/orchestra/config.yaml")
-[ -z "${RETENTION_DAYS}" ] && \
-  RETENTION_DAYS=$(_parse_retention "${HOME}/.claude/orchestra/config.yaml")
-RETENTION_DAYS="${RETENTION_DAYS:-30}"
-
-# 2. Lazy cleanup: drop session subdirs older than RETENTION_DAYS days.
-if [ -d "${SESSIONS_ROOT}" ]; then
-  find "${SESSIONS_ROOT}" -mindepth 1 -maxdepth 1 -type d \
-       -mtime +"${RETENTION_DAYS}" -exec rm -rf {} + 2>/dev/null
-fi
-
-# 3. Create fresh per-invocation subdir.
-SESSION_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-SESSION_DIR="${SESSIONS_ROOT}/${SESSION_ID}"
-mkdir -p "${SESSION_DIR}"
-export CLAUDE_ORCHESTRA_SESSION_DIR="${SESSION_DIR}"
-# Write .brain-inflight marker in the same shell so SESSION_DIR is available.
-# Stays live through Phase 0/1/2/3; removed by the cleanup block (PASS / abandon /
-# block branches) or by /brain-abandon.
-printf '%s' "<task title, ≤30 chars, no single-quotes>" \
-  > "${SESSION_DIR}/.brain-inflight.tmp"
-mv -f "${SESSION_DIR}/.brain-inflight.tmp" "${SESSION_DIR}/.brain-inflight"
-# Capture current session transcript UUID before subagents create new JSONLs
-_MANGLED="$(printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}" | tr '/' '-')"
-_TRANSCRIPTS="${HOME}/.claude/projects/${_MANGLED}"
-_TRANSCRIPT_UUID=""
-if [ -d "$_TRANSCRIPTS" ]; then
-  _LATEST="$(ls -t "$_TRANSCRIPTS"/*.jsonl 2>/dev/null | head -1)"
-  if [ -n "$_LATEST" ]; then
-    _TRANSCRIPT_UUID="$(basename "$_LATEST" .jsonl)"
-    printf '%s\n' "$_LATEST" > "${SESSION_DIR}/.transcript-path" 2>/dev/null || true
-  fi
-fi
-printf '%s\n' "${_TRANSCRIPT_UUID}" > "${SESSION_DIR}/.transcript-uuid" 2>/dev/null || true
-echo "session_dir=${SESSION_DIR}"
-echo "retention_days=${RETENTION_DAYS}"
-# Write per-session lock file so otelHeadersHelper injects the correct session ID.
-# Filename = session ID (human-readable); content = CC process PID (lookup key).
-SESSION_ID_HEADER="$(basename "${SESSION_DIR}")"
-mkdir -p "${HOME}/.claude/active-sessions"
-printf 'cc_pid=%s\n' "${PPID}" \
-  > "${HOME}/.claude/active-sessions/${SESSION_ID_HEADER}.lck.tmp"
-mv -f "${HOME}/.claude/active-sessions/${SESSION_ID_HEADER}.lck.tmp" \
-  "${HOME}/.claude/active-sessions/${SESSION_ID_HEADER}.lck"
-# Housekeeping: remove lck files whose CC process is no longer running.
-for _f in "${HOME}/.claude/active-sessions/"*.lck; do
-  [ -f "$_f" ] || continue
-  _pid="$(grep '^cc_pid=' "$_f" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
-  kill -0 "$_pid" 2>/dev/null || rm -f "$_f"
-done
-```
-
-After creating the session directory, write the pipeline mode and task title to the orchestra badge. The title is the operator's invocation text (the args after `/brain`), truncated to 30 printable characters, with single-quotes replaced by spaces. Run via `Bash`:
+Replace `<task description>` with the operator's task text (the script strips single-quotes and truncates the title itself; if the text contains a single-quote, wrap it as `'...'\''...'`).
 
 ```bash
-CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-ORCH_DIR="${CLAUDE_PROJECT_DIR}/.claude/orchestra"
-mkdir -p "$ORCH_DIR"
-printf 'ORCHESTRA_MODE=brain\nORCHESTRA_TITLE=%s\n' \
-  "<task title, ≤30 chars, no single-quotes>" >> "${ORCH_DIR}/state.env"
+bash "$HOME/.claude/scripts/session-setup.sh" brain '<task description>'
 ```
 
-Replace `<task title, ≤30 chars, no single-quotes>` with the first 30 printable characters of the operator's task description, stripping any single-quote characters.
+Act on the first line of its output:
 
-Print the session_dir to the operator so they can locate artifacts later.
+- `SETUP_FAILED:` — **stop now**; report the message verbatim. Do not attempt to repair or hand-write the markers.
+- `SETUP_OK` — proceed. Capture the `session_dir=...` line and print it to the operator so they can locate artifacts later.
 
 ---
 

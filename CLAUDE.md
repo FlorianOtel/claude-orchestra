@@ -11,6 +11,7 @@
 
 - `agents/`   — planner (Sonnet 5), actor (Haiku 4.5), reviewer (Sonnet 5)
 - `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents) + /brain-abandon (explicit cancel); /duo-plan, /duo-act, /duo-abandon (lightweight session-bracketed pipeline: Sonnet plans interactively across multiple turns, Haiku acts after /duo-act)
+- `scripts/session-setup.sh` — /duo-plan and /brain setup (session dir, `.transcript-uuid`, inflight marker, `.lck`), self-verifying; commands call it instead of embedding bash
 - `scripts/orchestra-hook.sh` — PreToolUse / SubagentStop / PreCompact / Stop dispatcher
 - `scripts/lib/os.sh` — shared Linux/macOS helpers (sourced, not executed): `ORCHESTRA_OS`, venv dir, pid comm/ppid, ISO/YMD → epoch
 - `scripts/otel-headers-helper.sh` — X-Orchestra-Session-ID injection; auto-creates native session entries (CC 2.1.132: not called — fallback via bash-session-init.sh)
@@ -98,6 +99,9 @@
 - **Timestamp:** 2026-09-24T20-21
 - **Model:** claude-opus-5-5[1m] (Brain) + claude-sonnet-5 (Planner / Reviewer / Researcher-deep) + claude-haiku-4-5-20251001 (Actor / Researcher)
 - **Reason:** platform-aware deploy (new scripts/lib/os.sh; Linux/macOS branches for venv path, pid introspection, date parsing, BSD ps etime, /mnt/nfs -> /Volumes/Disks SoHoAI db path) verified identical on Linux before commit. /brain session 20260924T195735Z-1977065. Sandbox A/B (HEAD vs working tree deployed into two identically-seeded scratch HOMEs): exactly the 16 expected deployed differences (15 changed shipped files + new scripts/lib/os.sh), settings.json and .gitignore_global identical. Runtime A/B on real data: telemetry-report, session-report, native-session-report, ctx-segment (3 samples), smoke-test, check-orphans, section-live-cost (0.0000/0.0000 empty window, 3.1329/3.1329 1h window) all identical. Live ./deploy.sh on Linux was a no-op (managed-file checksums identical). Also fixes deploy.sh --diff (`&& true` -> `|| true`; --diff now implies --dry-run). macOS `~/.claude` already matches e24d56f (`./deploy.sh --dry-run` on the Mac: 34/34 unchanged, exit 0).
+- **Timestamp:** 2026-10-08T11-45
+- **Model:** claude-sonnet-5-5
+- **Reason:** fix(duo): setup moved to scripts/session-setup.sh — a model-abbreviated setup block dropped .transcript-uuid and hid the /duo badge (AYA session 20261008T092158Z-3274438). Verified in a scratch HOME (duo+brain, refusal, retention override, clean failure with no marker/.lck, cc_pid is the claude process); deployed. Live /duo-plan badge smoke test PENDING operator.
 
 ## Telemetry Smoke Tests
 
