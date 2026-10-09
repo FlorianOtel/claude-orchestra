@@ -1,4 +1,4 @@
-last_updated: 2026-09-19
+last_updated: 2026-10-09
 source: https://platform.claude.com/docs/en/about-claude/pricing
 notes: |
   Rates are USD per 1M tokens.
@@ -52,7 +52,12 @@ models:
     output: 15.00
     cache_creation: 3.75
     cache_read: 0.30
-  claude-haiku-4-5:
+  claude-haiku-5-5:             # tiered: <=100K prompt tokens $0.10/$0.50, >100K $0.50/$2.50;
+    input: 0.50                 # a flat table holds one level, so the HIGHER (>100K) level is used
+    output: 2.50                # (matches SoHoAI main.py) -- never under-reports; <=100K prompts over-costed 5x
+    cache_creation: 0.625
+    cache_read: 0.05
+  claude-haiku-4-5:             # legacy alias — transcripts predating the Haiku 5.5 cutover (2026-10-09)
     input: 1.00
     output: 5.00
     cache_creation: 1.25

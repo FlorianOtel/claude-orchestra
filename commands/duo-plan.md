@@ -21,7 +21,7 @@ Use `/duo` when the task is simple enough that a plan + execute is sufficient, a
 
 ## Cost note
 
-`/duo` is designed to run from a **Sonnet 5 session** for the planning phase. Switch with `/model claude-sonnet-5` before invoking if you're currently on Opus. The Actor subagent is pinned to Haiku 4.5 by frontmatter regardless of parent model.
+`/duo` is designed to run from a **Sonnet 5 session** for the planning phase. Switch with `/model claude-sonnet-5` before invoking if you're currently on Opus. The Actor subagent is pinned to Haiku 5.5 by frontmatter regardless of parent model.
 
 ## Prerequisites
 

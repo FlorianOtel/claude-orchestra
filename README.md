@@ -9,10 +9,10 @@ What matters here is the *tier* — the role each model plays and its relative c
 | Tier | Model | Role |
 |---|---|---|
 | **Brain** | Claude Opus (4.7 at time of writing) | Your main session — orchestrates, delegates, approves |
-| **Researcher** | Claude Haiku 4.5 | Phase 0 fact-finding — verifies load-bearing hypotheses about code, runtime, SDK |
+| **Researcher** | Claude Haiku 5.5 | Phase 0 fact-finding — verifies load-bearing hypotheses about code, runtime, SDK |
 | **Researcher-deep** | Claude Sonnet 5 | Phase 0 escalation tier — multi-file reasoning, subtle event interleaving, runtime probes |
 | **Planner** | Claude Sonnet 5 | Decomposes tasks into numbered, reviewable plans |
-| **Actor** | Claude Haiku 4.5 | Executes individual plan steps; scoped, fast, cheap |
+| **Actor** | Claude Haiku 5.5 | Executes individual plan steps; scoped, fast, cheap |
 | **Reviewer** | Claude Sonnet 5 | Reviews Actor's output; emits PASS / FIX / BLOCK verdicts |
 
 ## Pipelines
@@ -168,10 +168,10 @@ and are deployed explicitly — no automatic shadowing.
 ```
 claude-orchestra/
 ├── agents/
-│   ├── researcher.md      Haiku 4.5  — verifies load-bearing hypotheses (Phase 0 fact-finding)
+│   ├── researcher.md      Haiku 5.5  — verifies load-bearing hypotheses (Phase 0 fact-finding)
 │   ├── researcher-deep.md Sonnet 5   — multi-file reasoning escalation (Phase 0)
 │   ├── planner.md         Sonnet 5   — writes numbered plan to PLAN.md
-│   ├── actor.md           Haiku 4.5  — executes one scoped step
+│   ├── actor.md           Haiku 5.5  — executes one scoped step
 │   └── reviewer.md        Sonnet 5   — reviews diff, emits PASS/FIX/BLOCK
 ├── commands/
 │   ├── brain.md           /brain slash command           — full pipeline (Phase 0 inline + Planner/Actor/Reviewer subagents)

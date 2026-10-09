@@ -168,7 +168,7 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         case "$_settings_base" in
             sonnet) _settings_base="claude-sonnet-5"   ;;
             opus)   _settings_base="claude-opus-5"      ;;
-            haiku)  _settings_base="claude-haiku-4-5"  ;;
+            haiku)  _settings_base="claude-haiku-5-5"  ;;
         esac
         if [[ "$model_id" == "$_settings_base" ]] || [[ "$model_id" == "$_settings_base"-* ]]; then
             model_id="${model_id}[1m]"

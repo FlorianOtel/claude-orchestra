@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 5.5)
-updated_at: 2026-10-08--11-45
+updated_at: 2026-10-09--21-43
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -14,7 +14,7 @@ context: >
 
 # Claude Orchestra
 
-A three-tier orchestration system for Claude Code: **Brain** (Opus 4.7 or Sonnet 5) delegates reasoning, implementation, and review across **Planner** (Sonnet 5), **Actor** (Haiku 4.5), and **Reviewer** (Sonnet 5) tiers using Claude Code's native `Task` tool for subagent dispatch. Single global install at `~/.claude/`; usable from any project.
+A three-tier orchestration system for Claude Code: **Brain** (Opus 4.7 or Sonnet 5) delegates reasoning, implementation, and review across **Planner** (Sonnet 5), **Actor** (Haiku 5.5), and **Reviewer** (Sonnet 5) tiers using Claude Code's native `Task` tool for subagent dispatch. Single global install at `~/.claude/`; usable from any project.
 
 ## Intro
 
@@ -57,10 +57,10 @@ When NOT to use /brain: simple tasks with ≤5 steps, low blast radius. Use /duo
 | Agent | Model | File | Tools | Role |
 |---|---|---|---|---|
 | **Brain** | Opus 4.7 (or Sonnet for /duo) | — (main session) | all | Orchestrates; calls `ExitPlanMode` at plan approval (G2) |
-| **Researcher** | Haiku 4.5 | `~/.claude/agents/researcher.md` | Read, Grep, Glob, Bash, WebFetch, TodoWrite (read-only) | Phase 0 fact-finding — verifies load-bearing hypotheses about code, runtime, SDK |
+| **Researcher** | Haiku 5.5 | `~/.claude/agents/researcher.md` | Read, Grep, Glob, Bash, WebFetch, TodoWrite (read-only) | Phase 0 fact-finding — verifies load-bearing hypotheses about code, runtime, SDK |
 | **Researcher** (deep) | Sonnet 5 | `~/.claude/agents/researcher-deep.md` | Read, Grep, Glob, Bash, WebFetch, TodoWrite (read-only) | Phase 0 escalation — multi-file reasoning, subtle event interleaving, runtime probes |
 | **Planner** | Sonnet 5 | `~/.claude/agents/planner.md` | Read, Grep, Glob, WebFetch, TodoWrite (read-only) | Decomposes task into numbered plan; Brain persists to PLAN.md |
-| **Actor** | Haiku 4.5 | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
+| **Actor** | Haiku 5.5 | `~/.claude/agents/actor.md` | Read, Edit, Write, Bash, Grep, Glob (+ denies on rm -rf, git push) | Executes one step per invocation; self-persists TASKS.json via atomic-rename |
 | **Reviewer** | Sonnet 5 | `~/.claude/agents/reviewer.md` | Read, Grep, Glob, TodoWrite (read-only) | Reviews diff against PLAN.md; returns PASS / FIX / BLOCK |
 
 ### Model requirements
@@ -81,7 +81,7 @@ Both checks happen at command startup before any Bash or setup runs. The check i
 | 2 IMPLEMENT | REVIEW | follow permission mode | Standard Claude Code approval UX per tool |
 | 3 REVIEW | LOOP/DONE | **auto-loop, cap 3** | Brain counts; surfaces PASS/FIX/BLOCK verdict |
 
-Phase 0 verification is backed by Researcher (Haiku 4.5) for single-file lookups and simple checks, escalating to Researcher-deep (Sonnet 5) for multi-file reasoning or runtime probes.
+Phase 0 verification is backed by Researcher (Haiku 5.5) for single-file lookups and simple checks, escalating to Researcher-deep (Sonnet 5) for multi-file reasoning or runtime probes.
 
 ### Autonomy presets
 
@@ -200,7 +200,7 @@ Token formatting: values ≥ 1,000,000 show as `XM` (e.g., `1.2M`), values ≥ 1
 **Why this is Sonnet 4.6-specific:** Opus 4.7 (`claude-opus-4-7`) has 1M as its canonical API context window — the API itself returns `context_window: 1000000`, so no mismatch occurs. The `[1m]` shorthand exists only for Sonnet 4.6 because Sonnet's standard spec is 200K and the 1M tier is an extended capability, not the default. Future models that include 1M as their native API spec would not be affected.
 
 **Workaround (not a CC fix — CC behaviour is unchanged):**
-1. `orchestra-block.sh` reads `settings.json` (project-level, then global) after extracting `model_id` from CC JSON. If the configured model contains `[1m]` and `model_id` does not, but the base model matches (mapping CC shorthands: `sonnet` → `claude-sonnet-5`, `opus` → `claude-opus-5`, `haiku` → `claude-haiku-4-5`), it re-appends `[1m]` to `model_id`. A follow-on bash substitution also restores "(1M context)" in the already-built `status_line` display name string.
+1. `orchestra-block.sh` reads `settings.json` (project-level, then global) after extracting `model_id` from CC JSON. If the configured model contains `[1m]` and `model_id` does not, but the base model matches (mapping CC shorthands: `sonnet` → `claude-sonnet-5`, `opus` → `claude-opus-5`, `haiku` → `claude-haiku-5-5`), it re-appends `[1m]` to `model_id`. A follow-on bash substitution also restores "(1M context)" in the already-built `status_line` display name string.
 2. `ctx-segment.sh` recalculates `used_pct` after `advertised_size` is finalised: when `forced_1m=true` and `tokens > 0`, `used_pct = 100 * tokens / advertised_size`. This ensures bar fill, percentage, and denominator are all derived from the same 1M denominator.
 
 #### CC statusLine JSON schema (CC 2.1.139+)
@@ -430,7 +430,7 @@ Deliberate deviations:
 - **Custom state dir `.claude/orchestra/`** — pragmatic co-location with other Claude Code config.
 - **Per-invocation subdirs** — isolation and lazy cleanup (30-day retention).
 - **Atomic-rename pattern** — POSIX standard, documented in prompts, not enforced at hook level.
-- **Pinned model snapshots** — `claude-sonnet-4-5`, `claude-haiku-4-5-20251001` (no auto-upgrade).
+- **Pinned model snapshots** — `claude-sonnet-4-5`, `claude-haiku-5-5` (no auto-upgrade).
 
 ### Live feed limitations
 

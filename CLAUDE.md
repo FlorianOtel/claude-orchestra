@@ -9,7 +9,7 @@
 
 ## Layout
 
-- `agents/`   — planner (Sonnet 5), actor (Haiku 4.5), reviewer (Sonnet 5)
+- `agents/`   — planner (Sonnet 5), actor (Haiku 5.5), reviewer (Sonnet 5)
 - `commands/` — /brain (full pipeline: Phase 0 inline + 3 subagents) + /brain-abandon (explicit cancel); /duo-plan, /duo-act, /duo-abandon (lightweight session-bracketed pipeline: Sonnet plans interactively across multiple turns, Haiku acts after /duo-act)
 - `scripts/session-setup.sh` — /duo-plan and /brain setup (session dir, `.transcript-uuid`, inflight marker, `.lck`), self-verifying; commands call it instead of embedding bash
 - `scripts/orchestra-hook.sh` — PreToolUse / SubagentStop / PreCompact / Stop dispatcher
@@ -102,6 +102,9 @@
 - **Timestamp:** 2026-10-08T11-45
 - **Model:** claude-sonnet-5-5
 - **Reason:** fix(duo): setup moved to scripts/session-setup.sh — a model-abbreviated setup block dropped .transcript-uuid and hid the /duo badge (AYA session 20261008T092158Z-3274438). Verified in a scratch HOME (duo+brain, refusal, retention override, clean failure with no marker/.lck, cc_pid is the claude process); deployed. Live /duo-plan badge smoke test PENDING operator.
+- **Timestamp:** 2026-10-09T22-00
+- **Model:** claude-sonnet-5-5
+- **Reason:** upgrade Actor + Researcher from claude-haiku-4-5-20251001 to claude-haiku-5-5; pricing.yaml (higher >100K tier, as SoHoAI) and context-windows.yaml (1M) updated, status-line alias remapped. Dry-run + live deploy clean. Live /duo smoke test confirming Actor runs on Haiku 5.5 PENDING operator.
 
 ## Telemetry Smoke Tests
 

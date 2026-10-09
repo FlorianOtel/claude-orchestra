@@ -2,8 +2,8 @@
 title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design notes & open questions"
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
-updated_by: Claude Code (Claude Opus 5)
-updated_at: 2026-09-22--19-30
+updated_by: Claude Code (Claude Sonnet 5.5)
+updated_at: 2026-10-09--21-44
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1747,3 +1747,22 @@ prefer.
 
 **Files changed:** `scripts/orchestra-cleanup.sh`, `commands/brain.md`, `docs/design.md`
 (cleanup step 7), `docs/TODO.md` (§19), `docs/design-history.md` (this amendment).
+
+## Amendment 2026-10-09 — Haiku 4.5 → Haiku 5.5 (Actor, Researcher)
+
+`agents/actor.md` and `agents/researcher.md` now pin `claude-haiku-5-5` (no date-suffixed snapshot
+ID exists for it, so `_normalize_model_id` needs no change). SoHoAI had already added the model
+(commits `18c5236`, `fd11b18`).
+
+**Pricing.** Haiku 5.5 is priced by prompt length: ≤100K tokens $0.10/$0.50, >100K $0.50/$2.50
+(cache write $0.625, cache read $0.05, per MTok). `config/pricing.yaml` holds one level per model,
+so it carries the higher (>100K) level — the same choice SoHoAI's `main.py` made — which never
+under-reports cost but over-costs ≤100K prompts about 5x. `claude-haiku-4-5` stays as a legacy
+entry so old transcripts still price. `config/context-windows.yaml`: 5.5 = 1M, 4.5 kept as legacy.
+
+**Also changed:** `status-line/orchestra-block.sh` (`haiku` alias → `claude-haiku-5-5`),
+`commands/brain.md`, `commands/duo-plan.md`, `README.md`, `docs/design.md`, `CLAUDE.md` layout line.
+Dated historical records (smoke-test log, earlier amendments, sample reports) deliberately keep 4.5.
+
+**Not verified:** a live `/duo` or `/brain` smoke test that Actor really runs on `claude-haiku-5-5`
+is pending; running sessions need a restart to pick up the new agent files.

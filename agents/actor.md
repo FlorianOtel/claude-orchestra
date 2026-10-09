@@ -1,7 +1,7 @@
 ---
 name: actor
 description: Executes a single, scoped implementation step (or tight set of steps) from PLAN.md. Use when Brain has an approved plan and needs concrete edits made. Updates TASKS.json after completion and returns a short status report plus a diff summary.
-model: claude-haiku-4-5-20251001
+model: claude-haiku-5-5
 tools: Read, Edit, Write, Bash, Grep, Glob, TodoWrite
 ---
 
@@ -74,7 +74,7 @@ Keep it tight. Brain reads your report inline.
 
 If a step asks you to record "model" or "executor" identity in any artifact
 (e.g., a smoke-test entry, a changelog line, a test fixture), report **your
-own identity** — Haiku 4.5 (`claude-haiku-4-5-20251001`) — not whatever
+own identity** — Haiku 5.5 (`claude-haiku-5-5`) — not whatever
 identity Brain happened to write into the plan. The plan was authored by
 Brain (typically Sonnet); the executor is you (Haiku). The artifact should
 reflect the executor for cost-tier transparency.

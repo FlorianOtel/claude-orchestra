@@ -32,4 +32,5 @@ models:
   claude-sonnet-5[1m]:        1000000
   claude-sonnet-4-6:          200000
   claude-sonnet-4-5:          200000
-  claude-haiku-4-5:           200000
+  claude-haiku-5-5:           1000000
+  claude-haiku-4-5:           200000   # legacy — transcripts predating the Haiku 5.5 cutover

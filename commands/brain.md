@@ -10,7 +10,7 @@ No separate sessions. No `claude -p` subprocesses. No multi-run registry. If the
 
 ## Pipeline rules — READ FIRST
 
-`/brain` orchestrates **subagents**: Researcher (Haiku 4.5) or Researcher-deep (Sonnet 5 for escalation) verifies factual claims during Phase 0 under your direction; Planner (Sonnet 5) produces the plan; Actor (Haiku 4.5) makes code changes; Reviewer (Sonnet 5) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
+`/brain` orchestrates **subagents**: Researcher (Haiku 5.5) or Researcher-deep (Sonnet 5 for escalation) verifies factual claims during Phase 0 under your direction; Planner (Sonnet 5) produces the plan; Actor (Haiku 5.5) makes code changes; Reviewer (Sonnet 5) audits the diff. You (Brain) dispatch them via the canonical Claude Code `Task` tool. **You do NOT do the planning or implementation work yourself.** Each phase begins with a `Task` tool call; the templates are in the relevant phase sections below.
 
 ### Override of plan-mode's plan-file directive
 
@@ -131,7 +131,7 @@ You interrogate the operator about the task **before any planning or implementat
 
 #### Researcher dispatch
 
-Brain dispatches **Researcher** (`claude-haiku-4-5-20251001`) — or **Researcher-deep** (`claude-sonnet-5`) for escalation — via the canonical `Task` tool to verify a single, binary-answerable factual claim. Multiple researchers in parallel when hypotheses are independent.
+Brain dispatches **Researcher** (`claude-haiku-5-5`) — or **Researcher-deep** (`claude-sonnet-5`) for escalation — via the canonical `Task` tool to verify a single, binary-answerable factual claim. Multiple researchers in parallel when hypotheses are independent.
 
 Use the default `researcher` tier for: single-file lookups, symbol existence checks, frontmatter inspection, tool-call payload shape, one-off SDK behaviour questions.
 
