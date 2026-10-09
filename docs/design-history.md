@@ -3,7 +3,7 @@ title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design not
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 5.5)
-updated_at: 2026-10-09--21-54
+updated_at: 2026-10-09--21-58
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1775,5 +1775,10 @@ returned `0.0000`. Fixed by adding `claude-sonnet-5-5` ($2/$10, cache write $2.5
 `claude-opus-5-5` ($4/$20, $5, $0.20), verified against the Anthropic pricing page 2026-10-09; both
 price cache reads at 0.05x. Context windows added to `config/context-windows.yaml`. Same change:
 `orchestra-block.sh` `sonnet`/`opus` aliases now map to the 5.5 IDs so `[1m]` is restored correctly.
-Lesson: every new model ID needs a pricing.yaml entry at cutover. Still open: no warning is surfaced
-for an unpriced model.
+Lesson: every new model ID needs a pricing.yaml entry at cutover.
+Follow-up (same day): an unpriced model is now flagged. `section-live-cost.sh` keeps `compute_cost`'s
+warnings and writes unpriced model IDs to `<cache_file>.unpriced` (removed when none); `orchestra-block.sh`
+renders `~$X.YY ⚠ unpriced:<model>`. Verified in a scratch HOME with the entry removed (sidecar written,
+cost 0.0000) and restored (sidecar cleared). Covers parent and native-subagent costing only; orchestra
+subagents costed via SoHoAI/LiteLLM are not covered. The render snippet was tested as a copy, not via a
+live status-line refresh.

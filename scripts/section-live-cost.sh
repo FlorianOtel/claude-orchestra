@@ -16,6 +16,9 @@
 #     window. Matches native-session-finalize.py's cost source
 #     (cost_source="pricing_yaml").
 #
+# Unpriced models (absent from pricing.yaml, hence costed at $0) are listed in
+# <cache_file>.unpriced; orchestra-block.sh renders them as a warning marker.
+#
 # Cache (8 s TTL) is rewritten on every refresh, including when the result
 # is 0/empty, so a stale value cannot survive past one TTL window. Caller
 # (orchestra-block.sh) uses LAST_NONZERO in the section state file as the
@@ -64,6 +67,9 @@ ts = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ts)
 
 pricing_data = ts.load_pricing_yaml()
+# compute_cost appends "Model 'X' not found in pricing.yaml" here; surfaced below as a
+# sidecar so the status line can flag an unpriced model instead of silently showing $0.
+cost_warnings = []
 projects_root = os.path.expanduser("~/.claude/projects")
 
 # ── Parent transcript: always JSONL+pricing.yaml (the T2 path) ──────────────
@@ -76,7 +82,7 @@ if pricing_data:
         )
         if first_ts is not None and model:
             parent_cost = ts.compute_cost(
-                {"model": model, "tokens": tokens}, [], pricing_data, []
+                {"model": model, "tokens": tokens}, [], pricing_data, cost_warnings
             ) or 0.0
 
 # ── Subagent term: dispatch by section type ─────────────────────────────────
@@ -99,7 +105,7 @@ if is_native:
                 if first_ts is None or not model:
                     continue
                 c = ts.compute_cost(
-                    {"model": model, "tokens": tokens}, [], pricing_data, []
+                    {"model": model, "tokens": tokens}, [], pricing_data, cost_warnings
                 )
                 if c:
                     subagent_cost += c
@@ -150,7 +156,7 @@ else:
             # Tier 3: pricing.yaml fallback (only if Tier 2 returned None, not if it returned 0.0)
             if litellm_cost is None and subagents_list and pricing_data:
                 try:
-                    subagent_cost = ts.compute_cost({"model": None, "tokens": {}}, subagents_list, pricing_data, []) or 0.0
+                    subagent_cost = ts.compute_cost({"model": None, "tokens": {}}, subagents_list, pricing_data, cost_warnings) or 0.0
                 except Exception:
                     pass
 
@@ -163,6 +169,20 @@ try:
     with open(tmp, "w") as f:
         f.write(out)
     os.replace(tmp, cache_file)
+except Exception:
+    pass
+
+# Unpriced-model sidecar: one model ID per line; removed when every model is priced.
+import re
+unpriced = sorted({m.group(1) for w in cost_warnings
+                   for m in [re.search(r"Model '([^']*)' not found in pricing\.yaml", w)] if m})
+sidecar = cache_file + ".unpriced"
+try:
+    if unpriced:
+        with open(sidecar, "w") as f:
+            f.write("\n".join(unpriced) + "\n")
+    elif os.path.exists(sidecar):
+        os.remove(sidecar)
 except Exception:
     pass
 

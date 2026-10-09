@@ -3,7 +3,7 @@ title: "Claude Orchestra — three-tier Brain/Planner/Actor pattern over Claude 
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 5.5)
-updated_at: 2026-10-09--21-54
+updated_at: 2026-10-09--21-58
 context: >
   Reference architecture for Claude Orchestra — a three-tier orchestration
   pattern layered on Claude Code using native subagents. The design supports
@@ -316,7 +316,7 @@ Brain wrap-up's tokens land in the post-brain native section; they are counted i
 
 A single helper computes the section's live cost from the same data sources `telemetry-summarize.py` uses at session close, so live and final agree by construction (within the 8 s cache window).
 
-Signature: `section-live-cost.sh <parent_uuid> <section_id> <section_start_unix> <cache_file>`. Output: total USD cost as a 4-decimal float (printed once per call; cached for 8 s).
+Signature: `section-live-cost.sh <parent_uuid> <section_id> <section_start_unix> <cache_file>`. Output: total USD cost as a 4-decimal float (printed once per call; cached for 8 s). Models absent from `pricing.yaml` are costed at $0; their IDs are written to `<cache_file>.unpriced` (removed when none), and `orchestra-block.sh` appends `⚠ unpriced:<model>` to the cost so an under-count is visible (covers parent and native-subagent paths; SoHoAI/LiteLLM-costed orchestra subagents are not covered).
 
 **Parent term (always JSONL+pricing.yaml — the T2 path)**
 - Resolves `~/.claude/projects/*/<parent_uuid>.jsonl` and walks it via `ts._walk_jsonl_for_tokens(jsonl, section_start_unix, now)`.

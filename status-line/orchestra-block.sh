@@ -306,6 +306,10 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         if printf '%s' "$_display_cost" | grep -qE '^[0-9]+\.?[0-9]*$'; then
             _final_display=$(python3 -c "print(f'{${_accumulated_total:-0} + ${_display_cost}:.4f}')" 2>/dev/null || echo "$_display_cost")
             live_cost=$(LC_ALL=C printf '~$%.2f' "$_final_display" 2>/dev/null || true)
+            # Flag models missing from pricing.yaml (costed at $0, so the figure is an under-count)
+            if [ -s "${_cost_cache}.unpriced" ]; then
+                live_cost+=" ⚠ unpriced:$(tr '\n' ',' < "${_cost_cache}.unpriced" | sed 's/,$//')"
+            fi
         fi
     fi
 
