@@ -3,7 +3,7 @@ title: "Claude Code three-tier orchestrator (Brain/Planner/Actor) — design not
 created_at: 20260424-000000
 created_by: Claude Code (Claude Opus 4.7, 1M context)
 updated_by: Claude Code (Claude Sonnet 5.5)
-updated_at: 2026-10-09--21-44
+updated_at: 2026-10-09--21-54
 context: >
   Working session exploring how to build a three-layer Brain/Planner/Actor
   orchestrator on top of Claude Code, originally motivated by the Cline VSCode
@@ -1766,3 +1766,14 @@ Dated historical records (smoke-test log, earlier amendments, sample reports) de
 
 **Not verified:** a live `/duo` or `/brain` smoke test that Actor really runs on `claude-haiku-5-5`
 is pending; running sessions need a restart to pick up the new agent files.
+
+## Amendment 2026-10-09 (b) — status line showed $0.00: Sonnet 5.5 / Opus 5.5 missing from pricing.yaml
+
+Sessions on `claude-sonnet-5-5` showed `$0.00`. `config/pricing.yaml` had no entry for the model, and
+`compute_cost` prices an unknown model at $0 with only a logged warning, so `section-live-cost.sh`
+returned `0.0000`. Fixed by adding `claude-sonnet-5-5` ($2/$10, cache write $2.50, read $0.10) and
+`claude-opus-5-5` ($4/$20, $5, $0.20), verified against the Anthropic pricing page 2026-10-09; both
+price cache reads at 0.05x. Context windows added to `config/context-windows.yaml`. Same change:
+`orchestra-block.sh` `sonnet`/`opus` aliases now map to the 5.5 IDs so `[1m]` is restored correctly.
+Lesson: every new model ID needs a pricing.yaml entry at cutover. Still open: no warning is surfaced
+for an unpriced model.
