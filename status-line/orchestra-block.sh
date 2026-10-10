@@ -283,10 +283,10 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
         #    so this fallback is bounded — it cannot mask a real long-term drop.
         if [ -z "$_display_cost" ] || \
            ! printf '%s' "$_display_cost" | grep -qE '^[0-9]+\.?[0-9]*$' || \
-           [ "$(printf '%.0f' "$_display_cost" 2>/dev/null || echo 0)" = "0" ]; then
+           ! awk -v v="$_display_cost" 'BEGIN{exit !(v+0>0)}'; then
             if [ -n "$_last_nonzero" ] && \
                printf '%s' "$_last_nonzero" | grep -qE '^[0-9]+\.?[0-9]*$' && \
-               [ "$(printf '%.0f' "$_last_nonzero" 2>/dev/null || echo 0)" != "0" ]; then
+               awk -v v="$_last_nonzero" 'BEGIN{exit !(v+0>0)}'; then
                 _display_cost="$_last_nonzero"
             else
                 _display_cost="0.00"
@@ -295,7 +295,7 @@ if [ -n "$cwd" ] && [ -f "$HOME/.claude/orchestra/config.yaml" ]; then
 
         # 6. Update LAST_NONZERO if display cost > 0 (preserve ACCUMULATED_TOTAL)
         if printf '%s' "$_display_cost" | grep -qE '^[0-9]+\.?[0-9]*$' && \
-           [ "$(printf '%.0f' "$_display_cost" 2>/dev/null || echo 0)" != "0" ]; then
+           awk -v v="$_display_cost" 'BEGIN{exit !(v+0>0)}'; then
             printf 'SECTION_ID=%s\nSECTION_START_UNIX=%s\nLAST_NONZERO=%s\nACCUMULATED_TOTAL=%s\n' \
                 "$_current_section_id" "$_section_start_unix" "$_display_cost" "$_accumulated_total" \
                 > "$_state_file.tmp" 2>/dev/null \
